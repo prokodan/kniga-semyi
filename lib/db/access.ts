@@ -6,6 +6,7 @@ import { randomBytes, randomUUID } from "node:crypto";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Family, LifeBlock, Story, Storyteller } from "@/lib/types";
 import { LIFE_BLOCKS } from "@/lib/types";
+import { MemoryInterviewRepo } from "@/lib/interview/repo";
 import { BUCKETS, getDbOrNull } from "./index";
 
 /** Токен ссылки семьи: 64 hex (два uuid без дефисов, как default в миграции). */
@@ -14,7 +15,7 @@ export function isTokenShape(token: string): boolean {
   return TOKEN_RE.test(token);
 }
 
-export type StorySummary = Pick<Story, "id" | "storyteller_id" | "question_id" | "block" | "status" | "created_at">;
+export type StorySummary = Pick<Story, "id" | "storyteller_id" | "question_id" | "block" | "status" | "parent_story_id" | "created_at">;
 
 export interface FamilyView {
   family: Family;
@@ -41,6 +42,8 @@ export interface NewStory {
   block: LifeBlock | null;
   duration_sec: number | null;
   session_id: string | null;
+  /** Голосовой ответ на уточнение агента: основная история вопроса (I2 только расшифрует) */
+  parent_story_id: string | null;
 }
 
 export class AccessError extends Error {
@@ -114,12 +117,13 @@ export function findStoryteller(view: FamilyView, storytellerId: string): Storyt
   return st;
 }
 
-/** Прогресс «3 из 8»: блоки, в которых есть хотя бы одна не упавшая история рассказчика. */
+/** Прогресс «3 из 8»: блоки, где у рассказчика есть хотя бы один рассказ. Статус конвейера не важен:
+ *  запись сохранена, упавший шаг I2 перезапускается. Ответы на уточнения — часть основной истории. */
 export function blockProgress(stories: StorySummary[], storytellerId?: string) {
   const covered = new Set<LifeBlock>();
   let count = 0;
   for (const s of stories) {
-    if (s.status === "failed") continue;
+    if (s.parent_story_id) continue;
     if (storytellerId && s.storyteller_id !== storytellerId) continue;
     count += 1;
     if (s.block && (LIFE_BLOCKS as readonly string[]).includes(s.block)) covered.add(s.block);
@@ -133,7 +137,9 @@ export class MemoryFamilyStore implements FamilyStore {
   readonly persistent = false;
   families = new Map<string, Family>();
   storytellers = new Map<string, Storyteller>();
-  stories = new Map<string, Story>();
+
+  /** stories — общая карта с интервью-агентом и конвейером в локальном режиме */
+  constructor(readonly stories: Map<string, Story> = new Map()) {}
 
   async createFamily(input: NewFamily) {
     const now = new Date().toISOString();
@@ -175,7 +181,7 @@ export class MemoryFamilyStore implements FamilyStore {
       .sort((a, b) => a.created_at.localeCompare(b.created_at));
     const stories = [...this.stories.values()]
       .filter((s) => s.family_id === family.id)
-      .map(({ id, storyteller_id, question_id, block, status, created_at }) => ({ id, storyteller_id, question_id, block, status, created_at }));
+      .map(({ id, storyteller_id, question_id, block, status, parent_story_id, created_at }) => ({ id, storyteller_id, question_id, block, status, parent_story_id, created_at }));
     return structuredClone({ family, storytellers, storyteller: storytellers[0] ?? null, stories });
   }
 
@@ -202,6 +208,7 @@ export class MemoryFamilyStore implements FamilyStore {
       family_id: familyId,
       storyteller_id: input.storyteller_id,
       session_id: input.session_id,
+      parent_story_id: input.parent_story_id,
       question_id: input.question_id,
       block: input.block,
       audio_url: input.audio_path,
@@ -279,7 +286,7 @@ export class SupabaseFamilyStore implements FamilyStore {
       this.db.from("storytellers").select("*").eq("family_id", family.id).order("created_at", { ascending: true }),
       this.db
         .from("stories")
-        .select("id, storyteller_id, question_id, block, status, created_at")
+        .select("id, storyteller_id, question_id, block, status, parent_story_id, created_at")
         .eq("family_id", family.id)
         .order("created_at", { ascending: true }),
     ]);
@@ -319,6 +326,7 @@ export class SupabaseFamilyStore implements FamilyStore {
         family_id: familyId,
         storyteller_id: input.storyteller_id,
         session_id: input.session_id,
+        parent_story_id: input.parent_story_id,
         question_id: input.question_id,
         block: input.block,
         audio_url: input.audio_path,
@@ -334,12 +342,14 @@ export class SupabaseFamilyStore implements FamilyStore {
 
 // ---------------- точка входа ----------------
 
-const g = globalThis as { __familyMemoryStore?: MemoryFamilyStore };
+const g = globalThis as { __familyMemoryStore?: MemoryFamilyStore; __interviewMemoryRepo?: MemoryInterviewRepo };
 
 export function getFamilyStore(): FamilyStore {
   const db = getDbOrNull();
   if (db) return new SupabaseFamilyStore(db);
-  g.__familyMemoryStore ??= new MemoryFamilyStore(); // переживает hot-reload в dev
+  // те же истории видят интервью-агент (I10) и конвейер (I2) — см. lib/interview/index.ts, lib/pipeline/index.ts
+  g.__interviewMemoryRepo ??= new MemoryInterviewRepo();
+  g.__familyMemoryStore ??= new MemoryFamilyStore(g.__interviewMemoryRepo.stories); // переживает hot-reload в dev
   return g.__familyMemoryStore;
 }
 

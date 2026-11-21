@@ -15,7 +15,7 @@ export default async function RecordPage({ params }: { params: Promise<{ token: 
   const st = view.storyteller;
   if (!st.consent_at) redirect(`/consent/${token}`);
 
-  const mine = view.stories.filter((s) => s.storyteller_id === st.id && s.status !== "failed");
+  const mine = view.stories.filter((s) => s.storyteller_id === st.id && !s.parent_story_id);
   const answered = [...new Set(mine.map((s) => s.question_id).filter((q): q is string => Boolean(q)))];
 
   return (

@@ -1,7 +1,8 @@
 "use client";
 // Интервью голосом: вопрос крупно + озвучка → запись → загрузка → история `uploaded` → следующий вопрос.
-// Очередь вопросов ведёт интервью-агент I10 (/api/sessions). Он ждёт расшифровку (I2): пока её нет,
-// ждём недолго и идём дальше — рассказ уже сохранён. Если API интервью недоступен — идём по банку сами.
+// Конвейер I2 гоняем отсюда: POST /api/stories/:id/process по шагу (расшифровка → редактура → перевод),
+// пока next !== null и не queued. Очередь вопросов ведёт интервью-агент I10 (/api/sessions): ему нужна
+// расшифровка — ждём её недолго и идём дальше (рассказ уже сохранён). Без API интервью — идём по банку сами.
 import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { QUESTIONS } from "@/content/questions/bank";
@@ -20,7 +21,7 @@ interface QuestionView {
 }
 
 type AnswerResult =
-  | { type: "followup"; questionId: string; text: string }
+  | { type: "followup"; questionId: string; text: string; storyId: string | null }
   | { type: "nextQuestion"; question: QuestionView; bridge: string; pause: boolean }
   | { type: "blockDone"; message: string; nextQuestion: QuestionView | null; bridge: string }
   | { type: "finished"; message: string };
@@ -32,11 +33,20 @@ interface Current {
   kind: "question" | "followup";
   bridge?: string;
   pause?: boolean;
+  /** Для уточнения: основная история вопроса — ответ пишется с parent_story_id */
+  mainStoryId?: string | null;
+}
+
+interface StepResult {
+  next: string | null;
+  queued: boolean;
+  status: string;
 }
 
 type Phase = "loading" | "ask" | "waiting" | "finished";
 
-const POLL_TRIES = 6;
+const POLL_TRIES = 10;
+const MAX_STEPS = 6;
 const POLL_MS = 2500;
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -115,7 +125,7 @@ export function RecordFlow(props: {
     (r: AnswerResult, prev: Current) => {
       switch (r.type) {
         case "followup":
-          return show({ question: prev.question, prompt: r.text, kind: "followup" });
+          return show({ question: prev.question, prompt: r.text, kind: "followup", mainStoryId: r.storyId ?? prev.mainStoryId ?? null });
         case "nextQuestion":
           return show(asQuestion(r.question, { bridge: r.bridge, pause: r.pause }));
         case "blockDone":
@@ -183,8 +193,30 @@ export function RecordFlow(props: {
     if (autoSpeak && current && phase === "ask") speak([current.bridge, current.prompt].filter(Boolean).join(" "));
   }, [autoSpeak, current, phase]);
 
-  /** После сохранения рассказа — спросить агента, что дальше. */
+  /** Конвейер I2 по шагам. Ошибки не мешают интервью: история перезапускается с того же шага позже. */
+  const drive = useCallback(
+    async (storyId: string, from?: "edit") => {
+      for (let i = 0; i < MAX_STEPS; i++) {
+        try {
+          const r = await postJson<StepResult>(`/api/stories/${storyId}/process`, token, i === 0 && from ? { from } : {});
+          if (!r.next || r.queued || r.status === "failed") return;
+        } catch (e) {
+          console.warn("[record] конвейер:", e instanceof Error ? e.message : e);
+          return;
+        }
+      }
+    },
+    [token],
+  );
+
+  /** Агент перешёл к другому вопросу после уточнений — пересобрать главу с ответами на них. */
+  function rebuildIfFollowups(prev: Current, r: AnswerResult) {
+    if (prev.kind === "followup" && prev.mainStoryId && r.type !== "followup") void drive(prev.mainStoryId, "edit");
+  }
+
+  /** После сохранения рассказа — запустить конвейер и спросить агента, что дальше. */
   async function advanceAfter(storyId: string, prev: Current) {
+    void drive(storyId);
     if (!session.current) {
       local.current.done.add(prev.question.id);
       return nextLocal();
@@ -193,7 +225,9 @@ export function RecordFlow(props: {
     try {
       for (let i = 0; i < POLL_TRIES && !dontWait.current; i++) {
         try {
-          return apply(await sessionCall("answer", { storyId }), prev);
+          const r = await sessionCall("answer", { storyId });
+          rebuildIfFollowups(prev, r);
+          return apply(r, prev);
         } catch (e) {
           if ((e as { code?: string }).code !== "not_ready") throw e;
           await sleep(POLL_MS);
@@ -229,6 +263,7 @@ export function RecordFlow(props: {
       block: prev.question.block,
       durationSec: t.durationSec || null,
       sessionId: session.current,
+      parentStoryId: prev.kind === "followup" ? (prev.mainStoryId ?? null) : null,
     });
     setCovered((c) => (c.includes(prev.question.block) ? c : [...c, prev.question.block]));
     setSaved(prev.kind === "followup" ? "Спасибо! Дополнение сохранено." : "Спасибо! Рассказ сохранён.");
@@ -249,7 +284,9 @@ export function RecordFlow(props: {
     }
     setPhase("loading");
     try {
-      apply(await sessionCall("skip", { action }), prev); // фразу «вернёмся позже» агент отдаёт в bridge
+      const r = await sessionCall("skip", { action });
+      rebuildIfFollowups(prev, r);
+      apply(r, prev); // фразу «вернёмся позже» агент отдаёт в bridge
     } catch (e) {
       if (isGone(e)) {
         persist(null);

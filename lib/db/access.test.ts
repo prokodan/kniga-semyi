@@ -43,6 +43,7 @@ describe("доступ семьи по токену", () => {
       block: "roots",
       duration_sec: 42.5,
       session_id: null,
+      parent_story_id: null,
     });
     expect(story.status).toBe("uploaded");
     expect(story.audio_url).toMatch(/\.webm$/);
@@ -80,14 +81,16 @@ describe("прогресс «3 из 8»", () => {
     question_id: null,
     block: block as StorySummary["block"],
     status,
+    parent_story_id: null,
     created_at: "",
   });
 
-  it("считает блоки, а не истории; упавшие и чужие не считаются", () => {
-    const p = blockProgress([s("roots"), s("roots"), s("love"), s("work", "failed"), s("youth", "ready", "st-2"), s(null)], "st-1");
-    expect(p.done).toBe(2);
+  it("считает блоки, а не истории; чужие и ответы на уточнения не считаются, упавший шаг ИИ — считается", () => {
+    const followup = { ...s("hardship"), parent_story_id: "main-1" }; // ответ на уточнение — не отдельный рассказ
+    const p = blockProgress([s("roots"), s("roots"), s("love"), s("work", "failed"), s("youth", "ready", "st-2"), s(null), followup], "st-1");
+    expect(p.done).toBe(3);
     expect(p.total).toBe(8);
-    expect(p.stories).toBe(4);
-    expect(p.covered).toEqual(["roots", "love"]);
+    expect(p.stories).toBe(5);
+    expect(p.covered).toEqual(["roots", "work", "love"]);
   });
 });
