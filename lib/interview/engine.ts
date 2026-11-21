@@ -299,6 +299,10 @@ export function createInterview(deps: InterviewDeps) {
         const followups = [...(main.followups ?? []), { question: state.pending_followup!, answer: text.trim() }];
         await repo.updateStory(main.id, { followups });
         main = { ...main, followups };
+        // Голосовой ответ на уточнение — отдельная запись; помечаем её, чтобы конвейер (I2) не делал из неё главу.
+        if (incoming && incoming.id !== main.id && !incoming.parent_story_id) {
+          await repo.updateStory(incoming.id, { parent_story_id: main.id });
+        }
       } else if (incoming) {
         const patch = { question_id: incoming.question_id ?? question.id, block: incoming.block ?? question.block };
         await repo.updateStory(incoming.id, patch);
