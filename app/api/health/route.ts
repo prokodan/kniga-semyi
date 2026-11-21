@@ -13,9 +13,16 @@ export async function GET() {
   let dbError: string | undefined;
 
   if (db) {
-    const { error } = await db.from("families").select("id", { count: "exact", head: true });
-    dbStatus = error ? "error" : "ok";
-    dbError = error?.message;
+    // Обычный select, не head: true — на HEAD-запрос PostgREST отдаёт ошибку без тела,
+    // и причина (например, «permission denied») терялась.
+    try {
+      const { error } = await db.from("families").select("id").limit(1);
+      dbStatus = error ? "error" : "ok";
+      if (error) dbError = formatDbError(error.code, error.message);
+    } catch (e) {
+      dbStatus = "error";
+      dbError = formatDbError("fetch_failed", e instanceof Error ? e.message : String(e));
+    }
   }
 
   const ok = dbStatus !== "error";
@@ -31,4 +38,11 @@ export async function GET() {
     },
     { status: ok ? 200 : 503, headers: { "cache-control": "no-store" } },
   );
+}
+
+// Только код и текст ошибки Postgres/PostgREST — без details/hint, URL и заголовков,
+// чтобы в публичный ответ не попали секреты. Длину ограничиваем.
+function formatDbError(code: string | undefined, message: string | undefined): string {
+  const text = `${code || "unknown"}: ${message || "без текста"}`.replace(/\s+/g, " ").trim();
+  return text.length > 300 ? `${text.slice(0, 300)}…` : text;
 }

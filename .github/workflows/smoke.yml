@@ -19,23 +19,58 @@ jobs:
       SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
       SUPABASE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Прод /api/health
         id: health
         run: |
+          # В $GITHUB_OUTPUT пишем только однострочные key=value (переводы строк вырезаем).
+          out() { printf '%s=%s\n' "$1" "$(printf '%s' "$2" | tr '\r\n' '  ')" >> "$GITHUB_OUTPUT"; }
+
           if [ -z "$PROD_URL" ]; then
             echo "::warning::PROD_URL не задан — проверка прода пропущена"
-            echo "summary=прод: PROD_URL не задан" >> "$GITHUB_OUTPUT"
+            out summary "прод: PROD_URL не задан"
             exit 0
           fi
-          body=$(curl -sS --max-time 20 --retry 2 "${PROD_URL%/}/api/health")
-          echo "$body"
-          status=$(echo "$body" | jq -r .status)
-          db=$(echo "$body" | jq -r .db)
-          mode=$(echo "$body" | jq -r .ai_mode)
-          echo "summary=прод: $status, база: $db, ИИ: $mode" >> "$GITHUB_OUTPUT"
-          [ "$status" = "ok" ] && [ "$db" = "ok" ]
+
+          url="${PROD_URL%/}/api/health"
+          # Без curl --retry: на 503 он повторяет запрос и склеивает тела ответов в одну строку вывода.
+          # Повторяем сами и только при сетевой ошибке (код 000); тело каждый раз перезаписывается.
+          code=000
+          rm -f health.json
+          for i in 1 2 3; do
+            code=$(curl -sS --max-time 20 -o health.json -w '%{http_code}' "$url" || true)
+            [ "$code" != "000" ] && break
+            sleep 5
+          done
+
+          echo "HTTP $code — ответ /api/health:"
+          if jq . health.json 2>/dev/null; then :; else cat health.json 2>/dev/null; echo; fi
+
+          if [ "$code" = "000" ]; then
+            out summary "прод: недоступен ($url)"
+            echo "::error::/api/health не ответил за 3 попытки: $url"
+            exit 1
+          fi
+          if ! jq -e 'type == "object"' health.json > /dev/null 2>&1; then
+            out summary "прод: HTTP $code, ответ не JSON"
+            echo "::error::/api/health вернул HTTP $code и не JSON — смотри ответ выше"
+            exit 1
+          fi
+
+          status=$(jq -r '.status // "?"' health.json)
+          db=$(jq -r '.db // "?"' health.json)
+          mode=$(jq -r '.ai_mode // "?"' health.json)
+          db_error=$(jq -r '.db_error // empty' health.json)
+          summary="прод: $status, база: $db, ИИ: $mode"
+          [ -n "$db_error" ] && summary="$summary ($db_error)"
+          out summary "$summary"
+
+          if [ "$code" != "200" ] || [ "$status" != "ok" ] || [ "$db" != "ok" ]; then
+            echo "::error::Прод не здоров: HTTP $code, status=$status, db=$db${db_error:+, db_error=$db_error}"
+            exit 1
+          fi
+          echo "✓ $summary"
 
       - name: Supabase — таблицы и хранилища
         id: db

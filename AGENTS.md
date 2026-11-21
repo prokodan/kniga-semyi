@@ -53,6 +53,10 @@ scripts/             служебные скрипты
 - **Семья входит по ссылке с токеном** (`families.access_token`), без регистрации. Не добавляй авторизацию.
 - **Миграции только добавляют.** Новый файл `supabase/migrations/<YYYYMMDDHHMMSS>_<что>.sql`. Старые не
   редактировать. Таблицы руками не создавать — их применит workflow `migrate` после слияния.
+- **Каждая новая таблица в миграции — сразу grant для `service_role`** в том же файле:
+  `grant all on table <имя> to service_role;` (для `identity`/`serial` — и на её sequence).
+  Без этого сервер ловит `permission denied`, а `/api/health` отдаёт `db: "error"`. `npm run db:check`
+  падает, если у `service_role` нет прав на какую-либо таблицу `public`.
 - **Секреты** только в Vercel Env и GitHub Secrets. Не коммить `.env*`, не печатай ключи в логи и PR.
 - **Голосовое согласие** обязательно до первой записи рассказчика. Архив АКНЦ — только с `archive_consent`.
 - **Стили** — классы Tailwind из токенов `app/globals.css` (`bg-paper`, `text-ink`, `bg-seal`, `text-elder`…).
