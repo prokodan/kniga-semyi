@@ -107,6 +107,9 @@ const TRANSCRIBE_PROMPT = (() => {
   }
 })();
 
+/** Тест должен быть быстрым: шаг конвейера сам ограничен 30–45 с, медленная модель нам не подходит. */
+const CALL_TIMEOUT_MS = Number(process.env.CALL_TIMEOUT_MS || 30_000);
+
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 async function geminiCall(model, kind) {
@@ -118,7 +121,9 @@ async function geminiCall(model, kind) {
     kind === "audio" ? TRANSCRIBE_PROMPT : 'Проверка связи. Ответь только JSON: {"ok": true, "echo": "<слово из запроса>"}';
   const send = async (thinking) => {
     const started = Date.now();
-    const res = await fetch(`${BASE}/models/${encodeURIComponent(model)}:generateContent`, {
+    let res;
+    try {
+      res = await fetch(`${BASE}/models/${encodeURIComponent(model)}:generateContent`, {
       method: "POST",
       headers: { "content-type": "application/json", "x-goog-api-key": GEMINI_KEY },
       body: JSON.stringify({
@@ -126,8 +131,13 @@ async function geminiCall(model, kind) {
         contents: [{ role: "user", parts }],
         generationConfig: generationConfig(model, thinking),
       }),
-      signal: AbortSignal.timeout(60_000),
+      signal: AbortSignal.timeout(CALL_TIMEOUT_MS),
     });
+    } catch (e) {
+      // Таймаут или сеть — это неудачная попытка этой модели, а не падение всего подбора.
+      const timeout = e?.name === "TimeoutError" || e?.name === "AbortError";
+      return { status: 0, body: timeout ? `таймаут ${CALL_TIMEOUT_MS / 1000} с` : `сеть: ${e?.message ?? e}`, ms: Date.now() - started };
+    }
     const body = await res.text();
     return { status: res.status, body, ms: Date.now() - started };
   };
@@ -140,12 +150,15 @@ async function geminiCall(model, kind) {
       thinking = false;
       continue;
     }
+    if (r.status === 0 && attempt === 0) continue; // таймаут/сеть — ещё одна попытка
     if (r.status === 429 || r.status === 503) {
       await sleep(6000);
       continue;
     }
     break;
   }
+  console.log(`  ${model} [${kind}] → ${r.status || "—"} за ${(r.ms / 1000).toFixed(1)} с${thinking ? "" : " (без thinkingLevel)"}`);
+  if (r.status === 0) return { ok: false, ms: r.ms, note: r.body };
   if (r.status !== 200) return { ok: false, ms: r.ms, note: `HTTP ${r.status}: ${shortError(r.body)}` };
   let text = "";
   try {
@@ -166,7 +179,9 @@ async function geminiCall(model, kind) {
 
 async function openaiCall(model) {
   const started = Date.now();
-  const res = await fetch("https://api.openai.com/v1/chat/completions", {
+  let res;
+  try {
+    res = await fetch("https://api.openai.com/v1/chat/completions", {
     method: "POST",
     headers: { authorization: `Bearer ${OPENAI_KEY}`, "content-type": "application/json" },
     body: JSON.stringify({
@@ -179,6 +194,9 @@ async function openaiCall(model) {
     }),
     signal: AbortSignal.timeout(60_000),
   });
+  } catch (e) {
+    return { ok: false, ms: Date.now() - started, note: e?.name === "TimeoutError" ? "таймаут 60 с" : `сеть: ${e?.message ?? e}` };
+  }
   const body = await res.text();
   const ms = Date.now() - started;
   if (!res.ok) return { ok: false, ms, note: `HTTP ${res.status}: ${shortError(body)}` };
@@ -222,6 +240,7 @@ try {
 
 const fl = candidates(models, "flash-lite");
 const fla = candidates(models, "flash");
+console.log(`models.list: ${models.length}; Flash-Lite: ${fl.map((m) => m.id).join(", ") || "—"}; Flash: ${fla.map((m) => m.id).join(", ") || "—"}`);
 const warn = [];
 const only3 = (list, name) => {
   const v3 = list.filter((m) => m.v.major >= 3);
