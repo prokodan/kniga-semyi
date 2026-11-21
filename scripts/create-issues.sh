@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Заводит issues из docs/issues/*.md в GitHub (метки, milestone «MLP 27.11»).
 # Повторный запуск безопасен: issue с тем же заголовком пропускается.
-# Нужно: gh с правом записи в репозиторий (gh auth login).
+# Нужно: gh с правом записи в репозиторий (gh auth login). Только REST API (без GraphQL).
 # Запуск: npm run issues:create   (или bash scripts/create-issues.sh prokodan/kniga-semyi)
 set -euo pipefail
 
@@ -31,12 +31,13 @@ label "can-cut" "cccccc" "Режем первым, если не успевае�
 label "bug" "d73a4a" "Баг"
 
 echo "Milestone…"
-if ! gh api "repos/$REPO/milestones?state=all" --jq '.[].title' | grep -qx "$MILESTONE"; then
-  gh api "repos/$REPO/milestones" -f title="$MILESTONE" -f due_on="2026-11-27T05:00:00Z" \
-    -f description="Полуфинал Startup-Nunchi. Фриз фич — ср 25.11 14:00" >/dev/null
+ms="$(gh api "repos/$REPO/milestones?state=all&per_page=100" --jq ".[] | select(.title == \"$MILESTONE\") | .number")"
+if [ -z "$ms" ]; then
+  ms="$(gh api "repos/$REPO/milestones" -f title="$MILESTONE" -f due_on="2026-11-27T05:00:00Z" \
+    -f description="Полуфинал Startup-Nunchi. Фриз фич — ср 25.11 14:00" --jq .number)"
 fi
 
-existing="$(gh issue list --repo "$REPO" --state all --limit 200 --json title --jq '.[].title')"
+existing="$(gh api "repos/$REPO/issues?state=all&per_page=100" --paginate --jq '.[] | select(.pull_request == null) | .title')"
 
 for id in "${ORDER[@]}"; do
   file="$DIR/$id.md"
@@ -48,7 +49,9 @@ for id in "${ORDER[@]}"; do
     continue
   fi
   printf '%s\n\n---\n_Источник: `docs/issues/%s.md`_\n' "$body" "$id" > /tmp/issue-body.md
-  url="$(gh issue create --repo "$REPO" --title "$title" --label "$labels" --milestone "$MILESTONE" --body-file /tmp/issue-body.md)"
+  url="$(jq -n --arg t "$title" --rawfile b /tmp/issue-body.md --arg l "$labels" --argjson m "$ms" \
+    '{title: $t, body: $b, labels: ($l | split(",")), milestone: $m}' \
+    | gh api "repos/$REPO/issues" --input - --jq .html_url)"
   echo "+ $url  $title"
 done
 echo "Готово."
