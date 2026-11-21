@@ -1,0 +1,54 @@
+name: ci
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  ci:
+    name: ci
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      AI_MODE: mock
+      NEXT_TELEMETRY_DISABLED: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Типы
+        run: npm run typecheck
+      - name: Линтер
+        run: npm run lint
+      - name: Тесты
+        run: npm run test
+      - name: Миграции (PGlite)
+        run: npm run db:check
+      - name: Сборка
+        run: npm run build
+
+      - name: Telegram — CI упал на main
+        if: failure() && github.event_name == 'push'
+        uses: ./.github/actions/telegram
+        with:
+          token: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          chat_id: ${{ secrets.TELEGRAM_CHAT_ID }}
+          text: "🔴 CI упал на main: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+      - name: Telegram — CI упал в PR
+        if: failure() && github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
+        uses: ./.github/actions/telegram
+        with:
+          token: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          chat_id: ${{ secrets.TELEGRAM_CHAT_ID }}
+          text: "🟠 CI упал в PR #${{ github.event.pull_request.number }}: ${{ github.event.pull_request.html_url }}"

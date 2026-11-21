@@ -1,0 +1,71 @@
+name: smoke
+
+# Ежедневная проверка прода: /api/health, таблицы и хранилища Supabase.
+# 02:23 UTC = 07:23 Алматы. Также запускается вручную (и утром 27.11 перед питчем).
+on:
+  schedule:
+    - cron: "23 2 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      PROD_URL: ${{ secrets.PROD_URL }}
+      SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
+      SUPABASE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Прод /api/health
+        id: health
+        run: |
+          if [ -z "$PROD_URL" ]; then
+            echo "::warning::PROD_URL не задан — проверка прода пропущена"
+            echo "summary=прод: PROD_URL не задан" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          body=$(curl -sS --max-time 20 --retry 2 "${PROD_URL%/}/api/health")
+          echo "$body"
+          status=$(echo "$body" | jq -r .status)
+          db=$(echo "$body" | jq -r .db)
+          mode=$(echo "$body" | jq -r .ai_mode)
+          echo "summary=прод: $status, база: $db, ИИ: $mode" >> "$GITHUB_OUTPUT"
+          [ "$status" = "ok" ] && [ "$db" = "ok" ]
+
+      - name: Supabase — таблицы и хранилища
+        id: db
+        run: |
+          if [ -z "$SUPABASE_URL" ] || [ -z "$SUPABASE_KEY" ]; then
+            echo "::warning::Секреты Supabase не заданы — проверка базы пропущена"
+            exit 0
+          fi
+          h=(-H "apikey: $SUPABASE_KEY" -H "Authorization: Bearer $SUPABASE_KEY")
+          for t in families storytellers sessions stories books extras demo_orders kiosk_volunteers ai_usage ai_routes ai_providers ai_cache; do
+            code=$(curl -s -o /dev/null -w "%{http_code}" "${h[@]}" "${SUPABASE_URL%/}/rest/v1/$t?select=*&limit=1")
+            echo "$t: $code"; [ "$code" = "200" ]
+          done
+          buckets=$(curl -sS "${h[@]}" "${SUPABASE_URL%/}/storage/v1/bucket" | jq -r '[.[].id] | sort | join(",")')
+          echo "buckets: $buckets"
+          [ "$buckets" = "audio,books,illustrations,photos" ]
+          routes=$(curl -sS "${h[@]}" "${SUPABASE_URL%/}/rest/v1/ai_routes?select=step" | jq length)
+          echo "ai_routes: $routes"; [ "$routes" -ge 8 ]
+
+      - name: Telegram — smoke ок
+        if: success()
+        uses: ./.github/actions/telegram
+        with:
+          token: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          chat_id: ${{ secrets.TELEGRAM_CHAT_ID }}
+          text: "🟢 Smoke прода ок — ${{ steps.health.outputs.summary }}"
+      - name: Telegram — smoke упал
+        if: failure()
+        uses: ./.github/actions/telegram
+        with:
+          token: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          chat_id: ${{ secrets.TELEGRAM_CHAT_ID }}
+          text: "🔴 Smoke прода упал — ${{ steps.health.outputs.summary }}: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"

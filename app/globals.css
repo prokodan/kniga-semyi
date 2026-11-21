@@ -1,0 +1,56 @@
+@import "tailwindcss";
+
+/*
+ * Дизайн-токены «Книги семьи». Владелец — Z6.
+ * Тёплая бумага (ханджи), чернила, акцент — киноварь корейской печати, второй — нефрит.
+ * Используй классы Tailwind из @theme: bg-paper, text-ink, bg-seal, text-muted, font-serif, rounded-card и т. д.
+ * Новые цвета и размеры не вводить в компонентах — только здесь.
+ */
+@theme {
+  --color-paper: #fbf7f0;
+  --color-paper-deep: #f2eadc;
+  --color-ink: #2b2420;
+  --color-ink-soft: #4a403a;
+  --color-muted: #8a7f76;
+  --color-line: #e3d8c8;
+  --color-seal: #b8402f;
+  --color-seal-dark: #8f2f22;
+  --color-jade: #4f7a6a;
+  --color-gold: #b88a3e;
+  --color-success: #3f7d4e;
+  --color-warning: #b7791f;
+  --color-danger: #b42318;
+
+  --font-sans: "Inter", "Noto Sans", "Noto Sans KR", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-serif: "Noto Serif", "Noto Serif KR", "PT Serif", Georgia, serif;
+
+  --radius-card: 1.25rem;
+  --radius-button: 999px;
+
+  /* Крупная типографика для старших и киоска */
+  --text-elder: 1.375rem;
+  --text-elder--line-height: 1.6;
+  --text-kiosk: 1.75rem;
+  --text-kiosk--line-height: 1.5;
+
+  --shadow-card: 0 1px 2px rgb(43 36 32 / 0.06), 0 8px 24px rgb(43 36 32 / 0.06);
+}
+
+:root {
+  color-scheme: light;
+}
+
+html,
+body {
+  background: var(--color-paper);
+  color: var(--color-ink);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Минимальный размер зоны нажатия — 48px (пожилые пользователи, планшет) */
+button,
+[role="button"],
+a.button {
+  min-height: 48px;
+}

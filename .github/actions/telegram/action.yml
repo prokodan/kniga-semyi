@@ -1,0 +1,32 @@
+name: telegram
+description: Сообщение в общий Telegram-чат. Тихо пропускается, если секреты не заданы.
+inputs:
+  token:
+    description: TELEGRAM_BOT_TOKEN
+    required: false
+    default: ""
+  chat_id:
+    description: TELEGRAM_CHAT_ID
+    required: false
+    default: ""
+  text:
+    description: Текст сообщения (обычный текст, без разметки)
+    required: true
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      env:
+        TG_TOKEN: ${{ inputs.token }}
+        TG_CHAT: ${{ inputs.chat_id }}
+        TG_TEXT: ${{ inputs.text }}
+      run: |
+        if [ -z "$TG_TOKEN" ] || [ -z "$TG_CHAT" ]; then
+          echo "Telegram-секреты не заданы — уведомление пропущено"
+          exit 0
+        fi
+        curl -sS --fail-with-body -X POST "https://api.telegram.org/bot${TG_TOKEN}/sendMessage" \
+          --data-urlencode "chat_id=${TG_CHAT}" \
+          --data-urlencode "text=${TG_TEXT}" \
+          --data-urlencode "disable_web_page_preview=true" > /dev/null \
+          || echo "::warning::Не удалось отправить сообщение в Telegram"

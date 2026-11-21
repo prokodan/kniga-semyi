@@ -1,0 +1,3 @@
+# Минимальный конфиг для Supabase CLI (workflow migrate: supabase db push --db-url).
+# Проект в облаке настраивается в дашборде; локальный стек не используется.
+project_id = "kniga-semyi"

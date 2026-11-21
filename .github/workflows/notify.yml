@@ -1,0 +1,33 @@
+name: notify
+
+# Уведомления в общий Telegram-чат: PR готов к ревью, деплой на прод прошёл.
+on:
+  pull_request:
+    types: [opened, ready_for_review, reopened]
+  deployment_status:
+
+permissions:
+  contents: read
+
+jobs:
+  pr-ready:
+    if: github.event_name == 'pull_request' && github.event.pull_request.draft == false && github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/telegram
+        with:
+          token: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          chat_id: ${{ secrets.TELEGRAM_CHAT_ID }}
+          text: "👀 PR #${{ github.event.pull_request.number }} готов к ревью (${{ github.event.pull_request.user.login }}): ${{ github.event.pull_request.title }}\n${{ github.event.pull_request.html_url }}"
+
+  deployed:
+    if: github.event_name == 'deployment_status' && github.event.deployment_status.state == 'success' && github.event.deployment.environment == 'Production'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/telegram
+        with:
+          token: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          chat_id: ${{ secrets.TELEGRAM_CHAT_ID }}
+          text: "🚀 Деплой на прод прошёл: ${{ github.event.deployment_status.environment_url }}"
