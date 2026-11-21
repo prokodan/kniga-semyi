@@ -32,6 +32,8 @@ export const env = {
   telegramBotToken: () => read("TELEGRAM_BOT_TOKEN"),
   telegramChatId: () => read("TELEGRAM_CHAT_ID"),
   prodUrl: () => read("PROD_URL"),
+  /** Секрет подписи QR-ссылок /listen (I3). Необязателен: по умолчанию выводится из service-ключа. */
+  listenSecret: () => read("LISTEN_SECRET"),
   aiMode: getAiMode,
 };
 

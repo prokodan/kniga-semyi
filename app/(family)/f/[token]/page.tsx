@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import Link from "next/link";
+import { BLOCKS } from "@/content/questions/blocks";
 import { blockProgress, getFamilyByToken, getFamilyStore } from "@/lib/db/access";
 import { BlockProgress } from "../../_ui/BlockProgress";
 import { LinkNotFound } from "../../_ui/LinkNotFound";
@@ -20,6 +21,7 @@ export default async function FamilyPage({ params, searchParams }: { params: Pro
   const { family, storyteller } = view;
   const progress = blockProgress(view.stories, storyteller?.id);
   const photo = storyteller?.photo_url ? await getFamilyStore().photoUrl(storyteller.photo_url) : null;
+  const chapters = view.stories.filter((s) => !s.parent_story_id && s.storyteller_id === storyteller?.id);
   const years = storyteller?.birth_year ? `${storyteller.birth_year}${storyteller.death_year ? `–${storyteller.death_year}` : ""} г. р.` : null;
 
   return (
@@ -76,6 +78,29 @@ export default async function FamilyPage({ params, searchParams }: { params: Pro
           {progress.stories > 0 ? "Записать ещё рассказ" : "Записать первый рассказ"}
         </Link>
       ) : null}
+
+      {chapters.length > 0 && (
+        <section className="flex flex-col gap-2">
+          <h2 className="font-serif text-2xl">Главы</h2>
+          <ul className="flex flex-col gap-2">
+            {chapters.map((c, i) => (
+              <li key={c.id}>
+                <Link
+                  href={`/chapter/${c.id}?token=${token}`}
+                  className="flex min-h-12 items-center justify-between gap-3 rounded-card border border-line bg-paper px-4 py-3"
+                >
+                  <span>
+                    {i + 1}. {BLOCKS.find((b) => b.id === c.block)?.ru ?? "Рассказ"}
+                  </span>
+                  <span className={`text-sm ${c.status === "ready" ? "text-jade" : c.status === "failed" ? "text-danger" : "text-muted"}`}>
+                    {c.status === "ready" ? "читать →" : c.status === "failed" ? "нужна помощь" : "готовится…"}
+                  </span>
+                </Link>
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
 
       {!isNew && (
         <section className="flex flex-col gap-3 border-t border-line pt-5">
