@@ -1,6 +1,6 @@
 import Link from "next/link";
 
-// Временная главная. Экран «Старт семьи» делает I1 в app/(family)/.
+// Главная: вход в «Старт семьи» (I1). Лендинг для комиссии — позже.
 export default function Home() {
   return (
     <main className="mx-auto flex max-w-xl flex-col gap-6 px-6 py-16">
@@ -13,12 +13,13 @@ export default function Home() {
         Запишите голос бабушки или дедушки — мы превратим рассказы в главы на русском и корейском и соберём книгу для
         внуков.
       </p>
-      <div className="rounded-card bg-paper-deep p-5 shadow-card">
-        <p className="text-sm text-muted">Каркас W0 готов. Экраны появятся по задачам I1–I15.</p>
-        <Link href="/api/health" className="mt-2 inline-block text-seal underline underline-offset-4">
-          Проверить /api/health
-        </Link>
-      </div>
+      <Link
+        href="/start"
+        className="button flex items-center justify-center rounded-button bg-seal px-6 py-4 text-elder font-semibold text-paper active:bg-seal-dark"
+      >
+        Создать книгу семьи
+      </Link>
+      <p className="text-sm text-muted">Без регистрации: в конце вы получите ссылку для всей семьи.</p>
     </main>
   );
 }
