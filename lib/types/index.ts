@@ -91,6 +91,9 @@ export interface Story {
   family_id: Uuid;
   storyteller_id: Uuid;
   session_id: Uuid | null;
+  /** Голосовой ответ на уточнение: ссылка на основную историю. Такая запись только расшифровывается
+   *  (transcript уходит в followups основной), главой не становится. null — обычная история. */
+  parent_story_id: Uuid | null;
   question_id: string | null;
   block: LifeBlock | null;
   audio_url: string | null;

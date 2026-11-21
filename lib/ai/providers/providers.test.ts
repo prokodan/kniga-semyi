@@ -30,6 +30,29 @@ describe("gemini provider", () => {
     expect(String((fetchMock.mock.calls[0] as unknown[])[0])).toContain("gemini-2.5-flash-lite:generateContent");
   });
 
+  it("Gemini 3.x: thinkingLevel low; если модель его не принимает — повтор без него", async () => {
+    vi.stubEnv("GEMINI_API_KEY", "test");
+    const ok = { candidates: [{ content: { parts: [{ text: '{"text_ko":"가","title_ko":"나","quote_ko":"다"}' }] } }] };
+    const fn = vi
+      .fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({ error: { message: "thinking_level is not supported" } }), { status: 400 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify(ok), { status: 200 }));
+    vi.stubGlobal("fetch", fn);
+    const res = await call(geminiProvider, "gemini-3.5-flash-lite");
+    expect(res.output).toMatchObject({ text_ko: "가" });
+    const bodies = fn.mock.calls.map((c) => JSON.parse(String((c[1] as RequestInit).body)));
+    expect(bodies[0].generationConfig.thinkingConfig).toEqual({ thinkingLevel: "low" });
+    expect(bodies[1].generationConfig.thinkingConfig).toBeUndefined();
+  });
+
+  it("Gemini 2.5: без thinkingConfig", async () => {
+    vi.stubEnv("GEMINI_API_KEY", "test");
+    const fetchMock = stubFetch(200, { candidates: [{ content: { parts: [{ text: '{"text_ko":"가","title_ko":"나","quote_ko":"다"}' }] } }] });
+    await call(geminiProvider, "gemini-2.5-flash");
+    const body = JSON.parse(String(((fetchMock.mock.calls[0] as unknown[])[1] as RequestInit).body));
+    expect(body.generationConfig.thinkingConfig).toBeUndefined();
+  });
+
   it("429 → rate_limited", async () => {
     vi.stubEnv("GEMINI_API_KEY", "test");
     stubFetch(429, { error: { message: "quota" } });
