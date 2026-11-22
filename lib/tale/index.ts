@@ -3,6 +3,8 @@ import "server-only";
 // Строка в extras (type = 'tale'): data = { title, pages[{ text, illustrationPrompt }], … }.
 // Картинки — bucket illustrations: <familyId>/<extraId>/p<i>-<время>.<ext>. Каждая страница пишет свой файл,
 // поэтому параллельные картинки не перетирают друг друга в jsonb. Без Supabase — память процесса (data:-ссылки).
+import { DEMO_STORAGE_PREFIX } from "@/fixtures/demo/family";
+import { DEMO_TALE_ART } from "@/fixtures/demo/tale-art";
 import { ai, AiUnavailableError } from "@/lib/ai";
 import { BUCKETS, getDbOrNull } from "@/lib/db";
 import { getFamilyStore, MemoryFamilyStore } from "@/lib/db/access";
@@ -13,8 +15,8 @@ import { TALE_MAX_PAGES, TALE_MIN_STORIES, TALE_STYLE, type TaleView } from "./t
 
 export * from "./types";
 
-/** Сказка «пишется» дольше — считаем, что функция упала, и разрешаем начать заново. */
-const WRITING_STALE_MS = 90 * 1000;
+/** Сказка «пишется» дольше — функция (лимит Vercel 60 с) точно упала, разрешаем начать заново. */
+const WRITING_STALE_MS = 75 * 1000;
 const IMAGE_URL_TTL = 60 * 60;
 
 export interface TalePage {
@@ -70,10 +72,15 @@ async function loadSource(familyId: string): Promise<TaleSource> {
 
 // ---------------- строка extras и картинки ----------------
 
+interface MemoryImage {
+  url: string;
+  /** картинка из готового набора (художник был недоступен) */
+  fallback: boolean;
+}
 interface MemoryTale {
   extra: Extra;
   /** номер страницы → data:-ссылка */
-  images: Map<number, string>;
+  images: Map<number, MemoryImage>;
 }
 const g = globalThis as { __taleMemory?: Map<string, MemoryTale> };
 const memory = () => (g.__taleMemory ??= new Map());
@@ -119,12 +126,19 @@ async function saveTale(familyId: string, current: Extra | null, patch: { status
 
 const EXT: Record<string, string> = { "image/png": "png", "image/jpeg": "jpg", "image/webp": "webp", "image/svg+xml": "svg" };
 const folder = (extra: Extra) => `${extra.family_id}/${extra.id}`;
-const PAGE_FILE = /^p(\d+)-(\d+)\.[a-z]+$/;
+/** p<стр>-<время>.<ext>; «-set» — картинка из готового набора, когда художник недоступен. */
+const PAGE_FILE = /^p(\d+)-(\d+)(-set)?\.[a-z]+$/;
+
+interface PageFiles {
+  latest: string;
+  all: string[];
+  fallback: boolean;
+}
 
 /** Файлы картинок сказки: номер страницы → самый свежий путь (и все пути страницы — чтобы чистить старые). */
-async function listImages(extra: Extra): Promise<Map<number, { latest: string; all: string[] }>> {
+async function listImages(extra: Extra): Promise<Map<number, PageFiles>> {
   const db = getDbOrNull();
-  const out = new Map<number, { latest: string; all: string[]; ts: number }>();
+  const out = new Map<number, PageFiles & { ts: number }>();
   if (!db) return out;
   const { data, error } = await db.storage.from(BUCKETS.illustrations).list(folder(extra), { limit: 200 });
   if (error) throw new Error(`картинки сказки: ${error.message}`);
@@ -134,30 +148,36 @@ async function listImages(extra: Extra): Promise<Map<number, { latest: string; a
     const page = Number(m[1]);
     const ts = Number(m[2]);
     const path = `${folder(extra)}/${f.name}`;
+    const fallback = Boolean(m[3]);
     const cur = out.get(page);
-    if (!cur) out.set(page, { latest: path, all: [path], ts });
+    if (!cur) out.set(page, { latest: path, all: [path], ts, fallback });
     else {
       cur.all.push(path);
-      if (ts > cur.ts) Object.assign(cur, { latest: path, ts });
+      if (ts > cur.ts) Object.assign(cur, { latest: path, ts, fallback });
     }
   }
   return out;
 }
 
-async function imageUrls(extra: Extra, count: number): Promise<(string | null)[]> {
+type PageImage = { url: string; fallback: boolean } | null;
+
+async function imageUrls(extra: Extra, count: number): Promise<PageImage[]> {
   const db = getDbOrNull();
   if (!db) {
     const images = memory().get(extra.family_id)?.images;
     return Array.from({ length: count }, (_, i) => images?.get(i) ?? null);
   }
   const files = await listImages(extra);
-  const paths = Array.from({ length: count }, (_, i) => files.get(i)?.latest ?? null);
-  const wanted = paths.filter((p): p is string => Boolean(p));
-  if (wanted.length === 0) return paths.map(() => null);
+  const pages = Array.from({ length: count }, (_, i) => files.get(i) ?? null);
+  const wanted = pages.flatMap((f) => (f ? [f.latest] : []));
+  if (wanted.length === 0) return pages.map(() => null);
   const { data, error } = await db.storage.from(BUCKETS.illustrations).createSignedUrls(wanted, IMAGE_URL_TTL);
   if (error) throw new Error(`ссылки на картинки: ${error.message}`);
   const byPath = new Map((data ?? []).map((d) => [d.path ?? "", d.signedUrl]));
-  return paths.map((p) => (p ? (byPath.get(p) ?? null) : null));
+  return pages.map((f) => {
+    const url = f ? byPath.get(f.latest) : undefined;
+    return f && url ? { url, fallback: f.fallback } : null;
+  });
 }
 
 async function removeImages(extra: Extra, page?: number): Promise<void> {
@@ -173,7 +193,12 @@ async function removeImages(extra: Extra, page?: number): Promise<void> {
   if (paths.length) await db.storage.from(BUCKETS.illustrations).remove(paths);
 }
 
-async function storeImage(extra: Extra, page: number, img: { imageBase64: string; mimeType: string }): Promise<string> {
+async function storeImage(
+  extra: Extra,
+  page: number,
+  img: { imageBase64: string; mimeType: string },
+  fallback = false,
+): Promise<string> {
   const mime = img.mimeType.split(";")[0]!.trim().toLowerCase();
   const ext = EXT[mime];
   if (!ext) throw new Error(`картинка: неизвестный формат ${mime}`);
@@ -182,11 +207,11 @@ async function storeImage(extra: Extra, page: number, img: { imageBase64: string
     const url = `data:${mime};base64,${img.imageBase64}`;
     const m = memory().get(extra.family_id);
     if (!m) throw new Error("сказка не найдена");
-    m.images.set(page, url);
+    m.images.set(page, { url, fallback });
     return url;
   }
   const old = (await listImages(extra)).get(page)?.all ?? [];
-  const path = `${folder(extra)}/p${page}-${Date.now()}.${ext}`;
+  const path = `${folder(extra)}/p${page}-${Date.now()}${fallback ? "-set" : ""}.${ext}`;
   const up = await db.storage
     .from(BUCKETS.illustrations)
     .upload(path, Buffer.from(img.imageBase64, "base64"), { contentType: mime, upsert: true });
@@ -195,6 +220,33 @@ async function storeImage(extra: Extra, page: number, img: { imageBase64: string
   const { data, error } = await db.storage.from(BUCKETS.illustrations).createSignedUrl(path, IMAGE_URL_TTL);
   if (error || !data) throw new Error(`ссылка на картинку: ${error?.message ?? "нет данных"}`);
   return data.signedUrl;
+}
+
+/**
+ * Картинка из готового набора в том же стиле (TALE_STYLE), когда художник недоступен: «золотые» картинки
+ * демо-семьи из хранилища (illustrations/_demo/tale/p<i>.*), иначе акварельные SVG из репозитория.
+ * Пустого места на странице не бывает.
+ */
+async function fallbackArt(page: number): Promise<{ imageBase64: string; mimeType: string }> {
+  const i = page % DEMO_TALE_ART.length;
+  const db = getDbOrNull();
+  if (db) {
+    try {
+      const dir = `${DEMO_STORAGE_PREFIX}/tale`;
+      const { data } = await db.storage.from(BUCKETS.illustrations).list(dir, { limit: 50 });
+      const f = (data ?? []).find((x) => x.id !== null && x.name.replace(/\.[a-z0-9]+$/i, "") === `p${i}`);
+      if (f) {
+        const dl = await db.storage.from(BUCKETS.illustrations).download(`${dir}/${f.name}`);
+        if (dl.data) {
+          const mimeType = dl.data.type || (f.name.endsWith(".png") ? "image/png" : "image/jpeg");
+          return { imageBase64: Buffer.from(await dl.data.arrayBuffer()).toString("base64"), mimeType };
+        }
+      }
+    } catch (e) {
+      console.error("[tale] набор картинок:", e instanceof Error ? e.message : e);
+    }
+  }
+  return { imageBase64: Buffer.from(DEMO_TALE_ART[i]!).toString("base64"), mimeType: "image/svg+xml" };
 }
 
 // ---------------- публичное API ----------------
@@ -225,7 +277,10 @@ export async function getTaleView(familyId: string): Promise<TaleView> {
   const stale = extra.status === "writing" && isStale(extra);
   const status = stale ? "failed" : extra.status === "ready" || extra.status === "writing" || extra.status === "failed" ? extra.status : "failed";
   const images = status === "ready" ? await imageUrls(extra, data.pages.length) : [];
-  const pages = status === "ready" ? data.pages.map((p, i) => ({ text: p.text, image: images[i] ?? null, imageError: null })) : [];
+  const pages =
+    status === "ready"
+      ? data.pages.map((p, i) => ({ text: p.text, image: images[i]?.url ?? null, imageError: null, fallback: images[i]?.fallback ?? false }))
+      : [];
   return {
     status,
     title: data.title,
@@ -263,8 +318,9 @@ export async function writeTale(familyId: string, opts: { childName?: unknown; a
     error: null,
   };
 
+  // Прошлую готовую сказку не стираем, пока новая не написана: не вышло — возвращаем её как была.
+  const restore = current?.status === "ready" && prev && prev.pages.length > 0 ? { ...prev, error: null } : null;
   let extra = await saveTale(familyId, current, { status: "writing", data: base });
-  if (current) await removeImages(extra).catch((e) => console.error("[tale] старые картинки:", e instanceof Error ? e.message : e));
 
   try {
     const tale = await ai.run(
@@ -284,37 +340,63 @@ export async function writeTale(familyId: string, opts: { childName?: unknown; a
       title = neutralizeChildName(title, known);
       pages = pages.map((p, i) => ({ ...p, text: neutralizeChildName(p.text, known, { vocative: i === pages.length - 1 }) }));
     }
+    if (current) await removeImages(extra).catch((err) => console.error("[tale] старые картинки:", err instanceof Error ? err.message : err));
     extra = await saveTale(familyId, extra, { status: "ready", data: { ...base, title, pages } });
   } catch (e) {
-    const message =
-      e instanceof AiUnavailableError ? "Сказочник сейчас занят — попробуйте через пару минут" : "Сказка не получилась — попробуйте ещё раз";
+    const unavailable = e instanceof AiUnavailableError;
+    const message = unavailable
+      ? "Сказочник сейчас занят: все модели заняты или не ответили вовремя. Нажмите «Попробовать ещё раз» через минуту."
+      : "Сказка не получилась — нажмите «Попробовать ещё раз».";
+    // Полная причина (модели и ответы) — в логах Vercel и в /admin/ai (ai_usage).
     console.error("[tale] текст:", e instanceof Error ? e.message : e);
-    await saveTale(familyId, extra, { status: "failed", data: { ...base, error: message } });
-    throw new TaleError(e instanceof AiUnavailableError ? "unavailable" : "not_ready", message);
+    if (restore) await saveTale(familyId, extra, { status: "ready", data: restore });
+    else await saveTale(familyId, extra, { status: "failed", data: { ...base, error: message } });
+    throw new TaleError(unavailable ? "unavailable" : "not_ready", message);
   }
   return getTaleView(familyId);
 }
 
-/** Нарисовать картинку страницы (шаг illustrate, общий стиль). regenerate — мимо кэша, старая заменяется. */
-export async function illustratePage(familyId: string, page: number, opts: { regenerate?: boolean } = {}): Promise<{ page: number; image: string }> {
+export interface IllustrateResult {
+  page: number;
+  image: string;
+  /** картинка из готового набора: художник был недоступен */
+  fallback: boolean;
+  /** что сказать семье, если нарисовать не вышло */
+  notice: string | null;
+}
+
+const FALLBACK_NOTICE = "Художник сейчас занят — пока поставили картинку из нашего набора. Позже можно нарисовать свою.";
+
+/**
+ * Нарисовать картинку страницы (шаг illustrate, общий стиль). regenerate — мимо кэша, старая заменяется.
+ * Художник недоступен (ошибка, таймаут, «остывает») — пустого места нет: остаётся прежняя картинка или
+ * ставится картинка из набора в том же стиле. fallback — сразу из набора (страница не дождалась ответа сервера).
+ */
+export async function illustratePage(
+  familyId: string,
+  page: number,
+  opts: { regenerate?: boolean; fallback?: boolean } = {},
+): Promise<IllustrateResult> {
   const extra = await latestTale(familyId);
   const data = dataOf(extra);
   if (!extra || !data || extra.status !== "ready") throw new TaleError("not_ready", "Сначала сказке нужен текст");
   const p = data.pages[page];
   if (!Number.isInteger(page) || !p) throw new TaleError("bad_page", "Такой страницы в сказке нет");
 
-  if (!opts.regenerate) {
-    const existing = (await imageUrls(extra, data.pages.length))[page];
-    if (existing) return { page, image: existing };
+  const existing = (await imageUrls(extra, data.pages.length))[page] ?? null;
+  if (existing && (!opts.regenerate || opts.fallback)) return { page, image: existing.url, fallback: existing.fallback, notice: null };
+  if (!opts.fallback) {
+    try {
+      const img = await ai.run("illustrate", { prompt: p.illustrationPrompt, style: data.style }, { noCache: Boolean(opts.regenerate) });
+      return { page, image: await storeImage(extra, page, img), fallback: false, notice: null };
+    } catch (e) {
+      // AiUnavailableError перечисляет модели и причины (403 «organization must be verified», 429, timeout…)
+      console.error(`[tale] картинка ${page}:`, e instanceof Error ? e.message : e);
+      if (existing) return { page, image: existing.url, fallback: existing.fallback, notice: "Художник сейчас занят — оставили прежнюю картинку. Попробуйте позже." };
+    }
   }
-  try {
-    const img = await ai.run("illustrate", { prompt: p.illustrationPrompt, style: data.style }, { noCache: Boolean(opts.regenerate) });
-    return { page, image: await storeImage(extra, page, img) };
-  } catch (e) {
-    console.error(`[tale] картинка ${page}:`, e instanceof Error ? e.message : e);
-    if (e instanceof AiUnavailableError) throw new TaleError("unavailable", "Художник сейчас занят — попробуйте через минуту");
-    throw new TaleError("not_ready", "Картинка не получилась — попробуйте ещё раз");
-  }
+  const image = await storeImage(extra, page, await fallbackArt(page), true);
+  return { page, image, fallback: true, notice: FALLBACK_NOTICE };
 }
 
 /** Вся сказка за один вызов: текст, затем все картинки параллельно. Неудачные картинки не роняют сказку. */

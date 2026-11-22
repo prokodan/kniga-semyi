@@ -135,6 +135,75 @@ describe("сказка в AI_MODE=mock", () => {
   });
 });
 
+describe("художник и сказочник недоступны — без пустых мест", () => {
+  it("illustrate упал → картинка из набора в том же стиле, с пометкой; regenerate не стирает прежнюю", async () => {
+    const id = await family(3);
+    await writeTale(id);
+    const { ai, AiUnavailableError } = await import("@/lib/ai");
+    const spy = vi.spyOn(ai, "run").mockRejectedValue(new AiUnavailableError("illustrate", [{ provider: "openai", model: "gpt-image-1", reason: "timeout" }]));
+    try {
+      const r = await illustratePage(id, 0);
+      expect(r.fallback).toBe(true);
+      expect(r.notice).toMatch(/Художник сейчас занят/);
+      expect(r.image).toMatch(/^data:image\/svg\+xml;base64,/);
+      const view = await getTaleView(id);
+      expect(view.pages[0]).toMatchObject({ fallback: true });
+      expect(view.illustrated).toBe(1);
+
+      const again = await illustratePage(id, 0, { regenerate: true });
+      expect(again.image).toBe(r.image);
+      expect(again.notice).toMatch(/оставили прежнюю/);
+    } finally {
+      spy.mockRestore();
+    }
+    // Художник вернулся — «Нарисовать свою» заменяет картинку из набора
+    const drawn = await illustratePage(id, 0, { regenerate: true });
+    expect(drawn.fallback).toBe(false);
+    expect((await getTaleView(id)).pages[0]).toMatchObject({ fallback: false });
+  });
+
+  it("fallback: true (браузер не дождался ответа) — сразу из набора, ИИ не зовём", async () => {
+    const id = await family(2);
+    await writeTale(id);
+    const { ai } = await import("@/lib/ai");
+    const spy = vi.spyOn(ai, "run");
+    const r = await illustratePage(id, 2, { fallback: true });
+    expect(r.fallback).toBe(true);
+    expect(spy).not.toHaveBeenCalled();
+    spy.mockRestore();
+  });
+
+  it("«Написать заново» не вышло — прежняя сказка и её картинки остаются, ошибка понятная", async () => {
+    const id = await family(3);
+    const first = await createTale(id);
+    const { ai, AiUnavailableError } = await import("@/lib/ai");
+    const spy = vi.spyOn(ai, "run").mockRejectedValue(new AiUnavailableError("tale", []));
+    try {
+      await expect(writeTale(id, { again: true })).rejects.toMatchObject({ code: "unavailable", message: expect.stringMatching(/Попробовать ещё раз/) });
+    } finally {
+      spy.mockRestore();
+    }
+    const view = await getTaleView(id);
+    expect(view.status).toBe("ready");
+    expect(view.title).toBe(first.title);
+    expect(view.illustrated).toBe(first.pages.length);
+  });
+
+  it("первая сказка не вышла — статус failed и сообщение с «Попробовать ещё раз»", async () => {
+    const id = await family(2);
+    const { ai, AiUnavailableError } = await import("@/lib/ai");
+    const spy = vi.spyOn(ai, "run").mockRejectedValue(new AiUnavailableError("tale", []));
+    try {
+      await expect(writeTale(id)).rejects.toBeInstanceOf(TaleError);
+    } finally {
+      spy.mockRestore();
+    }
+    const view = await getTaleView(id);
+    expect(view.status).toBe("failed");
+    expect(view.error).toMatch(/Сказочник сейчас занят/);
+  });
+});
+
 describe("сказка без имени внука (#44)", () => {
   const known = knownWords("Ким Чер Су", "Я родился в Уштобе. Мама, омани, варила кукси. Брат Коля ловил рыбу.");
 
