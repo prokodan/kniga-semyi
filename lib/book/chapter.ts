@@ -101,3 +101,36 @@ export async function requestOrigin(): Promise<string> {
   }
   return env.prodUrl() ?? "http://localhost:3000";
 }
+
+export interface AudioPart {
+  src: string;
+  durationSec: number | null;
+}
+
+/**
+ * Голос главы целиком: основной ответ + голосовые ответы на уточнения (parent_story_id), по времени записи.
+ * Раньше /listen играл только основной ответ — глава, где рассказ продолжался в уточнениях, «обрывалась»
+ * (первый велосипед: 22 с из ~2 мин). Части без файла пропускаются.
+ */
+export async function chapterAudioParts(story: Pick<Story, "id" | "audio_url" | "duration_sec">): Promise<AudioPart[]> {
+  const db = getDbOrNull();
+  let children: Pick<Story, "audio_url" | "duration_sec" | "created_at">[] = [];
+  if (db) {
+    const { data, error } = await db
+      .from("stories")
+      .select("audio_url, duration_sec, created_at")
+      .eq("parent_story_id", story.id)
+      .not("audio_url", "is", null)
+      .order("created_at", { ascending: true });
+    if (error) console.error("[chapter] уточнения для голоса:", error.message);
+    children = (data as typeof children | null) ?? [];
+  } else {
+    const store = getFamilyStore() as Partial<MemoryFamilyStore>;
+    children = [...(store.stories?.values() ?? [])]
+      .filter((s) => s.parent_story_id === story.id && s.audio_url)
+      .sort((a, b) => a.created_at.localeCompare(b.created_at));
+  }
+  const all = [story, ...children];
+  const urls = await Promise.all(all.map((s) => audioSignedUrl(s.audio_url)));
+  return all.flatMap((s, i) => (urls[i] ? [{ src: urls[i]!, durationSec: s.duration_sec != null ? Number(s.duration_sec) : null }] : []));
+}
