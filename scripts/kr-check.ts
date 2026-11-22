@@ -67,15 +67,23 @@ async function main() {
   const meaning: Record<string, number> = {};
   if (!args["no-ai"]) {
     const ai = createRouter({ store: new EvalStore({ cacheFile: process.env.KR_CHECK_CACHE_FILE, routesFile: process.env.KR_CHECK_ROUTES_FILE }), mode: () => mode });
-    try {
-      const r = await backTranslate(ai, all);
-      flags.push(...r.flags);
-      Object.assign(meaning, r.meaning);
-      provider = r.provider;
-      model = r.model;
-    } catch (e) {
-      aiError = (e as Error).message.replace(/\s+/g, " ").slice(0, 300);
-      console.error(`Обратный перевод не удался: ${aiError}`);
+    // Перегрузка модели (429 / 503) у бесплатного Gemini частая и короткая — до 4 попыток с паузой.
+    const waitMs = Number(process.env.KR_CHECK_RETRY_WAIT_MS ?? 30_000);
+    for (let attempt = 1; attempt <= 4; attempt++) {
+      try {
+        const r = await backTranslate(ai, all);
+        flags.push(...r.flags);
+        Object.assign(meaning, r.meaning);
+        provider = r.provider;
+        model = r.model;
+        aiError = undefined;
+        break;
+      } catch (e) {
+        aiError = (e as Error).message.replace(/\s+/g, " ").slice(0, 300);
+        console.error(`Обратный перевод, попытка ${attempt}: ${aiError}`);
+        if (!/rate_limited|timeout|429|503/.test(aiError) || attempt === 4) break;
+        await new Promise((res) => setTimeout(res, waitMs * attempt));
+      }
     }
   }
 
