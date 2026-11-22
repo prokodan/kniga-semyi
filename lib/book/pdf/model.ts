@@ -1,5 +1,6 @@
 // Модель книги (I5): из глав семьи — порядок, оглавление, раздел «Слова деда».
 // Чистые функции без сервера и React — тестируются напрямую.
+import { orderByLife } from "../order";
 import { BLOCKS } from "@/content/questions/blocks";
 import type { LifeBlock, Story, Storyteller } from "@/lib/types";
 
@@ -84,24 +85,14 @@ export function bookYears(st: Pick<Storyteller, "birth_year" | "death_year">): s
   return st.death_year ? `${st.birth_year}–${st.death_year}` : `род. ${st.birth_year}`;
 }
 
-const blockIndex = (b: LifeBlock | null) => {
-  const i = BLOCKS.findIndex((x) => x.id === b);
-  return i < 0 ? BLOCKS.length : i;
-};
-
 /** Глава годится в книгу: готова, не ответ на уточнение, есть русский текст. */
 export function isBookChapter(s: ChapterStory): boolean {
   return s.status === "ready" && !s.parent_story_id && Boolean(s.text_ru?.trim());
 }
 
-/** Порядок книги: блоки карты жизни → sort_order → время записи. */
+/** Порядок книги: разделы карты жизни (content/questions) → время записи. */
 export function orderChapters<T extends ChapterStory>(stories: T[]): T[] {
-  return [...stories].sort(
-    (a, b) =>
-      blockIndex(a.block) - blockIndex(b.block) ||
-      (a.sort_order ?? Number.MAX_SAFE_INTEGER) - (b.sort_order ?? Number.MAX_SAFE_INTEGER) ||
-      a.created_at.localeCompare(b.created_at),
-  );
+  return orderByLife(stories);
 }
 
 /** Текст главы → абзацы (пустые строки и одиночные переводы строки — границы абзацев). */
