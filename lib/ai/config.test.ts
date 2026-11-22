@@ -14,7 +14,8 @@ describe("ai config", () => {
     .join("\n");
 
   it.each(AI_STEPS)("маршрут %s в миграции совпадает с DEFAULT_ROUTES", (step) => {
-    const m = sql.match(new RegExp(`\\('${step}', '(\\[.*?\\])', (\\d+)\\)`));
+    // последняя миграция с этим шагом побеждает (поздние миграции переопределяют маршрут через on conflict)
+    const m = [...sql.matchAll(new RegExp(`\\('${step}', '(\\[.*?\\])', (\\d+)\\)`, "g"))].at(-1) ?? null;
     expect(m, `нет строки ai_routes для ${step}`).toBeTruthy();
     expect(JSON.parse(m![1]!)).toEqual(DEFAULT_ROUTES[step].providers);
     expect(Number(m![2])).toBe(DEFAULT_ROUTES[step].timeout_ms);

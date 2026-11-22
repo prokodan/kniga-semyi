@@ -332,7 +332,7 @@ md("### Порядок в `ai_routes`");
 md("| Шаг | Порядок |");
 md("| --- | --- |");
 for (const [step, list] of Object.entries(routes)) md(`| \`${step}\` | ${list.map((e) => `\`${e.model}\``).join(" → ")} |`);
-md("| `illustrate` | без изменений (`gpt-image-1`) |");
+md("| `illustrate` | без изменений (`gpt-image-2` → `gpt-image-1.5`) |");
 md();
 md(`Квоты в сутки: Flash-Lite ${LIMIT_FL}, Flash ${LIMIT_F} (порог 90%). Фактические лимиты — AI Studio → Rate limits.`);
 md();
