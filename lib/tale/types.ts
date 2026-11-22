@@ -19,6 +19,8 @@ export interface TalePageView {
   image: string | null;
   /** Картинку не удалось нарисовать — можно попробовать ещё раз */
   imageError: string | null;
+  /** Картинка из готового набора (художник был недоступен) — можно нарисовать свою */
+  fallback: boolean;
 }
 
 export interface TaleView {
