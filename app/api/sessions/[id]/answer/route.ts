@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { interview } from "@/lib/interview";
 import { errorResponse, familyToken, ok, readJson } from "@/lib/interview/http";
+import { releaseAfterInterview } from "@/lib/pipeline/chain";
 
 export const dynamic = "force-dynamic";
 
@@ -20,7 +21,9 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
     if (!token) return ok({ error: "forbidden", message: "Нужна ссылка семьи" }, 403);
     const body = Body.parse(raw ?? {});
     const input = "text" in body ? { text: body.text } : { storyId: body.storyId };
-    return ok(await interview.submitAnswer(id, input, { token }));
+    const res = await interview.submitAnswer(id, input, { token });
+    releaseAfterInterview(req, res, token); // вопрос закрыт — собрать главу с уточнениями
+    return ok(res);
   } catch (e) {
     return errorResponse(e);
   }

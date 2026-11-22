@@ -46,7 +46,9 @@ interface StepResult {
 
 type Phase = "loading" | "ask" | "waiting" | "finished";
 
-const POLL_TRIES = 10;
+// Ждём расшифровку до ~50 с (цепочка моделей transcribe может занять 20–45 с): раньше через 25 с вопрос
+// «пропускался» без проверки полноты, и короткий ответ сразу становился главой (пункт 4).
+const POLL_TRIES = 20;
 const MAX_STEPS = 6;
 const POLL_MS = 2500;
 
@@ -211,10 +213,7 @@ export function RecordFlow(props: {
     [token],
   );
 
-  /** Агент перешёл к другому вопросу после уточнений — пересобрать главу с ответами на них. */
-  function rebuildIfFollowups(prev: Current, r: AnswerResult) {
-    if (prev.kind === "followup" && prev.mainStoryId && r.type !== "followup") void drive(prev.mainStoryId, "edit");
-  }
+  // Главу после уточнений собирает сервер (/api/sessions/:id/answer → releaseAfterInterview), здесь ничего не нужно.
 
   /** После сохранения рассказа — запустить конвейер и спросить агента, что дальше. */
   async function advanceAfter(storyId: string, prev: Current) {
@@ -228,7 +227,6 @@ export function RecordFlow(props: {
       for (let i = 0; i < POLL_TRIES && !dontWait.current; i++) {
         try {
           const r = await sessionCall("answer", { storyId });
-          rebuildIfFollowups(prev, r);
           return apply(r, prev);
         } catch (e) {
           if ((e as { code?: string }).code !== "not_ready") throw e;
@@ -287,7 +285,6 @@ export function RecordFlow(props: {
     setPhase("loading");
     try {
       const r = await sessionCall("skip", { action });
-      rebuildIfFollowups(prev, r);
       apply(r, prev); // фразу «вернёмся позже» агент отдаёт в bridge
     } catch (e) {
       if (isGone(e)) {

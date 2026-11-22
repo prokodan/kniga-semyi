@@ -75,9 +75,26 @@ export type Decision =
   | { kind: "offtopic"; block: LifeBlock; returnText: string | null }
   | { kind: "accept" };
 
+/**
+ * Короче этого (слов) ответ без единого уточнения не считается полным, даже если модель сказала done:
+ * «Жили в Уштобе» (3 слова) сразу становилось главой (пункт 4). Минимум — хотя бы одно уточнение.
+ */
+export const SHORT_ANSWER_WORDS = 15;
+
+/** Уточнение без ИИ — по первому пункту минимума, которого нет в ответе. Один вопрос, на «вы», без «подробнее». */
+export function fallbackFollowup(question: Question, covered: string[]): string {
+  const item = question.minimum.find((m) => !covered.includes(m)) ?? question.minimum[0] ?? "";
+  if (/год|когда|лет\b|возраст/i.test(item)) return "А примерно в каком году это было?";
+  if (/где|место|город|село/i.test(item)) return "А где это было — какое это было место?";
+  if (/звали|имя/i.test(item)) return "А как звали этого человека?";
+  if (/кто/i.test(item)) return "А кто был рядом с вами тогда?";
+  if (/чем\s+занима|работ/i.test(item)) return "А чем тогда занимались в вашей семье?";
+  return "А что вам особенно запомнилось — может, какая-то мелочь?";
+}
+
 export function decideAfterCompleteness(
   res: AiOutput<"completeness">,
-  ctx: { question: Question; state: SessionState; answeringFollowup: boolean; bank: QuestionBank },
+  ctx: { question: Question; state: SessionState; answeringFollowup: boolean; bank: QuestionBank; answer?: string },
 ): Decision {
   const asked = ctx.state.followups_asked ?? 0;
   const canAsk = asked < MAX_FOLLOWUPS && !ctx.state.emotional_pause;
@@ -90,6 +107,10 @@ export function decideAfterCompleteness(
       block: res.offTopicBlock,
       returnText: canAsk ? `Какая история! Я сохраню её в главу «${title}». А если вернуться к вопросу: ${ctx.question.ru}` : null,
     };
+  }
+  // Совсем короткий первый ответ — хотя бы одно уточнение, даже если модель решила, что хватит.
+  if (canAsk && asked === 0 && !ctx.answeringFollowup && ctx.answer !== undefined && wordCount(ctx.answer) < SHORT_ANSWER_WORDS) {
+    return { kind: "followup", text: res.followup?.trim() || fallbackFollowup(ctx.question, res.covered) };
   }
   // Минимум собран (или модель решила не давить) — не перебиваем.
   if (res.done || res.missing.length === 0) return { kind: "accept" };

@@ -71,6 +71,8 @@ export interface StepResult {
   storyId: string;
   /** Шаг уже выполняет другой вызов (аренда step_started_at) — этот ничего не делал */
   running?: boolean;
+  /** Главу собирать рано: интервью ещё на этом вопросе (уточнения). Продолжит ручка интервью. */
+  waiting?: "interview";
   status: StoryStatus;
   /** Шаг, выполненный этим вызовом (null — делать было нечего) */
   ran: PipelineStep | null;
@@ -105,6 +107,11 @@ export interface PipelineDeps {
 export const STEP_BUDGET_MS = 48_000;
 /** Аренда шага: пока шаг идёт меньше этого, второй вызов его не дублирует. Больше — функцию убили, можно снова. */
 export const STEP_LEASE_MS = 65_000;
+/**
+ * Сколько ждать интервью перед сборкой главы (пункт 4): глава собирается, когда закрыт минимум полноты,
+ * исчерпаны 3 уточнения или вопрос отложен. Разговор бросили на середине — через 20 мин собираем как есть.
+ */
+export const INTERVIEW_HOLD_MS = 20 * 60_000;
 
 export function createPipeline(deps: PipelineDeps) {
   const { ai, repo } = deps;
@@ -160,6 +167,15 @@ export function createPipeline(deps: PipelineDeps) {
     if (step === null) {
       if (story.status !== "ready" || story.step_started_at) story = await save(story, { status: "ready", error: null, step_started_at: null });
       return result(story, null);
+    }
+    if (
+      step === "edit" &&
+      !opts.restart &&
+      repo.interviewHold &&
+      now() - new Date(story.created_at).getTime() < INTERVIEW_HOLD_MS &&
+      (await repo.interviewHold(story))
+    ) {
+      return result(story, null, { waiting: "interview", next: "edit", message: "Ещё разговариваем об этом — глава соберётся после уточнений" });
     }
     const leased = story.step_started_at ? now() - new Date(story.step_started_at).getTime() < STEP_LEASE_MS : false;
     if (leased && !opts.restart) return result(story, null, { running: true, next: step, message: STATUS_MESSAGE[STEP_STATUS[step]] });
@@ -222,7 +238,7 @@ export function createPipeline(deps: PipelineDeps) {
     let last: StepResult | null = null;
     for (let i = 0; i < (opts.maxSteps ?? PIPELINE_STEPS.length + 1); i++) {
       last = await runStep(storyId, { token: opts.token });
-      if (last.done || last.queued || last.running || last.status === "failed" || last.next === null) break;
+      if (last.done || last.queued || last.running || last.waiting || last.status === "failed" || last.next === null) break;
     }
     return last!;
   }
