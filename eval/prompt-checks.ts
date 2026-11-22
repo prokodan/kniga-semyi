@@ -149,6 +149,8 @@ const sentences = (s: string) => s.split(/(?<=[.!?…])\s+/).map((x) => x.trim()
 /** Имена и места в середине предложения (с большой буквы), которых нет в главах. */
 function strangers(text: string, source: string): string[] {
   const known = stems(source);
+  // Короткие имена склоняются в пятой букве («Елена» → «Елене»): для них хватает основы из 4 букв.
+  const known4 = new Set(words(source).filter((w) => w.length >= 3).map((w) => w.slice(0, 4)));
   const out = new Set<string>();
   for (const sent of sentences(text)) {
     const tokens = sent.split(/\s+/).slice(1);
@@ -156,7 +158,7 @@ function strangers(text: string, source: string): string[] {
       const w = raw.replace(/^[«"„(—-]+|[»"“).,!?…:;—-]+$/g, "");
       if (!/^[А-ЯЁ][а-яё-]{2,}$/.test(w)) continue;
       const s = w.toLowerCase().slice(0, 5);
-      if (known.has(s) || TALE_OK.has(s) || TALE_OK.has(s.slice(0, 4))) continue;
+      if (known.has(s) || (w.length <= 6 && known4.has(s.slice(0, 4))) || TALE_OK.has(s) || TALE_OK.has(s.slice(0, 4))) continue;
       out.add(w);
     }
   }

@@ -83,6 +83,16 @@ describe("сказка", () => {
     expect(t.issues).toEqual([]);
   });
 
+  it("склонение короткого имени из глав — не чужое имя", () => {
+    const t = checkTale({ title: "X", pages: [page("Мама Елена пела."), page("а"), page("б"), page("Знаешь, эта девочка — твоя бабушка.")] }, {
+      storytellerName: "Пак Мария Ивановна",
+      stories: [{ title: "Мама", text_ru: "Маму звали Елена." }],
+    });
+    expect(t.issues.filter((i) => /нет в главах/.test(i.issue))).toEqual([]);
+    const t2 = checkTale({ title: "X", pages: [page("Он помогал маме Елене.")] }, { storytellerName: "Пак Мария Ивановна", stories: [{ title: "Мама", text_ru: "Маму звали Елена." }] });
+    expect(t2.issues.filter((i) => /нет в главах/.test(i.issue))).toEqual([]);
+  });
+
   it("ловит страницы, страшное, чужой год и имя, финал, русский в illustrationPrompt", () => {
     const t = checkTale(
       {
