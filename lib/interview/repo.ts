@@ -5,7 +5,7 @@ import type { Session, SessionMode, Story } from "@/lib/types";
 import type { SessionState } from "./policy";
 
 export type StoryDraft = Pick<Story, "family_id" | "storyteller_id" | "session_id" | "question_id" | "block" | "transcript">;
-export type StoryPatch = Partial<Pick<Story, "question_id" | "block" | "followups" | "transcript" | "parent_story_id">>;
+export type StoryPatch = Partial<Pick<Story, "question_id" | "block" | "followups" | "transcript" | "parent_story_id" | "status">>;
 
 export interface InterviewRepo {
   createSession(s: { family_id: string; storyteller_id: string; mode: SessionMode; volunteer_id: string | null; state: SessionState }): Promise<Session>;

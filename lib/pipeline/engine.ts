@@ -43,6 +43,7 @@ export const STATUS_MESSAGE: Record<StoryStatus, string> = {
   translating: "Переводим главу на корейский…",
   ready: "Глава готова",
   failed: "Не получилось собрать главу",
+  skipped: "Вопрос пропущен — глава не собирается",
 };
 
 const STEP_FNS: Record<PipelineStep, StepFn> = { transcribe, edit, translate };
@@ -121,7 +122,7 @@ export function createPipeline(deps: PipelineDeps) {
   }
 
   function result(story: Story, ran: PipelineStep | null, extra: Partial<StepResult> = {}): StepResult {
-    const next = story.status === "failed" ? null : nextStep(story);
+    const next = story.status === "failed" || story.status === "skipped" ? null : nextStep(story);
     return {
       storyId: story.id,
       status: story.status,
@@ -148,6 +149,7 @@ export function createPipeline(deps: PipelineDeps) {
    */
   async function runStep(storyId: string, opts: { step?: PipelineStep; token?: string; restart?: boolean } = {}): Promise<StepResult> {
     let story = await load(storyId, opts.token);
+    if (story.status === "skipped") return result(story, null); // ответ-отказ: не глава, ничего не делаем
     const step = nextStep(story);
     if (opts.step && opts.step !== step) {
       if (step === null || PIPELINE_STEPS.indexOf(opts.step) < PIPELINE_STEPS.indexOf(step)) {
@@ -175,7 +177,7 @@ export function createPipeline(deps: PipelineDeps) {
       const fresh = await repo.getStory(storyId);
       // Сравниваем моменты, а не строки: Postgres отдаёт timestamptz как «…+00:00», а мы пишем «…Z».
       const theirs = fresh?.step_started_at ? new Date(fresh.step_started_at).getTime() : null;
-      return fresh && theirs !== started ? fresh : null;
+      return fresh && (theirs !== started || fresh.status === "skipped") ? fresh : null;
     }
     try {
       const patch = await STEP_FNS[step]({ story, ai, repo, bank, deadline: started + STEP_BUDGET_MS });
@@ -231,7 +233,7 @@ export function createPipeline(deps: PipelineDeps) {
     return {
       storyId: s.id,
       status: s.status,
-      next: s.status === "failed" ? null : nextStep(s),
+      next: s.status === "failed" || s.status === "skipped" ? null : nextStep(s),
       done: s.status === "ready",
       message: STATUS_MESSAGE[s.status],
       error: s.error,

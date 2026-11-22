@@ -29,7 +29,7 @@ export default async function ChapterPage({
   if (!token) return <LinkNotFound />;
 
   const data = await loadChapter(storyId, { token });
-  if (!data) return <LinkNotFound />;
+  if (!data || data.story.status === "skipped") return <LinkNotFound />; // ответ-отказ — не глава
   const { story, storyteller, family } = data;
 
   // Ответ на уточнение — часть основной главы.
