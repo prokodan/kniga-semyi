@@ -54,11 +54,29 @@ const planUpgrades: Record<string, number> = Object.fromEntries(
   ),
 );
 
-/** Допы. Цены сказки в финмодели нет — в демо она в подарок (0 ₸). */
+/** Допы, которые можно оплатить уже сейчас (слайд питча). */
 export const EXTRAS_KZT: Record<string, number> = {
-  tale: 0,
+  tale: 6_900,
   ...planUpgrades,
 };
+
+/**
+ * Допы «скоро» со слайда питча: цена видна, оплатить пока нельзя (их нет в EXTRAS_KZT — сервер отклонит).
+ * archive — подписка, ₸ в месяц.
+ */
+export const SOON_EXTRAS_KZT = {
+  copy: 17_900,
+  video: 14_900,
+  tree: 9_900,
+  translation: 4_900,
+  archive: 1_490,
+  legacy: 89_900,
+} as const;
+
+export type SoonExtraId = keyof typeof SOON_EXTRAS_KZT;
+
+/** Уровень, выбранный на экране оплаты по умолчанию: «Стандарт» цифровой книги. */
+export const DEFAULT_PLAN_ID = "digital-2";
 
 export function quoteKzt(req: Pick<CheckoutRequest, "product" | "extras">): number {
   return (PRICES_KZT[req.product] ?? 0) + req.extras.reduce((s, e) => s + (EXTRAS_KZT[e] ?? 0), 0);

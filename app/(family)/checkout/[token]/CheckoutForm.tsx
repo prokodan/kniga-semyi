@@ -2,18 +2,26 @@
 
 import { useRouter } from "next/navigation";
 import { useRef, useState } from "react";
-import { formatKzt, type ExtraOption, type Plan } from "./plans";
+import { DEFAULT_PLAN_ID, formatKzt, PRODUCT_TITLES, type ExtraOption, type Plan, type SoonExtra } from "@/lib/payments/plans";
 
-const GROUPS: { product: Plan["product"]; title: string; titleKo: string }[] = [
-  { product: "digital", title: "Цифровая книга", titleKo: "디지털" },
-  { product: "print", title: "Печатная книга", titleKo: "인쇄본" },
-];
+const GROUPS = (["digital", "print"] as const).map((product) => ({ product, ...PRODUCT_TITLES[product] }));
 
 // Выбор варианта и допов + кнопка «Оплатить (демо)». Повторное нажатие заблокировано, сервер тоже не плодит дубли.
-export function CheckoutForm({ token, plans, extras }: { token: string; plans: Plan[]; extras: ExtraOption[] }) {
+export function CheckoutForm({
+  token,
+  plans,
+  extras,
+  soon = [],
+}: {
+  token: string;
+  plans: Plan[];
+  extras: ExtraOption[];
+  soon?: SoonExtra[];
+}) {
   const router = useRouter();
-  const [planId, setPlanId] = useState(plans[0]?.id ?? "");
-  const [chosen, setChosen] = useState<string[]>(extras.map((e) => e.id));
+  const [planId, setPlanId] = useState(plans.some((p) => p.id === DEFAULT_PLAN_ID) ? DEFAULT_PLAN_ID : (plans[0]?.id ?? ""));
+  // Допы платные — по умолчанию не отмечены: итог = выбранная книга.
+  const [chosen, setChosen] = useState<string[]>([]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const sending = useRef(false);
@@ -108,6 +116,32 @@ export function CheckoutForm({ token, plans, extras }: { token: string; plans: P
             </label>
           ))}
         </fieldset>
+      )}
+
+      {soon.length > 0 && (
+        <section aria-labelledby="soon-title" className="flex flex-col gap-3">
+          <h2 id="soon-title" className="font-serif text-2xl">
+            Скоро <span className="text-base text-muted" lang="ko">곧 출시</span>
+          </h2>
+          <ul className="flex flex-col gap-2">
+            {soon.map((s) => (
+              <li key={s.id} className="flex flex-col gap-1 rounded-card border border-line bg-paper p-4">
+                <span className="flex items-baseline justify-between gap-3">
+                  <span className="font-semibold">{s.title}</span>
+                  <span className="whitespace-nowrap text-ink-soft">
+                    {formatKzt(s.priceKzt)}
+                    {s.per ?? ""}
+                  </span>
+                </span>
+                <span className="text-sm text-muted" lang="ko">
+                  {s.titleKo}
+                </span>
+                <span className="text-sm text-ink-soft">{s.note}</span>
+                <span className="self-start rounded-button bg-paper-deep px-3 py-1 text-sm text-muted">скоро · без оплаты</span>
+              </li>
+            ))}
+          </ul>
+        </section>
       )}
 
       <div className="sticky bottom-0 -mx-5 flex flex-col gap-2 border-t border-line bg-paper px-5 pt-4 pb-[max(1rem,env(safe-area-inset-bottom))]">

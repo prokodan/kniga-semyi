@@ -5,7 +5,7 @@ vi.mock("server-only", () => ({}));
 import { POST as createFamily } from "../families/route";
 import { POST as checkout } from "./route";
 import { getDemoOrderStore, MemoryDemoOrderStore } from "./orders";
-import { findPlan, PLANS, planOfOrder } from "@/app/(family)/checkout/[token]/plans";
+import { findPlan, PLANS, planOfOrder } from "@/lib/payments/plans";
 
 async function newFamily() {
   const form = new FormData();
@@ -43,17 +43,17 @@ describe("каталог", () => {
 describe("POST /api/checkout", () => {
   it("пишет заказ paid_demo с суммой уровня, повтор не создаёт дубль", async () => {
     const { token } = await newFamily();
-    const first = await pay(token, { plan: "digital-3", extras: ["tale"] });
+    const first = await pay(token, { plan: "digital-3", extras: ["tale"] }); // 24 900 + сказка 6 900
     expect(first.status).toBe(201);
     const a = await first.json();
-    expect(a).toMatchObject({ status: "paid_demo", amountKzt: 24_900, demo: true, repeated: false });
+    expect(a).toMatchObject({ status: "paid_demo", amountKzt: 31_800, demo: true, repeated: false });
 
     const again = await pay(token, { plan: "digital-3", extras: ["tale", "tale"] });
     expect(again.status).toBe(200);
     expect((await again.json()).orderId).toBe(a.orderId);
 
     const order = store().orders.find((o) => o.id === a.orderId)!;
-    expect(order).toMatchObject({ product: "digital", amount_kzt: 24_900, status: "paid_demo", provider: "demo" });
+    expect(order).toMatchObject({ product: "digital", amount_kzt: 31_800, status: "paid_demo", provider: "demo" });
     expect(planOfOrder(order)?.id).toBe("digital-3");
     expect(store().orders.filter((o) => o.family_id === order.family_id)).toHaveLength(1);
   });

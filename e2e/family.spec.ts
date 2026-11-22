@@ -122,12 +122,19 @@ test("демо: оплата (демо) → допы → сказка", async ({
     await page.getByRole("link", { name: /Выбрать книгу/ }).click();
     await page.waitForURL(/\/checkout\//);
     const total = page.getByText("Итого").locator("..");
-    await page.getByText("Цифровая · семейная").click();
+    // По умолчанию — «Стандарт» цифровой книги (слайд питча), допы не отмечены
     await expect(page.getByRole("radio", { checked: true })).toHaveValue("digital-2");
     await expect(total).toContainText("14 900 ₸");
-    // Сказка для внуков — доп «в подарок» (EXTRAS_KZT.tale = 0): итог не меняется
+    await page.getByRole("radio").first().check();
+    await expect(total).toContainText("6 900 ₸");
+    await page.getByRole("radio").nth(1).check();
+    // Сказка для внуков — 6 900 ₸: итог 21 800 ₸; остальные допы «скоро», без чекбокса
+    await expect(page.getByRole("checkbox")).toHaveCount(1);
     await page.getByRole("checkbox").check();
     await expect(page.getByRole("checkbox")).toBeChecked();
+    await expect(total).toContainText("21 800 ₸");
+    await expect(page.getByText("Пакет «Наследие»")).toBeVisible();
+    await expect(page.getByText("1 490 ₸/мес")).toBeVisible();
     await page.getByRole("button", { name: "Оплатить (демо)" }).click();
     await page.waitForURL(new RegExp(`/extras/${T}\\?paid=1`));
   });
@@ -135,7 +142,7 @@ test("демо: оплата (демо) → допы → сказка", async ({
   await test.step("допы после оплаты", async () => {
     await expect(page.getByText("Оплачено (демо) · 결제 완료 (데모)")).toBeVisible();
     await expect(page.getByRole("heading", { name: "Спасибо! Книга заказана" })).toBeVisible();
-    await expect(page.getByText(/Цифровая · семейная · /)).toBeVisible();
+    await expect(page.getByText(/Цифровая · Стандарт · 21\s800/)).toBeVisible();
     await page.getByRole("link", { name: "Открыть сказку" }).click();
   });
 

@@ -2,16 +2,13 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { getDemoOrderStore } from "@/app/api/checkout/orders";
 import { getFamilyByToken } from "@/lib/db/access";
-import { formatKzt, planOfOrder } from "../../checkout/[token]/plans";
+import { EXTRA_OPTIONS, formatKzt, planOfOrder, SOON_EXTRAS } from "@/lib/payments/plans";
 import { LinkNotFound } from "../../_ui/LinkNotFound";
 
 export const dynamic = "force-dynamic";
 export const metadata: Metadata = { title: "Книга семьи · допы", robots: { index: false, follow: false } };
 
-const SOON = [
-  { title: "Видеоистория", titleKo: "영상 이야기", note: "Фото и живой голос — короткий фильм о жизни рассказчика" },
-  { title: "Семейное древо", titleKo: "가계도", note: "Имена, даты и места из рассказов — в одном древе" },
-];
+const TALE = EXTRA_OPTIONS.find((e) => e.id === "tale");
 
 // /extras/<token> — после демо-оплаты: «оплачено (демо)», сказка для внуков (I8) и «скоро»-карточки.
 export default async function ExtrasPage({ params }: { params: Promise<{ token: string }> }) {
@@ -32,7 +29,7 @@ export default async function ExtrasPage({ params }: { params: Promise<{ token: 
           <p className="text-sm tracking-widest text-jade uppercase">Оплачено (демо) · 결제 완료 (데모)</p>
           <h1 className="font-serif text-3xl leading-tight">Спасибо! Книга заказана</h1>
           <p className="text-ink-soft">
-            {plan?.title ?? "Книга"} · {formatKzt(order.amount_kzt)}
+            {plan?.fullTitle ?? "Книга"} · {formatKzt(order.amount_kzt)}
           </p>
           <p className="text-sm text-muted">Это демонстрация: деньги не списывались, данные карты не запрашивались.</p>
         </section>
@@ -54,7 +51,12 @@ export default async function ExtrasPage({ params }: { params: Promise<{ token: 
 
         <article className="flex flex-col gap-3 rounded-card bg-paper-deep p-5 shadow-card">
           <div className="flex flex-col gap-1">
-            <p className="font-serif text-2xl">Сказка для внуков</p>
+            <div className="flex items-baseline justify-between gap-3">
+              <p className="font-serif text-2xl">Сказка для внуков</p>
+              {TALE && (
+                <span className="whitespace-nowrap text-jade">{withTale ? "оплачено (демо)" : formatKzt(TALE.priceKzt)}</span>
+              )}
+            </div>
             <p className="text-muted" lang="ko">
               손주를 위한 동화
             </p>
@@ -72,16 +74,20 @@ export default async function ExtrasPage({ params }: { params: Promise<{ token: 
           )}
         </article>
 
-        {SOON.map((s) => (
-          <article key={s.title} className="flex flex-col gap-1 rounded-card border border-line bg-paper p-5">
+        {SOON_EXTRAS.map((s) => (
+          <article key={s.id} className="flex flex-col gap-1 rounded-card border border-line bg-paper p-5">
             <div className="flex items-baseline justify-between gap-3">
               <p className="font-serif text-xl">{s.title}</p>
-              <span className="rounded-button bg-paper-deep px-3 py-1 text-sm text-muted">скоро</span>
+              <span className="whitespace-nowrap text-ink-soft">
+                {formatKzt(s.priceKzt)}
+                {s.per ?? ""}
+              </span>
             </div>
             <p className="text-sm text-muted" lang="ko">
               {s.titleKo}
             </p>
             <p className="text-ink-soft">{s.note}</p>
+            <span className="self-start rounded-button bg-paper-deep px-3 py-1 text-sm text-muted">скоро</span>
           </article>
         ))}
       </section>

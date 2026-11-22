@@ -5,7 +5,7 @@ import { getFamilyByToken } from "@/lib/db/access";
 import { B2B_KZT_PER_STORY } from "@/lib/payments";
 import { LinkNotFound } from "../../_ui/LinkNotFound";
 import { CheckoutForm } from "./CheckoutForm";
-import { EXTRA_OPTIONS, formatKzt, PLANS, planOfOrder } from "./plans";
+import { EXTRA_OPTIONS, formatKzt, PLANS, planOfOrder, SOON_EXTRAS } from "@/lib/payments/plans";
 
 export const dynamic = "force-dynamic";
 export const metadata: Metadata = { title: "Книга семьи · выбор книги", robots: { index: false, follow: false } };
@@ -35,7 +35,7 @@ export default async function CheckoutPage({ params }: { params: Promise<{ token
       {paid && (
         <section className="flex flex-col gap-3 rounded-card border border-jade/40 bg-paper p-5">
           <p className="font-serif text-xl">
-            Оплачено (демо) ✓ · {paidPlan?.title ?? "книга"} · {formatKzt(paid.amount_kzt)}
+            Оплачено (демо) ✓ · {paidPlan?.fullTitle ?? "книга"} · {formatKzt(paid.amount_kzt)}
           </p>
           <Link
             href={`/extras/${token}`}
@@ -46,7 +46,7 @@ export default async function CheckoutPage({ params }: { params: Promise<{ token
         </section>
       )}
 
-      <CheckoutForm token={token} plans={PLANS} extras={EXTRA_OPTIONS} />
+      <CheckoutForm token={token} plans={PLANS} extras={EXTRA_OPTIONS} soon={SOON_EXTRAS} />
 
       <p className="border-t border-line pt-5 text-sm text-muted">
         Для Алматинского корейского национального центра: {formatKzt(B2B_KZT_PER_STORY)} за записанную историю старейшины.
