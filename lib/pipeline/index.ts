@@ -19,6 +19,7 @@ function getRepo(): PipelineRepo {
   if (db) return new SupabasePipelineRepo(db, BUCKETS.audio);
   g.__interviewMemoryRepo ??= new MemoryInterviewRepo();
   g.__pipelineMemoryRepo ??= new MemoryPipelineRepo(g.__interviewMemoryRepo.stories);
+  g.__pipelineMemoryRepo.sessions = g.__interviewMemoryRepo.sessions as never;
   return g.__pipelineMemoryRepo;
 }
 

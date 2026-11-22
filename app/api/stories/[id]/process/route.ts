@@ -31,7 +31,7 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
     const res = body.from
       ? await pipeline.rebuild(id, body.from, { token })
       : await pipeline.runStep(id, { step: body.step, token, restart: body.restart });
-    if (res.next && !res.queued && !res.running && res.status !== "failed") continueInBackground(req, id, token, chainDepth(req));
+    if (res.next && !res.queued && !res.running && !res.waiting && res.status !== "failed") continueInBackground(req, id, token, chainDepth(req));
     return ok(res, res.queued ? 202 : 200);
   } catch (e) {
     return pipelineError(e);

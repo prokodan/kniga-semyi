@@ -91,7 +91,12 @@ for (const s of stuck) {
       trail.push(`сеть: ${e.message.slice(0, 60)}`);
       break;
     }
-    trail.push(`${r.ran ?? "—"}→${r.status}${r.queued ? " (очередь)" : ""}${r.running ? " (идёт)" : ""}`);
+    trail.push(`${r.ran ?? "—"}→${r.status}${r.queued ? " (очередь)" : ""}${r.running ? " (идёт)" : ""}${r.waiting ? " (ждёт интервью)" : ""}`);
+    if (r.waiting) {
+      // Не застряла: интервью ещё задаёт уточнения (≤ 20 мин) — попытку не засчитываем
+      await rest(`stories?id=eq.${s.id}`, { method: "PATCH", headers: { Prefer: "return=minimal" }, body: JSON.stringify({ kick_attempts: tries }) });
+      break;
+    }
     if (!r.next || r.queued || r.running || r.status === "failed") break;
   }
   lines.push(`- ${short(s.id)} ${s.status} → перезапуск ${tries + 1}/${MAX_ATTEMPTS}: ${trail.join(", ")}`);

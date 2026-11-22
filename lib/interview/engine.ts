@@ -342,6 +342,7 @@ export function createInterview(deps: InterviewDeps) {
       }
 
       let res: AiOutput<"completeness">;
+      let aiDown = false;
       try {
         res = await ai.run(
           "completeness",
@@ -359,9 +360,10 @@ export function createInterview(deps: InterviewDeps) {
         if (!(e instanceof AiUnavailableError)) throw e;
         // ИИ недоступен — принимаем ответ как есть, разговор не останавливаем.
         res = { covered: [], missing: [], followup: null, done: true, offTopicBlock: null };
+        aiDown = true;
       }
 
-      const decision = decideAfterCompleteness(res, { question, state, answeringFollowup, bank });
+      const decision = decideAfterCompleteness(res, { question, state, answeringFollowup, bank, answer: aiDown ? undefined : combinedAnswer(main, text) });
 
       if (decision.kind === "followup") {
         state.pending_followup = decision.text;

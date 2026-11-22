@@ -24,6 +24,22 @@ export interface PipelineRepo {
   /** Аудио истории: путь в бакете audio (`<family>/<story>.webm`, можно с префиксом `audio/`) или https-ссылка */
   loadAudio(audioUrl: string): Promise<AudioFile>;
   checkFamilyToken(familyId: string, token: string): Promise<boolean>;
+  /**
+   * Интервью ещё на вопросе этой истории (может задать уточнение) — главу собирать рано (пункт 4).
+   * Нет реализации — не держим.
+   */
+  interviewHold?(story: Story): Promise<boolean>;
+}
+
+/** Сессия ещё на вопросе этой истории: не завершена, текущий вопрос тот же и он не закрыт. */
+export function holdsStory(
+  session: { ended_at?: string | null; state?: Record<string, unknown> | null } | null,
+  story: Pick<Story, "question_id">,
+): boolean {
+  if (!session || session.ended_at || !story.question_id) return false;
+  const st = (session.state ?? {}) as { finished?: boolean; current_question_id?: string; answered_question_ids?: string[]; skipped_question_ids?: string[] };
+  if (st.finished || st.current_question_id !== story.question_id) return false;
+  return !(st.answered_question_ids ?? []).includes(story.question_id) && !(st.skipped_question_ids ?? []).includes(story.question_id);
 }
 
 const EXT_MIME: Record<string, string> = {
@@ -56,6 +72,8 @@ export class MemoryPipelineRepo implements PipelineRepo {
   audio = new Map<string, { data: Buffer; mimeType?: string }>();
   names = new Map<string, string>();
   tokens = new Map<string, string>();
+  /** Сессии интервью (локальный режим — общая карта с интервью-агентом; тесты кладут сами) */
+  sessions: Map<string, { ended_at?: string | null; state?: Record<string, unknown> | null }> | null = null;
 
   constructor(readonly stories: Map<string, Story> = new Map()) {}
 
@@ -82,6 +100,9 @@ export class MemoryPipelineRepo implements PipelineRepo {
   async checkFamilyToken(familyId: string, token: string) {
     const t = this.tokens.get(familyId);
     return t === undefined ? true : t === token; // без заведённой семьи — локальный режим
+  }
+  async interviewHold(story: Story) {
+    return story.session_id && this.sessions ? holdsStory(this.sessions.get(story.session_id) ?? null, story) : false;
   }
 }
 
@@ -132,5 +153,11 @@ export class SupabasePipelineRepo implements PipelineRepo {
     const { data, error } = await this.db.from("families").select("id").eq("id", familyId).eq("access_token", token).maybeSingle();
     if (error) throw new Error(`проверка ссылки семьи: ${error.message}`);
     return Boolean(data);
+  }
+  async interviewHold(story: Story) {
+    if (!story.session_id) return false;
+    const { data, error } = await this.db.from("sessions").select("ended_at, state").eq("id", story.session_id).maybeSingle();
+    if (error) return false; // не знаем — не держим главу
+    return holdsStory(data as { ended_at: string | null; state: Record<string, unknown> } | null, story);
   }
 }
