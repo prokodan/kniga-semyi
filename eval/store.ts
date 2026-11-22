@@ -12,6 +12,22 @@ import type { AiStep } from "@/lib/ai/types";
 
 const isFlashLite = (e: RouteEntry) => e.provider === "gemini" && /flash-lite/.test(e.model);
 
+/**
+ * Шаги оценки появились позже остальных: пока в прод-ai_routes нет их строк (миграция или ai-models ещё
+ * не прошли), берём актуальные модели прода из маршрута translate — модели по умолчанию в коде могут быть
+ * уже сняты (HTTP 404). back_translate: сначала Flash (не lite), потом остальное; judge: как есть.
+ */
+export function deriveEvalSteps(db: Record<string, RouteEntry[] | null>): Record<string, RouteEntry[] | null> {
+  const tpl = db.translate ?? db.edit;
+  if (!tpl?.length) return db;
+  const out = { ...db };
+  if (!out.judge?.length) out.judge = tpl;
+  if (!out.back_translate?.length) {
+    out.back_translate = [...tpl.filter((e) => e.provider === "gemini" && !isFlashLite(e)), ...tpl.filter((e) => e.provider !== "gemini"), ...tpl.filter(isFlashLite)];
+  }
+  return out;
+}
+
 /** Маршрут шага для оценки. Пороги квот снимаем: прод-счётчиков в памяти нет, лимит держит --max-calls. */
 export function evalRoute(step: AiStep, fromDb: RouteEntry[] | null | undefined, model?: string): Route {
   const base = DEFAULT_ROUTES[step];
@@ -43,7 +59,7 @@ export class EvalStore extends MemoryStore {
     private readonly opts: { routesFile?: string; cacheFile?: string; model?: string } = {},
   ) {
     super();
-    this.dbRoutes = readJson(opts.routesFile, {});
+    this.dbRoutes = deriveEvalSteps(readJson(opts.routesFile, {}));
     for (const [k, v] of Object.entries(readJson<Record<string, unknown>>(opts.cacheFile, {}))) this.cache.set(k, v);
     this.cachedAtStart = this.cache.size;
   }

@@ -169,9 +169,8 @@ export async function evaluateRun(o: EvaluateOptions): Promise<RunMetrics> {
     .map((c, i) => ({ ...c, id: `ch${i + 1}` }))
     .filter((c) => !c.error && c.text_ru && c.transcript.trim())
     .slice(0, BATCH_MAX);
-  if (sim.stoppedBy && sim.stoppedBy !== "questions") {
-    errors.push(`интервью остановлено (${sim.stoppedBy === "budget" ? "лимит запросов" : "ИИ недоступен"}): ${sim.stopDetail ?? ""}`);
-  }
+  // Остановка по лимиту вопросов / запросов — штатный режим; ошибка — только «ИИ недоступен».
+  if (sim.stoppedBy === "ai_unavailable") errors.push(`интервью остановлено, ИИ недоступен: ${sim.stopDetail ?? ""}`);
   for (const c of sim.chapters) if (c.error) errors.push(`глава не собрана: ${c.error}`);
 
   const quality = new Map<string, ChapterQuality>(

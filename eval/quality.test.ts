@@ -16,7 +16,7 @@ import {
   summarize,
   VOICE_TARGET,
 } from "./quality";
-import { evalRoute } from "./store";
+import { deriveEvalSteps, evalRoute } from "./store";
 import { loadPersona } from "./sim/persona";
 import { runSimulation } from "./sim/run";
 
@@ -190,5 +190,13 @@ describe("evalRoute", () => {
     const r = evalRoute("back_translate", [prod[1]!, prod[2]!, prod[0]!], "gemini-x");
     expect(r.providers.map((p) => p.model)).toEqual(["gemini-3-flash", "gpt-5-mini", "gemini-3-flash-lite"]);
     expect(evalRoute("back_translate", null).providers[0]!.model).toMatch(/flash(?!-lite)/);
+  });
+  it("нет строк judge / back_translate в проде — модели берутся из translate прода", () => {
+    const d = deriveEvalSteps({ translate: prod });
+    expect(d.judge).toEqual(prod);
+    expect(d.back_translate!.map((p) => p.model)).toEqual(["gemini-3-flash", "gpt-5-mini", "gemini-3-flash-lite"]);
+    const own = [{ provider: "gemini" as const, model: "own" }];
+    expect(deriveEvalSteps({ translate: prod, judge: own }).judge).toEqual(own);
+    expect(deriveEvalSteps({})).toEqual({});
   });
 });
