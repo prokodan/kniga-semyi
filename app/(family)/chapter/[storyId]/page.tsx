@@ -88,6 +88,13 @@ export default async function ChapterPage({
               text={`Послушайте, как ${name} рассказывает${story.title ? ` «${story.title}»` : ""}:`}
             />
           </div>
+
+          <Link
+            href={`/draft/${story.id}?token=${encodeURIComponent(token)}`}
+            className="inline-flex min-h-12 items-center justify-center gap-2 self-start rounded-button border border-line bg-paper px-5 py-3 text-ink-soft"
+          >
+            ✎ Исправить имена и даты
+          </Link>
         </>
       ) : (
         <StoryWaiting

@@ -106,6 +106,13 @@ export default async function FamilyPage({ params, searchParams }: { params: Pro
             <span>Книга целиком (PDF)</span>
             <span className="text-seal">открыть →</span>
           </Link>
+          <Link
+            href={`/checkout/${token}`}
+            className="flex min-h-12 items-center justify-between gap-3 rounded-card border border-line bg-paper px-4 py-3"
+          >
+            <span>Выбрать книгу: цифровая или печатная</span>
+            <span className="text-seal">→</span>
+          </Link>
         </section>
       )}
 
