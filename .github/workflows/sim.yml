@@ -132,7 +132,8 @@ jobs:
             echo "- Итог: $(tail -1 sim-out/sim.log 2>/dev/null)"
             echo
             if [ -n "$report" ]; then cat "$report"; else echo "Отчёт не создан — см. лог шага «Симулятор»."; fi
-          } >> "$GITHUB_STEP_SUMMARY"
+          } | tee -a "$GITHUB_STEP_SUMMARY"
+          # Отчёт целиком — и в лог: артефакты и summary не везде доступны (агентам — только логи).
 
       - name: Сохранить кэш
         if: always() && hashFiles('sim-cache/cache.json') != ''
