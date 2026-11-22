@@ -68,6 +68,28 @@ export function mockOutput<S extends AiStep>(step: S, input: ProviderCall<S>["in
       const pick = lines[parseInt(sha256(i.question).slice(0, 4), 16) % Math.max(lines.length, 1)];
       return { answer: pick ?? "Ну, это было давно… Дайте вспомнить." };
     }
+    case "judge": {
+      // Заглушка не умеет судить: ставит нейтральную 3, чтобы отчёт честно не дотягивал до цели ≥ 4.
+      const i = input as ProviderCall<"judge">["input"];
+      return { scores: i.chapters.map((c) => ({ id: c.id, voice: 3, comment: "mock: оценка не показательна" })) };
+    }
+    case "back_translate": {
+      // Заглушка «переводит обратно» оригиналом; флажок только если корейского текста нет вовсе.
+      const i = input as ProviderCall<"back_translate">["input"];
+      return {
+        chapters: i.chapters.map((c) => {
+          const hasHangul = /[\uac00-\ud7a3]/.test(c.text_ko);
+          return {
+            id: c.id,
+            back_ru: c.text_ru,
+            meaning: hasHangul ? 5 : 1,
+            flags: hasHangul
+              ? []
+              : [{ ko: c.text_ko.slice(0, 60), back_ru: "", ru: c.text_ru.slice(0, 60), issue: "в корейской версии нет хангыля", severity: "major" }],
+          };
+        }),
+      };
+    }
     default:
       throw new Error(`mock: неизвестный шаг ${String(step)}`);
   }

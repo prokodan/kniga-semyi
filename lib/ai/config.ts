@@ -52,6 +52,9 @@ export const DEFAULT_ROUTES: Record<AiStep, Route> = {
   tale: route("tale", [FLASH_LITE, FLASH, OPENAI_TEXT], 40_000),
   illustrate: route("illustrate", [{ provider: "openai", model: "gpt-image-1" }], 60_000),
   persona_reply: route("persona_reply", [FLASH_LITE, OPENAI_TEXT], 20_000),
+  // I11: судья на Flash-Lite (квота); обратный перевод — сначала ДРУГАЯ модель (Flash), чем у translate.
+  judge: route("judge", [FLASH_LITE, OPENAI_TEXT], 40_000),
+  back_translate: route("back_translate", [FLASH, OPENAI_TEXT, FLASH_LITE], 60_000),
 };
 
 export const DEFAULT_PROVIDERS: Record<AiProviderName, ProviderSettings> = {

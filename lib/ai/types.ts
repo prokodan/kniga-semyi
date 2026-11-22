@@ -12,6 +12,9 @@ export const AI_STEPS = [
   "tale",
   "illustrate",
   "persona_reply",
+  // Оценка качества (I11, только eval): судья голоса и обратный перевод KR→RU другой моделью.
+  "judge",
+  "back_translate",
 ] as const;
 export type AiStep = (typeof AI_STEPS)[number];
 
@@ -74,6 +77,28 @@ export const inputSchemas = {
     question: z.string(),
     history: z.array(z.object({ q: z.string(), a: z.string() })).max(40),
   }),
+  judge: z.object({
+    storytellerName: z.string(),
+    /** Манера речи рассказчика (из персонажа) — эталон «голоса» */
+    manner: z.string(),
+    chapters: z
+      .array(z.object({ id: z.string(), transcript: z.string().min(1), text_ru: z.string().min(1) }))
+      .min(1)
+      .max(20),
+  }),
+  back_translate: z.object({
+    chapters: z
+      .array(
+        z.object({
+          id: z.string(),
+          text_ru: z.string().min(1), // оригинал главы — для сверки после обратного перевода
+          text_ko: z.string().min(1),
+          quote_ko: z.string().default(""),
+        }),
+      )
+      .min(1)
+      .max(20),
+  }),
 } satisfies Record<AiStep, z.ZodType>;
 
 /** Схемы выходов: ответ модели проходит проверку, иначе это ошибка провайдера → следующий. */
@@ -101,6 +126,37 @@ export const outputSchemas = {
   }),
   illustrate: z.object({ imageBase64: z.string(), mimeType: z.string() }),
   persona_reply: z.object({ answer: z.string() }),
+  judge: z.object({
+    scores: z.array(
+      z.object({
+        id: z.string(),
+        /** 1 — голос потерян (канцелярит / пересказ), 5 — звучит как сам рассказчик */
+        voice: z.coerce.number().int().min(1).max(5),
+        comment: z.string().default(""),
+      }),
+    ),
+  }),
+  back_translate: z.object({
+    chapters: z.array(
+      z.object({
+        id: z.string(),
+        back_ru: z.string(),
+        /** совпадение смысла с оригиналом: 1 — другой смысл, 5 — полностью совпадает */
+        meaning: z.coerce.number().int().min(1).max(5),
+        flags: z
+          .array(
+            z.object({
+              ko: z.string(), // сомнительный фрагмент корейского
+              back_ru: z.string(), // как он читается обратно
+              ru: z.string().default(""), // что было в оригинале
+              issue: z.string(),
+              severity: z.enum(["minor", "major"]).catch("minor"),
+            }),
+          )
+          .default([]),
+      }),
+    ),
+  }),
 } satisfies Record<AiStep, z.ZodType>;
 
 export type AiInput<S extends AiStep> = z.input<(typeof inputSchemas)[S]>;

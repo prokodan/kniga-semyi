@@ -2,6 +2,7 @@ import { readFileSync, readdirSync } from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { DEFAULT_ROUTES } from "./config";
+import { promptPath } from "./prompts";
 import { AI_STEPS } from "./types";
 
 // Сид ai_routes в миграции и DEFAULT_ROUTES в коде должны совпадать,
@@ -20,6 +21,6 @@ describe("ai config", () => {
   });
 
   it.each(AI_STEPS)("у шага %s есть промпт", (step) => {
-    expect(readFileSync(path.join(process.cwd(), "prompts", `${step}.md`), "utf8").length).toBeGreaterThan(50);
+    expect(readFileSync(promptPath(step), "utf8").length).toBeGreaterThan(50);
   });
 });
