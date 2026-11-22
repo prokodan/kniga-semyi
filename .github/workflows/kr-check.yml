@@ -1,0 +1,112 @@
+name: kr-check
+
+# Проверка корейского (V2): демо-главы книги и банк вопросов.
+#   • правила без ИИ — глоссарий docs/glossary.md, годы, стиль речи (한다체 / 해요체 + -시-), кириллица, цитата;
+#   • обратный перевод KR→RU ДРУГИМ провайдером, чем переводил: перевод в проде — Gemini, проверяет OpenAI
+#     (OPENAI_API_KEY); нет ключа — Gemini Flash (другая модель, GEMINI_API_KEY); нет ключей — mock.
+# Модели — из ai_routes прода (как в eval). Один запрос к ИИ на запуск. Итог — комментарий в PR: короткий список флажков по 1–2 демо-главам для человека.
+# Флажки не валят проверку: это подсказка носителю, а не гейт.
+on:
+  pull_request:
+    paths:
+      - "docs/glossary.md"
+      - "lib/book/pdf/demo.ts"
+      - "content/questions/bank.ts"
+      - "prompts/translate.md"
+      - "eval/back_translate.md"
+      - "eval/kr-check.ts"
+      - "scripts/kr-check.ts"
+      - ".github/workflows/kr-check.yml"
+  workflow_dispatch:
+    inputs:
+      provider:
+        description: "Кто проверяет: auto (OpenAI, иначе Gemini Flash) | openai | gemini | mock"
+        default: "auto"
+
+concurrency:
+  group: kr-check-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  pull-requests: write
+  issues: write
+
+jobs:
+  kr-check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      NEXT_TELEMETRY_DISABLED: "1"
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+      GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+      KR_CHECK_PROVIDER: ${{ inputs.provider != 'auto' && inputs.provider || '' }}
+      SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
+      KR_CHECK_ROUTES_FILE: ${{ github.workspace }}/kr-out/routes.json
+      KR_CHECK_CACHE_FILE: ${{ github.workspace }}/kr-cache/cache.json
+      OUT: ${{ github.workspace }}/kr-out
+      RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+
+      - name: Модели из ai_routes прода
+        if: env.SUPABASE_DB_URL != ''
+        run: |
+          mkdir -p "$OUT"
+          command -v psql > /dev/null || (sudo apt-get update -qq && sudo apt-get install -y -qq postgresql-client)
+          psql "$SUPABASE_DB_URL" -tA -v ON_ERROR_STOP=1 \
+            -c "select coalesce(json_object_agg(step, providers), '{}'::json) from ai_routes" > "$KR_CHECK_ROUTES_FILE" \
+            || { echo "::warning::ai_routes не прочитаны — модели из lib/ai/config.ts"; rm -f "$KR_CHECK_ROUTES_FILE"; }
+
+      - name: Кэш ответа
+        uses: actions/cache/restore@v5
+        with:
+          path: kr-cache
+          key: kr-cache-${{ github.run_id }}
+          restore-keys: kr-cache-
+
+      - name: Проверка
+        run: |
+          mkdir -p "$OUT" kr-cache
+          npx tsx scripts/kr-check.ts --out "$OUT/report.md" --json "$OUT/report.json" --comment "$OUT/comment.md" --link "$RUN_URL"
+
+      - name: Отчёт в summary
+        if: always()
+        run: |
+          if [ -f "$OUT/report.md" ]; then cat "$OUT/report.md" >> "$GITHUB_STEP_SUMMARY"; else echo "## 🔴 kr-check: отчёт не создан — см. лог" >> "$GITHUB_STEP_SUMMARY"; fi
+
+      - name: Комментарий в PR
+        if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ github.event.pull_request.number }}
+        run: |
+          [ -f "$OUT/comment.md" ] || exit 0
+          id=$(gh api "repos/$GITHUB_REPOSITORY/issues/$PR/comments?per_page=100" \
+            --jq '[.[] | select(.body | startswith("<!-- kniga-kr -->"))][0].id // empty')
+          if [ -n "$id" ]; then
+            gh api -X PATCH "repos/$GITHUB_REPOSITORY/issues/comments/$id" -F body=@"$OUT/comment.md" > /dev/null
+          else
+            gh api -X POST "repos/$GITHUB_REPOSITORY/issues/$PR/comments" -F body=@"$OUT/comment.md" > /dev/null
+          fi
+
+      - name: Сохранить кэш
+        if: always() && hashFiles('kr-cache/cache.json') != ''
+        uses: actions/cache/save@v5
+        with:
+          path: kr-cache
+          key: kr-cache-${{ github.run_id }}
+
+      - uses: actions/upload-artifact@v6
+        if: always()
+        with:
+          name: kr-check-${{ github.run_number }}
+          path: |
+            kr-out/
+            !kr-out/routes.json
+          if-no-files-found: ignore
