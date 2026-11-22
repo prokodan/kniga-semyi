@@ -18,7 +18,8 @@
     "issues:create": "bash scripts/create-issues.sh",
     "db:check": "node scripts/check-migrations.mjs",
     "sim": "tsx scripts/sim.ts",
-    "eval": "tsx scripts/eval.ts"
+    "eval": "tsx scripts/eval.ts",
+    "seed:demo": "tsx scripts/seed-demo.ts"
   },
   "dependencies": {
     "@fontsource/noto-serif": "^5.3.0",

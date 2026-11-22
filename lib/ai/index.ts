@@ -4,6 +4,7 @@ import "server-only";
 //   const chapter = await ai.run("edit", { transcript, storytellerName, questionText, block });
 // Ошибка AiUnavailableError → поставить историю в очередь / режим сцены (I2, I12).
 import { getDbOrNull } from "@/lib/db";
+import { withStageFallback } from "@/lib/stage";
 import { createRouter, type AiRouter } from "./router";
 import { MemoryStore, SupabaseStore, type AiStore } from "./store";
 
@@ -24,7 +25,8 @@ function getRouter(): AiRouter {
 }
 
 export const ai: AiRouter = {
-  run: (step, input, opts) => getRouter().run(step, input, opts),
+  // Режим сцены (I12): при STAGE_MODE=1 демо-история через 20 с без ответа получает готовый результат.
+  run: (step, input, opts) => withStageFallback(opts?.storyId, step, () => getRouter().run(step, input, opts), { input }),
   runWithMeta: (step, input, opts) => getRouter().runWithMeta(step, input, opts),
 };
 
