@@ -74,3 +74,67 @@ jobs:
           token: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           chat_id: ${{ secrets.TELEGRAM_CHAT_ID }}
           text: "🟠 CI упал в PR #${{ github.event.pull_request.number }}: ${{ github.event.pull_request.html_url }}"
+
+  # I13: главные пути в браузере на локальной базе Supabase (Docker на раннере) в AI_MODE=mock.
+  # Отдельный job параллельно с ci — PR ждёт дольше не больше чем на пару минут. Профили: iPhone + iPad (WebKit).
+  e2e:
+    name: e2e
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      AI_MODE: mock
+      CI: "true"
+      NEXT_TELEMETRY_DISABLED: "1"
+      NEXT_PUBLIC_SUPABASE_URL: http://127.0.0.1:54321
+      ADMIN_PIN: "246810"
+      KIOSK_PIN: "1357"
+      LISTEN_SECRET: e2e-only-listen-secret
+    steps:
+      - uses: actions/checkout@v7
+      - uses: supabase/setup-cli@v1
+        with:
+          version: latest
+      # Поднимаем базу фоном, пока ставятся зависимости и идёт сборка; миграции применяются при старте.
+      - name: Supabase локально (фоном)
+        run: |
+          nohup supabase start -x studio,imgproxy,mailpit,realtime,edge-runtime,logflare,vector,supavisor,postgres-meta \
+            > "$RUNNER_TEMP/supabase.log" 2>&1 &
+          echo $! > "$RUNNER_TEMP/supabase.pid"
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Кэш браузера Playwright
+        id: pw-cache
+        uses: actions/cache@v5
+        with:
+          path: ~/.cache/ms-playwright
+          key: pw-webkit-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
+      - name: WebKit (iPhone / iPad)
+        run: |
+          if [ "${{ steps.pw-cache.outputs.cache-hit }}" = "true" ]; then npx playwright install-deps webkit; else npx playwright install --with-deps webkit; fi
+      - name: Сборка
+        run: npm run build
+      - name: Ждём Supabase
+        run: |
+          pid=$(cat "$RUNNER_TEMP/supabase.pid")
+          for i in $(seq 1 120); do kill -0 "$pid" 2>/dev/null || break; sleep 2; done
+          tail -n 20 "$RUNNER_TEMP/supabase.log"
+          supabase status -o env > "$RUNNER_TEMP/sb.env"
+          set -a; . "$RUNNER_TEMP/sb.env"; set +a
+          key="${SERVICE_ROLE_KEY:-$SECRET_KEY}"
+          [ -n "$key" ] || { echo "::error::supabase start не поднял стек — см. лог выше"; exit 1; }
+          # Ключ локального стека — публичный демо-ключ Supabase CLI, не секрет проекта.
+          echo "SUPABASE_SERVICE_ROLE_KEY=$key" >> "$GITHUB_ENV"
+      - name: E2E — seed:demo → семья (iPhone) · киоск (iPad) · кабинет · админка
+        run: npx playwright test --project=iphone --project=ipad --project=admin
+      - name: Отчёт Playwright (скриншоты и трейсы)
+        if: failure()
+        uses: actions/upload-artifact@v6
+        with:
+          name: playwright-report
+          path: |
+            playwright-report/
+            test-results/
+          retention-days: 7

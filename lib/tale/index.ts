@@ -7,6 +7,7 @@ import { ai, AiUnavailableError } from "@/lib/ai";
 import { BUCKETS, getDbOrNull } from "@/lib/db";
 import { getFamilyStore, MemoryFamilyStore } from "@/lib/db/access";
 import type { Extra, Story, Storyteller } from "@/lib/types";
+import { knownWords, neutralizeChildName } from "./address";
 import { cleanChildName, isTaleStory, pickTaleStories, taleInputStories } from "./pick";
 import { TALE_MAX_PAGES, TALE_MIN_STORIES, TALE_STYLE, type TaleView } from "./types";
 
@@ -271,12 +272,19 @@ export async function writeTale(familyId: string, opts: { childName?: unknown; a
       { storytellerName, ...(childName ? { childName } : {}), stories: taleInputStories(stories) },
       { noCache: Boolean(opts.again) },
     );
-    const pages = tale.pages
+    let pages = tale.pages
       .filter((p) => p.text.trim())
       .slice(0, TALE_MAX_PAGES)
       .map((p) => ({ text: p.text.trim(), illustrationPrompt: p.illustrationPrompt.trim() || p.text.trim() }));
     if (pages.length === 0) throw new Error("в сказке нет страниц");
-    extra = await saveTale(familyId, extra, { status: "ready", data: { ...base, title: tale.title.trim() || "Сказка", pages } });
+    let title = tale.title.trim() || "Сказка";
+    if (!childName) {
+      // Имени внука не дали — модель не должна его придумывать (#44): нейтральное обращение «дружок».
+      const known = knownWords(storytellerName, ...stories.flatMap((s) => [s.title, s.text_ru]));
+      title = neutralizeChildName(title, known);
+      pages = pages.map((p, i) => ({ ...p, text: neutralizeChildName(p.text, known, { vocative: i === pages.length - 1 }) }));
+    }
+    extra = await saveTale(familyId, extra, { status: "ready", data: { ...base, title, pages } });
   } catch (e) {
     const message =
       e instanceof AiUnavailableError ? "Сказочник сейчас занят — попробуйте через пару минут" : "Сказка не получилась — попробуйте ещё раз";

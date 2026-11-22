@@ -16,14 +16,21 @@ function placeholderSvg(prompt: string): string {
   return `<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024"><rect width="100%" height="100%" fill="${bg}"/><circle cx="512" cy="430" r="180" fill="#b8402f" opacity="0.15"/><text x="512" y="780" font-family="serif" font-size="36" text-anchor="middle" fill="#4a403a">${label}</text></svg>`;
 }
 
+/** Запись не длиннее — заглушка «слышит» короткий ответ. */
+export const SHORT_ANSWER_SEC = 3;
+export const SHORT_ANSWER = "Да, помню. Это было в Уштобе.";
+
 function wordCount(s: string): number {
   return s.trim().split(/\s+/).filter(Boolean).length;
 }
 
 export function mockOutput<S extends AiStep>(step: S, input: ProviderCall<S>["input"]): unknown {
   switch (step) {
-    case "transcribe":
-      return transcribeFixture;
+    case "transcribe": {
+      // Короткая запись (≤ 3 с) — короткий ответ: интервью-агент задаст уточнение (ветку видят e2e-тесты I13).
+      const i = input as ProviderCall<"transcribe">["input"];
+      return i.durationSec <= SHORT_ANSWER_SEC ? { text: SHORT_ANSWER, language: "ru" } : transcribeFixture;
+    }
     case "edit":
       return editFixture;
     case "translate":

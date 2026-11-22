@@ -6,6 +6,7 @@ import { getFamilyStore, MemoryFamilyStore } from "@/lib/db/access";
 import { DEMO_STORIES } from "@/lib/book/pdf/demo";
 import taleFixture from "@/fixtures/ai/tale.json";
 import { createTale, getTaleView, illustratePage, TaleError, writeTale } from "./index";
+import { knownWords, neutralizeChildName } from "./address";
 import { cleanChildName, pickTaleStories, taleInputStories, type TaleStory } from "./pick";
 import { TALE_STYLE } from "./types";
 
@@ -131,5 +132,56 @@ describe("сказка в AI_MODE=mock", () => {
     const fresh = await writeTale(id, { again: true });
     expect(fresh.status).toBe("ready");
     expect(fresh.illustrated).toBe(0);
+  });
+});
+
+describe("сказка без имени внука (#44)", () => {
+  const known = knownWords("Ким Чер Су", "Я родился в Уштобе. Мама, омани, варила кукси. Брат Коля ловил рыбу.");
+
+  it("выдуманное обращение по имени → «дружок»", () => {
+    expect(neutralizeChildName("Знаешь, Алиса, теперь этот мальчик — твой дедушка.", known, { vocative: true })).toBe(
+      "Знаешь, дружок, теперь этот мальчик — твой дедушка.",
+    );
+    expect(neutralizeChildName("Алиса, послушай: это твой дедушка!", known, { vocative: true })).toBe("Дружок, послушай: это твой дедушка!");
+    expect(neutralizeChildName("Дорогая Соня, дедушка помнит всё.", known)).toBe("Дружок, дедушка помнит всё.");
+    expect(neutralizeChildName("Его внучка Маша любит эту сказку.", known)).toBe("Его внучка любит эту сказку.");
+    expect(neutralizeChildName("Сказка для Алисы", known)).toBe("Сказка для тебя");
+    expect(neutralizeChildName("Кукси для Коли", known)).toBe("Кукси для Коли");
+  });
+
+  it("имена и места из глав, служебные слова и голые запятые на средних страницах не трогает", () => {
+    const keep = [
+      "Знаешь, это твой дедушка.",
+      "Тогда, в Уштобе, брат Коля ловил рыбу.",
+      "Летом, Коля, Чер Су и мама шли к реке.",
+      "Давным-давно, в тёплом городке Уштобе, жил мальчик.",
+    ];
+    for (const t of keep) expect(neutralizeChildName(t, known, { vocative: true })).toBe(t);
+    // На средней странице между запятыми бывает и не имя ребёнка — без vocative не трогаем
+    expect(neutralizeChildName("Летом, Тимур, они шли к реке.", known)).toBe("Летом, Тимур, они шли к реке.");
+  });
+
+  it("writeTale без childName подставляет нейтральное обращение, с childName — оставляет имя", async () => {
+    const { ai } = await import("@/lib/ai");
+    const invented = {
+      title: "Сказка для Алисы",
+      pages: [
+        ...taleFixture.pages.slice(0, 3),
+        { text: "Знаешь, Алиса, теперь этот мальчик — твой дедушка.", illustrationPrompt: "grandfather and grandchild, watercolor" },
+      ],
+    };
+    const spy = vi.spyOn(ai, "run").mockImplementation((async () => invented) as never);
+    try {
+      const neutral = await writeTale(await family(3));
+      expect(neutral.childName).toBeNull();
+      expect(neutral.title).toBe("Сказка для тебя");
+      expect(neutral.pages.at(-1)!.text).toBe("Знаешь, дружок, теперь этот мальчик — твой дедушка.");
+      expect(neutral.pages.map((p) => p.text).join(" ")).not.toMatch(/Алис/);
+
+      const named = await writeTale(await family(3), { childName: "Алиса" });
+      expect(named.pages.at(-1)!.text).toBe("Знаешь, Алиса, теперь этот мальчик — твой дедушка.");
+    } finally {
+      spy.mockRestore();
+    }
   });
 });
