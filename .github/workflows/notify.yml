@@ -1,33 +1,73 @@
 name: notify
 
-# Уведомления в общий Telegram-чат: PR готов к ревью, деплой на прод прошёл.
+# Уведомления в общий Telegram-чат: PR готов к ревью, PR слит, деплой на прод прошёл.
+# Сначала событие уходит в бота (/api/telegram/notify, I16) — он учитывает настройки 🔔 в боте.
+# Если бот не ответил 200 (не настроен или недоступен) — сообщение уходит напрямую, как раньше.
 on:
   pull_request:
-    types: [opened, ready_for_review, reopened]
+    types: [opened, ready_for_review, reopened, closed]
   deployment_status:
 
 permissions:
   contents: read
 
 jobs:
-  pr-ready:
-    if: github.event_name == 'pull_request' && github.event.pull_request.draft == false && github.event.pull_request.head.repo.full_name == github.repository
+  notify:
+    if: >-
+      (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository &&
+        ((github.event.action != 'closed' && github.event.pull_request.draft == false) ||
+         (github.event.action == 'closed' && github.event.pull_request.merged == true))) ||
+      (github.event_name == 'deployment_status' && github.event.deployment_status.state == 'success' && github.event.deployment.environment == 'Production')
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      - uses: ./.github/actions/telegram
-        with:
-          token: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-          chat_id: ${{ secrets.TELEGRAM_CHAT_ID }}
-          text: "👀 PR #${{ github.event.pull_request.number }} готов к ревью (${{ github.event.pull_request.user.login }}): ${{ github.event.pull_request.title }}\n${{ github.event.pull_request.html_url }}"
 
-  deployed:
-    if: github.event_name == 'deployment_status' && github.event.deployment_status.state == 'success' && github.event.deployment.environment == 'Production'
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7
-      - uses: ./.github/actions/telegram
+      - name: Событие
+        id: ev
+        env:
+          KIND: ${{ github.event_name == 'deployment_status' && 'deploy' || (github.event.action == 'closed' && 'pr_merged' || 'pr_opened') }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          PR_AUTHOR: ${{ github.event.pull_request.user.login }}
+          MERGED_BY: ${{ github.event.pull_request.merged_by.login }}
+          PR_URL: ${{ github.event.pull_request.html_url }}
+          ENV_URL: ${{ github.event.deployment_status.environment_url }}
+        run: |
+          case "$KIND" in
+            pr_opened) text="👀 PR #$PR_NUMBER готов к ревью ($PR_AUTHOR): $PR_TITLE"; url="$PR_URL" ;;
+            pr_merged) text="✅ PR #$PR_NUMBER слит (${MERGED_BY:-?}): $PR_TITLE"; url="$PR_URL" ;;
+            deploy)    text="🚀 Деплой на прод прошёл"; url="$ENV_URL" ;;
+          esac
+          # Многострочные значения — через heredoc-разделитель, чтобы заголовок PR не сломал $GITHUB_OUTPUT.
+          {
+            echo "event=$KIND"
+            echo "text<<__EOF__"; echo "$text"; echo "__EOF__"
+            echo "url<<__EOF__"; echo "$url"; echo "__EOF__"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Бот
+        id: bot
+        env:
+          NOTIFY_URL: ${{ secrets.PROD_URL }}
+          NOTIFY_SECRET: ${{ secrets.BOT_NOTIFY_SECRET }}
+          EVENT: ${{ steps.ev.outputs.event }}
+          TEXT: ${{ steps.ev.outputs.text }}
+          URL: ${{ steps.ev.outputs.url }}
+        run: |
+          sent=false
+          if [ -n "$NOTIFY_URL" ] && [ -n "$NOTIFY_SECRET" ]; then
+            payload=$(jq -n --arg e "$EVENT" --arg t "$TEXT" --arg u "$URL" '{event:$e, text:$t} + (if $u != "" then {url:$u} else {} end)')
+            code=$(curl -sS --max-time 15 -o bot.json -w '%{http_code}' -X POST "${NOTIFY_URL%/}/api/telegram/notify" \
+              -H "content-type: application/json" -H "x-bot-notify-secret: $NOTIFY_SECRET" --data "$payload" || true)
+            echo "бот: HTTP $code $(jq -c '{delivered, reason}' bot.json 2>/dev/null || true)"
+            [ "$code" = "200" ] && sent=true
+          fi
+          echo "sent=$sent" >> "$GITHUB_OUTPUT"
+
+      - name: Telegram напрямую (фолбэк)
+        if: steps.bot.outputs.sent != 'true'
+        uses: ./.github/actions/telegram
         with:
           token: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           chat_id: ${{ secrets.TELEGRAM_CHAT_ID }}
-          text: "🚀 Деплой на прод прошёл: ${{ github.event.deployment_status.environment_url }}"
+          text: "${{ steps.ev.outputs.text }}\n${{ steps.ev.outputs.url }}"

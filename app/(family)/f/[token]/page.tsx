@@ -99,6 +99,13 @@ export default async function FamilyPage({ params, searchParams }: { params: Pro
               </li>
             ))}
           </ul>
+          <Link
+            href={`/book/${token}`}
+            className="mt-2 flex min-h-12 items-center justify-between gap-3 rounded-card bg-paper-deep px-4 py-3 font-semibold shadow-card"
+          >
+            <span>Книга целиком (PDF)</span>
+            <span className="text-seal">открыть →</span>
+          </Link>
         </section>
       )}
 
