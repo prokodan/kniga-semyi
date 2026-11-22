@@ -2,6 +2,8 @@
 // SupabasePipelineRepo — прод (service-ключ, только сервер); MemoryPipelineRepo — тесты и локальный
 // запуск без базы (делит Map историй с интервью-агентом, чтобы ответ из /api/sessions сразу обрабатывался).
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { nameHints } from "@/lib/interview/names";
+import { loadNameHints } from "@/lib/interview/names-db";
 import type { Story } from "@/lib/types";
 
 export type PipelinePatch = Partial<
@@ -29,6 +31,8 @@ export interface PipelineRepo {
    * Нет реализации — не держим.
    */
   interviewHold?(story: Story): Promise<boolean>;
+  /** Имена и места для расшифровки и редактуры (пункт 5). Нет реализации — без подсказок. */
+  nameHints?(story: Story): Promise<string[]>;
 }
 
 /** Сессия ещё на вопросе этой истории: не завершена, текущий вопрос тот же и он не закрыт. */
@@ -101,6 +105,9 @@ export class MemoryPipelineRepo implements PipelineRepo {
     const t = this.tokens.get(familyId);
     return t === undefined ? true : t === token; // без заведённой семьи — локальный режим
   }
+  async nameHints(story: Story) {
+    return nameHints({ storytellerName: this.names.get(story.storyteller_id) });
+  }
   async interviewHold(story: Story) {
     return story.session_id && this.sessions ? holdsStory(this.sessions.get(story.session_id) ?? null, story) : false;
   }
@@ -153,6 +160,13 @@ export class SupabasePipelineRepo implements PipelineRepo {
     const { data, error } = await this.db.from("families").select("id").eq("id", familyId).eq("access_token", token).maybeSingle();
     if (error) throw new Error(`проверка ссылки семьи: ${error.message}`);
     return Boolean(data);
+  }
+  async nameHints(story: Story) {
+    try {
+      return await loadNameHints(this.db, story.storyteller_id);
+    } catch {
+      return nameHints({}); // без карточки — хотя бы словарь
+    }
   }
   async interviewHold(story: Story) {
     if (!story.session_id) return false;

@@ -31,7 +31,9 @@ export const openaiProvider: AiProvider = {
       form.append("model", req.model);
       form.append("response_format", "json");
       if (input.languageHint !== "mixed") form.append("language", input.languageHint);
-      form.append("prompt", "Пожилой рассказчик вспоминает жизнь. Возможны слова на корё мар.");
+      // prompt у моделей расшифровки — словарь: имена и места семьи пишутся так (≈ 200 токенов максимум)
+      const vocab = (input.hints ?? []).slice(0, 45).join(", ");
+      form.append("prompt", `Пожилой рассказчик вспоминает жизнь. Возможны слова на корё мар.${vocab ? ` Имена и места: ${vocab}.` : ""}`);
       const json = (await fetchJson("openai", `${BASE}/audio/transcriptions`, {
         method: "POST",
         headers: { authorization: auth() },

@@ -121,13 +121,14 @@ export async function chapterAudioParts(story: Pick<Story, "id" | "audio_url" | 
       .select("audio_url, duration_sec, created_at")
       .eq("parent_story_id", story.id)
       .not("audio_url", "is", null)
+      .neq("status", "skipped") // «не буду» и «да, Уштобе» на переспрос — не часть рассказа
       .order("created_at", { ascending: true });
     if (error) console.error("[chapter] уточнения для голоса:", error.message);
     children = (data as typeof children | null) ?? [];
   } else {
     const store = getFamilyStore() as Partial<MemoryFamilyStore>;
     children = [...(store.stories?.values() ?? [])]
-      .filter((s) => s.parent_story_id === story.id && s.audio_url)
+      .filter((s) => s.parent_story_id === story.id && s.audio_url && s.status !== "skipped")
       .sort((a, b) => a.created_at.localeCompare(b.created_at));
   }
   const all = [story, ...children];
