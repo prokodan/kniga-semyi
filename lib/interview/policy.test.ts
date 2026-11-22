@@ -41,6 +41,8 @@ describe("policy", () => {
     const answered = all.slice(1).map((x) => x.id);
     expect(candidateQuestions(bank, { later_question_ids: [later] }).map((x) => x.id)).not.toContain(later);
     expect(candidateQuestions(bank, { later_question_ids: [later], answered_question_ids: answered }).map((x) => x.id)).toEqual([later]);
-    expect(isBlockDone(bank, { skipped_question_ids: [all[0]!.id] }, all[0]!.block)).toBe(true);
+    const firstBlock = bank.inBlock(all[0]!.block).map((x) => x.id);
+    expect(isBlockDone(bank, { skipped_question_ids: firstBlock }, all[0]!.block)).toBe(true);
+    if (firstBlock.length > 1) expect(isBlockDone(bank, { skipped_question_ids: [firstBlock[0]!] }, all[0]!.block)).toBe(false);
   });
 });

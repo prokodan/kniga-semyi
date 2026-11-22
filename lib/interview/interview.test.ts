@@ -177,10 +177,11 @@ describe("интервью-агент: пропуск, позже, блоки, �
     expect(r1.type).toBe("nextQuestion");
     if (r1.type === "nextQuestion") expect(r1.question.id).not.toBe(s.question.id);
 
-    // Проходим остальные 7 блоков заглушки — последним вернётся отложенный roots-01.
+    // Проходим весь остальной банк — последним вернётся отложенный roots-01.
     let last: AnswerResult = r1;
     const seen: string[] = [];
-    for (let i = 0; i < 20 && last.type !== "finished"; i++) {
+    const guard = createQuestionBank().all().length * 2 + 5;
+    for (let i = 0; i < guard && last.type !== "finished"; i++) {
       const qid = last.type === "nextQuestion" ? last.question.id : last.type === "blockDone" ? last.nextQuestion?.id : undefined;
       if (qid) seen.push(qid);
       last = await interview.skip(s.sessionId, "skip");
@@ -232,7 +233,8 @@ describe("интервью-агент: пропуск, позже, блоки, �
     const r = await interview.skip(s.sessionId, "skip");
     expect(r.type === "nextQuestion" || r.type === "blockDone").toBe(true);
     const next = r.type === "nextQuestion" ? r.question : r.type === "blockDone" ? r.nextQuestion : null;
-    expect(next?.id).toBe("childhood-01");
+    // Первый кандидат = первый открытый вопрос банка (W0: childhood-01, V0: roots-02).
+    expect(next?.id).toBe(createQuestionBank().all().find((x) => x.id !== s.question.id)!.id);
   });
 
   it("ИИ недоступен → ответ принят, разговор идёт по порядку банка", async () => {
