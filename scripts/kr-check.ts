@@ -14,6 +14,7 @@ import { QUESTIONS } from "@/content/questions/bank";
 import { EvalStore } from "@/eval/store";
 import { backTranslate, checkItem, chooseBackMode, parseGlossary, renderKrReport, type KrFlag, type KrItem, type KrReport } from "@/eval/kr-check";
 import { DEMO_STORIES } from "@/lib/book/pdf/demo";
+import { DEMO_KIOSK_STORY, DEMO_STAGE_RESERVE } from "@/fixtures/demo/family";
 import { createRouter } from "@/lib/ai/router";
 
 for (const f of [".env.local", ".env"]) {
@@ -41,6 +42,20 @@ function items(): KrItem[] {
     text_ko: s.text_ko ?? "",
     quote_ko: s.quote_ko ?? undefined,
   }));
+  // I12: корейский истории киоска и запасной главы «Трудные времена» (режим сцены) писал агент,
+  // носитель их не видел — проверяем так же, как демо-главы.
+  const extra: KrItem[] = [
+    { id: "demo-kiosk", label: "Киоск", seed: DEMO_KIOSK_STORY },
+    { id: "demo-stage-reserve", label: "Запас сцены", seed: DEMO_STAGE_RESERVE },
+  ].map(({ id, label, seed }) => ({
+    id,
+    kind: "chapter",
+    label: `${label} «${seed.edit.title}»`,
+    block: seed.block ?? undefined,
+    text_ru: seed.edit.text_ru,
+    text_ko: seed.translate.text_ko,
+    quote_ko: seed.translate.quote_ko || undefined,
+  }));
   const bank: KrItem[] = BLOCKS.map((b) => {
     const qs = QUESTIONS.filter((q) => q.block === b.id);
     return {
@@ -52,7 +67,7 @@ function items(): KrItem[] {
       text_ko: qs.map((q) => q.ko).join("\n"),
     };
   });
-  return [...chapters, ...bank];
+  return [...chapters, ...extra, ...bank];
 }
 
 async function main() {
