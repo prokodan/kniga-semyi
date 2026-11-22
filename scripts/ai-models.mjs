@@ -294,8 +294,11 @@ const routes = {
   next_question: [FL ?? F, GPT].filter(Boolean),
   tale: [FL, F, GPT].filter(Boolean),
   persona_reply: [FL ?? F, GPT].filter(Boolean),
+  // I11 (eval): обратный перевод — другая модель, чем у translate (Flash раньше Flash-Lite).
+  judge: [FL ?? F, GPT].filter(Boolean),
+  back_translate: [F, GPT, FL].filter(Boolean),
 };
-const TIMEOUTS = { transcribe: 45000, edit: 30000, translate: 30000, completeness: 12000, next_question: 12000, tale: 40000, persona_reply: 20000 };
+const TIMEOUTS = { transcribe: 45000, edit: 30000, translate: 30000, completeness: 12000, next_question: 12000, tale: 40000, persona_reply: 20000, judge: 40000, back_translate: 60000 };
 const geminiWorks = Boolean(FL || F);
 
 const esc = (s) => s.replace(/'/g, "''");

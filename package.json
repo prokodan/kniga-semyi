@@ -17,7 +17,8 @@
     "check": "npm run typecheck && npm run lint && npm run test && npm run db:check",
     "issues:create": "bash scripts/create-issues.sh",
     "db:check": "node scripts/check-migrations.mjs",
-    "sim": "tsx scripts/sim.ts"
+    "sim": "tsx scripts/sim.ts",
+    "eval": "tsx scripts/eval.ts"
   },
   "dependencies": {
     "@fontsource/noto-serif": "^5.3.0",

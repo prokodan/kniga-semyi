@@ -1,0 +1,159 @@
+name: eval
+
+# Оценка качества промптов (I11). На PR с изменениями prompts/** — прогон 3 персонажей «до» (промпты из
+# базовой ветки) и «после» (промпты PR) тем же кодом → комментарий в PR с таблицей «до / после».
+# Метрики: голос 1–5 (LLM-судья eval/judge.md, цель ≥ 4), потерянные / искажённые факты, уточнения,
+# корейский — обратный перевод KR→RU другой моделью с флажками, время шагов. Как читать — eval/README.md.
+#
+# Квота: GEMINI_API_KEY из Secrets, AI_MODE=auto, Flash-Lite (обратный перевод — Flash). Не больше
+# max_calls запросов на прогон (по умолчанию 20 × 3 персонажа × 2 = 120 максимум), а кэш ответов
+# (actions/cache) делает «до» и повторы почти бесплатными. Нет ключа или PR из форка — mock, комментарий
+# честно пишет «mock, оценка не показательна».
+on:
+  pull_request:
+    paths:
+      - "prompts/**"
+      - "eval/judge.md"
+      - "eval/back_translate.md"
+  workflow_dispatch:
+    inputs:
+      personas:
+        description: "Персонажи через запятую"
+        default: "kim,pak,tsoi"
+      behaviors:
+        description: "Профили: default (у каждого свои) или 1–2 через запятую"
+        default: "default"
+      questions:
+        description: "Сколько основных вопросов на прогон"
+        default: "4"
+      max_calls:
+        description: "Лимит запросов к ИИ на прогон (7–60)"
+        default: "20"
+      label:
+        description: "Подпись прогона"
+        default: ""
+
+concurrency:
+  group: eval-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  pull-requests: write
+  issues: write
+
+jobs:
+  eval:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      NEXT_TELEMETRY_DISABLED: "1"
+      GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+      SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
+      PERSONAS: ${{ inputs.personas || 'kim,pak,tsoi' }}
+      BEHAVIORS: ${{ inputs.behaviors || 'default' }}
+      QUESTIONS: ${{ inputs.questions || '4' }}
+      MAX_CALLS: ${{ inputs.max_calls || '20' }}
+      LABEL: ${{ inputs.label }}
+      BASE_REF: ${{ github.event.pull_request.base.ref }}
+      OUT: ${{ github.workspace }}/eval-out
+      EVAL_ROUTES_FILE: ${{ github.workspace }}/eval-out/routes.json
+      EVAL_CACHE_FILE: ${{ github.workspace }}/eval-cache/cache.json
+      RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+
+      - name: Режим и входы
+        run: |
+          mkdir -p "$OUT" eval-cache
+          if ! [[ "$MAX_CALLS" =~ ^[0-9]+$ ]] || [ "$MAX_CALLS" -lt 7 ] || [ "$MAX_CALLS" -gt 60 ]; then
+            echo "## 🔴 eval: max_calls должен быть числом от 7 до 60 (сейчас: $MAX_CALLS)" >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
+          if ! [[ "$QUESTIONS" =~ ^[0-9]+$ ]]; then
+            echo "## 🔴 eval: questions должен быть числом" >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
+          if [ -n "$GEMINI_API_KEY" ]; then echo "AI_MODE=auto" >> "$GITHUB_ENV"; else echo "AI_MODE=mock" >> "$GITHUB_ENV"; fi
+
+      - name: Модели из ai_routes прода
+        if: env.SUPABASE_DB_URL != '' && env.GEMINI_API_KEY != ''
+        run: |
+          command -v psql > /dev/null || (sudo apt-get update -qq && sudo apt-get install -y -qq postgresql-client)
+          psql "$SUPABASE_DB_URL" -tA -v ON_ERROR_STOP=1 \
+            -c "select coalesce(json_object_agg(step, providers), '{}'::json) from ai_routes" > "$EVAL_ROUTES_FILE" \
+            || { echo "::warning::ai_routes не прочитаны — модели из lib/ai/config.ts"; rm -f "$EVAL_ROUTES_FILE"; }
+
+      - name: Кэш ответов
+        uses: actions/cache/restore@v5
+        with:
+          path: eval-cache
+          key: eval-cache-${{ github.run_id }}
+          restore-keys: eval-cache-
+
+      - name: «До» — промпты базовой ветки
+        if: github.event_name == 'pull_request'
+        run: |
+          before="$RUNNER_TEMP/before"
+          mkdir -p "$before"
+          git archive HEAD | tar -x -C "$before"
+          rm -rf "$before/prompts"
+          git archive "origin/$BASE_REF" prompts | tar -x -C "$before"
+          ln -s "$GITHUB_WORKSPACE/node_modules" "$before/node_modules"
+          cd "$before"
+          set -o pipefail
+          npx tsx scripts/eval.ts --personas "$PERSONAS" --behaviors "$BEHAVIORS" --questions "$QUESTIONS" \
+            --max-calls "$MAX_CALLS" --label "$BASE_REF" --out "$OUT/before.md" --json "$OUT/before.json" 2>&1 | tee "$OUT/before.log"
+
+      - name: «После» — промпты этого коммита
+        run: |
+          args=(--personas "$PERSONAS" --behaviors "$BEHAVIORS" --questions "$QUESTIONS" --max-calls "$MAX_CALLS"
+                --out "$OUT/report.md" --json "$OUT/report.json" --comment "$OUT/comment.md" --link "$RUN_URL")
+          if [ -f "$OUT/before.json" ]; then args+=(--compare "$OUT/before.json" --label "PR #${{ github.event.pull_request.number }}"); else args+=(--label "${LABEL:-${GITHUB_REF_NAME}}"); fi
+          set -o pipefail
+          npx tsx scripts/eval.ts "${args[@]}" 2>&1 | tee "$OUT/after.log"
+
+      - name: Отчёт в summary
+        if: always()
+        run: |
+          if [ -f "$OUT/report.md" ]; then cat "$OUT/report.md" >> "$GITHUB_STEP_SUMMARY"; else echo "## 🔴 eval: отчёт не создан — см. лог" >> "$GITHUB_STEP_SUMMARY"; fi
+
+      - name: Комментарий в PR
+        if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ github.event.pull_request.number }}
+        run: |
+          [ -f "$OUT/comment.md" ] || exit 0
+          id=$(gh api "repos/$GITHUB_REPOSITORY/issues/$PR/comments?per_page=100" \
+            --jq '[.[] | select(.body | startswith("<!-- kniga-eval -->"))][0].id // empty')
+          if [ -n "$id" ]; then
+            gh api -X PATCH "repos/$GITHUB_REPOSITORY/issues/comments/$id" -F body=@"$OUT/comment.md" > /dev/null
+            echo "комментарий обновлён: $id"
+          else
+            gh api -X POST "repos/$GITHUB_REPOSITORY/issues/$PR/comments" -F body=@"$OUT/comment.md" > /dev/null
+            echo "комментарий создан"
+          fi
+
+      - name: Сохранить кэш
+        if: always() && hashFiles('eval-cache/cache.json') != ''
+        uses: actions/cache/save@v5
+        with:
+          path: eval-cache
+          key: eval-cache-${{ github.run_id }}
+
+      - uses: actions/upload-artifact@v6
+        if: always()
+        with:
+          name: eval-${{ github.run_number }}
+          path: |
+            eval-out/
+            !eval-out/routes.json
+          if-no-files-found: ignore

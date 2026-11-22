@@ -19,6 +19,8 @@ const sampleInputs: Record<AiStep, unknown> = {
   tale: { storytellerName: "Ким", stories: [{ title: "т", text_ru: "текст" }] },
   illustrate: { prompt: "boy by the canal", style: "watercolor" },
   persona_reply: { persona: "# Ким\n- Родился в 1940 году в Уштобе, в семье рисоводов колхоза.", question: "Где вы родились?", history: [] },
+  judge: { storytellerName: "Ким", manner: "Говорит коротко", chapters: [{ id: "s1", transcript: "Ну, значит…", text_ru: "Я родился" }] },
+  back_translate: { chapters: [{ id: "s1", text_ru: "Я родился", text_ko: "나는 태어났다" }] },
 };
 
 describe("mock provider", () => {
@@ -37,6 +39,17 @@ describe("mock provider", () => {
       inputSchemas.completeness.parse({ ...(sampleInputs.completeness as object), answer: "слово ".repeat(40) }),
     ) as { done: boolean };
     expect(long.done).toBe(true);
+  });
+
+  it("back_translate: нет корейского → флажок major; judge — оценка на каждую главу", () => {
+    const bt = mockOutput(
+      "back_translate",
+      inputSchemas.back_translate.parse({ chapters: [{ id: "a", text_ru: "т", text_ko: "나는" }, { id: "b", text_ru: "т", text_ko: "Я родился" }] }),
+    ) as { chapters: { id: string; flags: { severity: string }[] }[] };
+    expect(bt.chapters.map((c) => c.flags.length)).toEqual([0, 1]);
+    expect(bt.chapters[1]!.flags[0]!.severity).toBe("major");
+    const j = mockOutput("judge", inputSchemas.judge.parse(sampleInputs.judge)) as { scores: { id: string }[] };
+    expect(j.scores.map((s) => s.id)).toEqual(["s1"]);
   });
 
   it("next_question выбирает непокрытый блок", () => {
