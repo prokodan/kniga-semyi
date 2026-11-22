@@ -90,15 +90,37 @@ jobs:
           routes=$(curl -sS "${h[@]}" "${SUPABASE_URL%/}/rest/v1/ai_routes?select=step" | jq length)
           echo "ai_routes: $routes"; [ "$routes" -ge 8 ]
 
+      # Событие в бота (I16) с учётом настроек 🔔; не ответил 200 — шлём напрямую, как раньше.
+      - name: Бот — smoke
+        id: bot
+        if: always()
+        env:
+          NOTIFY_URL: ${{ secrets.PROD_URL }}
+          NOTIFY_SECRET: ${{ secrets.BOT_NOTIFY_SECRET }}
+          EVENT: smoke
+          STATUS: ${{ job.status == 'success' && 'ok' || 'failed' }}
+          TEXT: ${{ job.status == 'success' && format('🟢 Smoke прода ок — {0}', steps.health.outputs.summary) || format('🔴 Smoke прода упал — {0}', steps.health.outputs.summary) }}
+          URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          sent=false
+          if [ -n "$NOTIFY_URL" ] && [ -n "$NOTIFY_SECRET" ]; then
+            payload=$(jq -n --arg e "$EVENT" --arg s "$STATUS" --arg t "$TEXT" --arg u "$URL" '{event:$e, status:$s, text:$t, url:$u}')
+            code=$(curl -sS --max-time 15 -o bot.json -w '%{http_code}' -X POST "${NOTIFY_URL%/}/api/telegram/notify" \
+              -H "content-type: application/json" -H "x-bot-notify-secret: $NOTIFY_SECRET" --data "$payload" || true)
+            echo "бот: HTTP $code $(jq -c '{delivered, reason}' bot.json 2>/dev/null || true)"
+            [ "$code" = "200" ] && sent=true
+          fi
+          echo "sent=$sent" >> "$GITHUB_OUTPUT"
+
       - name: Telegram — smoke ок
-        if: success()
+        if: success() && steps.bot.outputs.sent != 'true'
         uses: ./.github/actions/telegram
         with:
           token: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           chat_id: ${{ secrets.TELEGRAM_CHAT_ID }}
           text: "🟢 Smoke прода ок — ${{ steps.health.outputs.summary }}"
       - name: Telegram — smoke упал
-        if: failure()
+        if: failure() && steps.bot.outputs.sent != 'true'
         uses: ./.github/actions/telegram
         with:
           token: ${{ secrets.TELEGRAM_BOT_TOKEN }}

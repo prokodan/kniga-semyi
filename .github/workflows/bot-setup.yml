@@ -1,0 +1,61 @@
+name: bot-setup
+
+# Разовая настройка бота-пульта (I16): setWebhook на прод + список команд (setMyCommands).
+# Запуск: Actions → bot-setup → Run workflow. Повторять после смены PROD_URL или TELEGRAM_WEBHOOK_SECRET.
+# Нужны GitHub Secrets: TELEGRAM_BOT_TOKEN, TELEGRAM_WEBHOOK_SECRET, PROD_URL.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  setup:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      TG_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+      WEBHOOK_SECRET: ${{ secrets.TELEGRAM_WEBHOOK_SECRET }}
+      PROD_URL: ${{ secrets.PROD_URL }}
+    steps:
+      - name: Проверка секретов
+        run: |
+          missing=""
+          [ -z "$TG_TOKEN" ] && missing="$missing TELEGRAM_BOT_TOKEN"
+          [ -z "$WEBHOOK_SECRET" ] && missing="$missing TELEGRAM_WEBHOOK_SECRET"
+          [ -z "$PROD_URL" ] && missing="$missing PROD_URL"
+          if [ -n "$missing" ]; then
+            echo "::error::Не заданы GitHub Secrets:$missing"
+            exit 1
+          fi
+
+      # Токен только в URL запроса; в лог печатаем лишь ok/description из ответа Telegram.
+      - name: setWebhook
+        run: |
+          body=$(jq -n --arg url "${PROD_URL%/}/api/telegram" --arg s "$WEBHOOK_SECRET" \
+            '{url:$url, secret_token:$s, allowed_updates:["message","callback_query"], drop_pending_updates:true}')
+          res=$(curl -sS --max-time 20 -X POST "https://api.telegram.org/bot${TG_TOKEN}/setWebhook" \
+            -H "content-type: application/json" --data "$body")
+          echo "setWebhook: $(echo "$res" | jq -c '{ok, description}')"
+          echo "$res" | jq -e '.ok' > /dev/null
+
+      - name: setMyCommands
+        run: |
+          body=$(jq -n '{commands: [
+            {command:"menu", description:"Пульт кнопками"},
+            {command:"take", description:"Взять задачу: /take I5"},
+            {command:"release", description:"Вернуть задачу в очередь: /release I5"},
+            {command:"prompt", description:"Промпт для агента: /prompt I5"},
+            {command:"iam", description:"Привязать GitHub: /iam логин"},
+            {command:"help", description:"Список команд"}
+          ]}')
+          res=$(curl -sS --max-time 20 -X POST "https://api.telegram.org/bot${TG_TOKEN}/setMyCommands" \
+            -H "content-type: application/json" --data "$body")
+          echo "setMyCommands: $(echo "$res" | jq -c '{ok, description}')"
+          echo "$res" | jq -e '.ok' > /dev/null
+
+      - name: getWebhookInfo
+        run: |
+          curl -sS --max-time 20 "https://api.telegram.org/bot${TG_TOKEN}/getWebhookInfo" \
+            | jq '{ok, url: .result.url, pending: .result.pending_update_count, last_error: .result.last_error_message}'
+          echo "### ✅ Бот настроен: напишите /menu в группе" >> "$GITHUB_STEP_SUMMARY"
