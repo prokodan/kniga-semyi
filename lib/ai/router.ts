@@ -33,7 +33,16 @@ export interface RunOptions {
   storyId?: string;
   /** Не читать кэш (запись в кэш всё равно будет) — для «перегенерировать» */
   noCache?: boolean;
+  /**
+   * Момент (мс epoch), к которому нужно уложить все попытки (лимит функции Vercel 60 с). Цепочка 3 × 30–45 с
+   * в него не влезает: функцию убивали посреди шага и история навсегда оставалась «готовится…».
+   * Таймаут попытки = min(таймаут маршрута, остаток); последней модели — весь остаток; остаток < 4 с — стоп.
+   */
+  deadline?: number;
 }
+
+/** Меньше этого до дедлайна — новую попытку не начинаем */
+const MIN_ATTEMPT_MS = 4_000;
 
 export interface RunResult<S extends AiStep> {
   output: AiOutput<S>;
@@ -148,16 +157,25 @@ export function createRouter(deps: RouterDeps) {
     }
 
     const { entries, timeoutMs } = await candidates(step);
-    for (const entry of entries) {
+    for (const [i, entry] of entries.entries()) {
       const reason = await skipReason(entry, step);
       if (reason) {
         attempts.push({ provider: entry.provider, model: entry.model, reason });
         continue;
       }
+      let callTimeout = timeoutMs;
+      if (opts.deadline !== undefined) {
+        const left = opts.deadline - now().getTime() - 1_000;
+        if (left < MIN_ATTEMPT_MS) {
+          attempts.push({ provider: entry.provider, model: entry.model, reason: "не хватило времени шага" });
+          break;
+        }
+        callTimeout = i === entries.length - 1 ? left : Math.min(timeoutMs, left);
+      }
       const impl = providers[entry.provider]!;
       const settings = await store.getProviderSettings(entry.provider);
       const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), timeoutMs);
+      const timer = setTimeout(() => controller.abort(), callTimeout);
       const started = Date.now();
       try {
         const res = await Promise.race([
@@ -190,7 +208,10 @@ export function createRouter(deps: RouterDeps) {
         return { output: parsed.data as AiOutput<S>, provider: entry.provider, model: entry.model, cached: false, attempts };
       } catch (e) {
         const err = e instanceof ProviderError ? e : new ProviderError((e as Error).message, "error", entry.provider);
-        const status: UsageStatus = err.kind === "rate_limited" ? "rate_limited" : err.kind === "timeout" ? "timeout" : "error";
+        // Таймаут, урезанный дедлайном шага, — не вина модели: без «остывания» (status error).
+        const fullTimeout = err.kind === "timeout" && callTimeout >= timeoutMs;
+        const status: UsageStatus =
+          err.kind === "rate_limited" ? "rate_limited" : fullTimeout ? "timeout" : "error";
         await record(step, entry, status, { error: err.message.slice(0, 500), latency_ms: Date.now() - started }, opts.storyId);
         attempts.push({ provider: entry.provider, model: entry.model, reason: `${status}: ${err.message.slice(0, 120)}` });
       } finally {

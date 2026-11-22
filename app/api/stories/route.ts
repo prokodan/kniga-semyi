@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { LIFE_BLOCKS } from "@/lib/types";
 import { AccessError, findStoryteller, getFamilyStore, isOwnAudioPath } from "@/lib/db/access";
+import { continueInBackground } from "@/lib/pipeline/chain";
 import { errorResponse, familyToken, ok, readJson, requireFamily } from "../_family/http";
 
 export const dynamic = "force-dynamic";
@@ -18,12 +19,13 @@ const Body = z.object({
 
 // POST /api/stories — аудио уже в Storage → строка stories со status 'uploaded'.
 // Тело: { token, storytellerId, path, questionId?, block?, durationSec?, sessionId?, parentStoryId? }. Ответ 201: { storyId, status }.
-// Нужна запись согласия рассказчика (иначе 409 consent_required). Дальше клиент гоняет конвейер I2:
-// POST /api/stories/:id/process по шагу, пока next !== null и queued === false.
+// Нужна запись согласия рассказчика (иначе 409 consent_required). Дальше конвейер I2:
+// сервер сам запускает POST /api/stories/:id/process (lib/pipeline/chain.ts); клиентский вызов — подстраховка.
 export async function POST(req: Request) {
   try {
     const raw = await readJson(req);
-    const view = await requireFamily(familyToken(req, raw));
+    const token = familyToken(req, raw);
+    const view = await requireFamily(token);
     const body = Body.parse(raw ?? {});
     const st = findStoryteller(view, body.storytellerId);
     if (!st.consent_at) throw new AccessError("consent_required", "Сначала нужно записать согласие рассказчика");
@@ -41,6 +43,8 @@ export async function POST(req: Request) {
       parent_story_id: parent?.id ?? null,
     });
 
+    // Расшифровку (и дальше по цепочке) запускает сервер — не ждём, пока телефон вызовет /process.
+    if (token) continueInBackground(req, story.id, token);
     return ok({ storyId: story.id, status: story.status }, 201);
   } catch (e) {
     return errorResponse(e);

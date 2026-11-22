@@ -7,7 +7,7 @@ import type { Story } from "@/lib/types";
 export type PipelinePatch = Partial<
   Pick<
     Story,
-    "transcript" | "text_ru" | "title" | "quote" | "facts" | "text_ko" | "title_ko" | "quote_ko" | "status" | "error" | "duration_sec"
+    "transcript" | "text_ru" | "title" | "quote" | "facts" | "text_ko" | "title_ko" | "quote_ko" | "status" | "error" | "duration_sec" | "kick_attempts" | "step_started_at"
   >
 >;
 
