@@ -1,0 +1,29 @@
+name: diag
+
+# Диагностика прода без персональных данных (scripts/diag.mjs): последние истории — статус, шаг, ошибка,
+# попытки ИИ, длительность в базе vs размер файла, updated_at; ошибки и задержки ИИ за сутки; маршруты.
+# Только вручную: Actions → diag → Run workflow. Результат — в Summary запуска и в логе.
+on:
+  workflow_dispatch:
+    inputs:
+      limit:
+        description: "Сколько последних историй показать"
+        default: "30"
+
+permissions:
+  contents: read
+
+jobs:
+  diag:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
+      SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+      DIAG_LIMIT: ${{ inputs.limit || '30' }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+      - run: node scripts/diag.mjs
