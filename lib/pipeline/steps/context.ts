@@ -13,6 +13,8 @@ export interface StepContext {
   ai: Pick<AiRouter, "run">;
   repo: PipelineRepo;
   bank: QuestionBank;
+  /** Момент (мс epoch), к которому шаг должен закончить все вызовы ИИ — чтобы уложиться в лимит функции */
+  deadline?: number;
 }
 
 export type StepFn = (ctx: StepContext) => Promise<PipelinePatch>;

@@ -56,7 +56,14 @@ export const geminiProvider: AiProvider = {
       });
     let json: GeminiResponse;
     try {
-      json = (await send(true)) as GeminiResponse;
+      try {
+        json = (await send(true)) as GeminiResponse;
+      } catch (e) {
+        // 503 «high demand» обычно проходит за секунду — один повтор той же модели, потом следующая в маршруте.
+        if (!(e instanceof ProviderError) || !/^HTTP 503/.test(e.message) || req.signal.aborted) throw e;
+        await new Promise((r) => setTimeout(r, 1_200));
+        json = (await send(true)) as GeminiResponse;
+      }
     } catch (e) {
       // Модель не приняла thinkingConfig (HTTP 400 про thinking) — повторяем один раз без него.
       if (!usesThinkingLevel(req.model) || !(e instanceof ProviderError) || !/HTTP 400.*thinking/is.test(e.message)) throw e;
