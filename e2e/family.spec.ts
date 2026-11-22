@@ -119,9 +119,9 @@ test("демо: оплата (демо) → допы → сказка", async ({
     await page.getByText("Цифровая · семейная").click();
     await expect(page.getByRole("radio", { checked: true })).toHaveValue("digital-2");
     await expect(total).toContainText("14 900 ₸");
-    const before = await total.textContent();
+    // Сказка для внуков — доп «в подарок» (EXTRAS_KZT.tale = 0): итог не меняется
     await page.getByRole("checkbox").check();
-    await expect(total).not.toHaveText(before!);
+    await expect(page.getByRole("checkbox")).toBeChecked();
     await page.getByRole("button", { name: "Оплатить (демо)" }).click();
     await page.waitForURL(new RegExp(`/extras/${T}\\?paid=1`));
   });
