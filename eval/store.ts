@@ -52,6 +52,11 @@ export class EvalStore extends MemoryStore {
     return evalRoute(step, this.dbRoutes[step], this.opts.model);
   }
 
+  /** Без «остывания»: темп и повтор после 429 держит instrument(), иначе один 429 гасит все прогоны. */
+  override async getProviderSettings(provider: Parameters<MemoryStore["getProviderSettings"]>[0]) {
+    return { ...(await super.getProviderSettings(provider)), cooldown_minutes: 0 };
+  }
+
   override async cacheSet(hash: string, step: AiStep, provider: string, model: string, output: unknown) {
     await super.cacheSet(hash, step, provider, model, output);
     if (this.opts.cacheFile) writeFileSync(this.opts.cacheFile, JSON.stringify(Object.fromEntries(this.cache)));

@@ -107,7 +107,9 @@ async function main() {
     cacheFile: process.env.EVAL_CACHE_FILE?.trim() || undefined,
     model: process.env.EVAL_MODEL?.trim() || undefined,
   });
-  const inst = instrument(createRouter({ store }));
+  // Бесплатный Gemini: ~15 запросов в минуту → пауза 6,5 с (≈ 9/мин, как в sim) между настоящими вызовами и повтор после 429.
+  const interval = Number(process.env.EVAL_MIN_INTERVAL_MS ?? 6500);
+  const inst = instrument(createRouter({ store }), real ? { minIntervalMs: interval, retryAfterMs: Number(process.env.EVAL_RETRY_WAIT_MS ?? 65_000) } : {});
   console.log(`Режим ИИ: ${mode}${real ? `, до ${maxCalls} запросов на прогон, ${runsCount} прогонов` : " (бесплатно, оценка не показательна)"}`);
   if (store.cachedAtStart) console.log(`Кэш ответов: ${store.cachedAtStart} записей`);
 
@@ -132,6 +134,7 @@ async function main() {
         `${key}${behavior ? ` [${behavior}]` : ""}: голос ${m.voiceAvg?.toFixed(2) ?? "—"}, факты ✅${m.facts.found} ⚠️${m.facts.distorted} ❌${m.facts.lost}, ` +
           `уточнений/вопрос ${m.followupsAvg.toFixed(2)}, KR смысл ${m.meaningAvg?.toFixed(1) ?? "—"} флажков ${m.krMajor}/${m.krMinor}, ИИ ${m.aiCalls}`,
       );
+      for (const e of m.errors) console.log(`  ⚠️ ${e.slice(0, 400)}`);
     }
   }
 

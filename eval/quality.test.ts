@@ -144,6 +144,38 @@ describe("до / после", () => {
   });
 });
 
+describe("instrument", () => {
+  it("держит паузу между настоящими вызовами и один раз повторяет после 429", async () => {
+    const { AiUnavailableError } = await import("@/lib/ai/types");
+    let now = 0;
+    const sleeps: number[] = [];
+    let calls = 0;
+    const router = {
+      async runWithMeta<S extends AiStep>(step: S): Promise<RunResult<S>> {
+        calls += 1;
+        if (calls === 2) throw new AiUnavailableError(step, [{ provider: "gemini", model: "m", reason: "rate_limited: HTTP 429" }]);
+        return { output: { answer: "да" } as never, provider: "gemini", model: "m", cached: false, attempts: [] };
+      },
+    };
+    const inst = instrument(router, {
+      clock: () => now,
+      minIntervalMs: 4500,
+      retryAfterMs: 30_000,
+      sleep: async (ms) => {
+        sleeps.push(ms);
+        now += ms;
+      },
+    });
+    const input = { persona: "p", question: "q", history: [] };
+    await inst.ai.run("persona_reply", input);
+    now += 1000;
+    await inst.ai.run("persona_reply", input);
+    expect(sleeps).toEqual([3500, 30_000]);
+    expect(calls).toBe(3);
+    expect(inst.steps().persona_reply?.calls).toBe(2);
+  });
+});
+
 describe("evalRoute", () => {
   const prod = [
     { provider: "gemini" as const, model: "gemini-3-flash-lite", daily_limit: 500, threshold: 0.9 },

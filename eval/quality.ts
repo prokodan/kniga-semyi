@@ -34,16 +34,48 @@ export interface Instrumented {
   models(step: AiStep): string[];
 }
 
-/** Обёртка роутера: считает время и модель каждого шага (через runWithMeta). */
-export function instrument(router: Pick<AiRouter, "runWithMeta">, clock: () => number = () => performance.now()): Instrumented {
+export interface InstrumentOptions {
+  clock?: () => number;
+  /** Пауза между настоящими (не из кэша) вызовами: бесплатный Gemini — ~15 запросов в минуту */
+  minIntervalMs?: number;
+  /** Пауза перед единственным повтором после 429 */
+  retryAfterMs?: number;
+  sleep?: (ms: number) => Promise<void>;
+}
+
+const wasRateLimited = (e: unknown) =>
+  e instanceof AiUnavailableError && e.attempts.some((a) => /rate_limited|429/.test(a.reason));
+
+/**
+ * Обёртка роутера: считает время и модель каждого шага (через runWithMeta), в реальном режиме держит
+ * темп (minIntervalMs) и один раз повторяет вызов после 429 — иначе 20 запросов за 10 секунд упираются
+ * в минутный лимит бесплатного Gemini.
+ */
+export function instrument(router: Pick<AiRouter, "runWithMeta">, o: InstrumentOptions = {}): Instrumented {
+  const clock = o.clock ?? (() => performance.now());
+  const sleep = o.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
+  const interval = o.minIntervalMs ?? 0;
+  let lastLive = Number.NEGATIVE_INFINITY;
   const stats: Partial<Record<AiStep, StepStat>> = {};
+  const call = async <S extends AiStep>(step: S, input: AiInput<S>, opts?: RunOptions) => {
+    const wait = lastLive + interval - clock();
+    if (wait > 0) await sleep(wait);
+    try {
+      return await router.runWithMeta(step, input, opts);
+    } catch (e) {
+      if (!wasRateLimited(e) || !o.retryAfterMs) throw e;
+      await sleep(o.retryAfterMs);
+      return await router.runWithMeta(step, input, opts);
+    }
+  };
   return {
     steps: () => structuredClone(stats),
     models: (step) => [...(stats[step]?.models ?? [])],
     ai: {
       async run<S extends AiStep>(step: S, input: AiInput<S>, opts?: RunOptions): Promise<AiOutput<S>> {
         const t0 = clock();
-        const res = await router.runWithMeta(step, input, opts);
+        const res = await call(step, input, opts);
+        if (!res.cached) lastLive = clock();
         const s: StepStat = (stats[step] ??= { calls: 0, cached: 0, totalMs: 0, models: [] as string[] });
         s.calls += 1;
         s.totalMs += clock() - t0;
@@ -137,6 +169,9 @@ export async function evaluateRun(o: EvaluateOptions): Promise<RunMetrics> {
     .map((c, i) => ({ ...c, id: `ch${i + 1}` }))
     .filter((c) => !c.error && c.text_ru && c.transcript.trim())
     .slice(0, BATCH_MAX);
+  if (sim.stoppedBy && sim.stoppedBy !== "questions") {
+    errors.push(`интервью остановлено (${sim.stoppedBy === "budget" ? "лимит запросов" : "ИИ недоступен"}): ${sim.stopDetail ?? ""}`);
+  }
   for (const c of sim.chapters) if (c.error) errors.push(`глава не собрана: ${c.error}`);
 
   const quality = new Map<string, ChapterQuality>(
@@ -437,6 +472,8 @@ export function renderPrComment(s: EvalSummary, before?: EvalSummary, opts: { li
   if (opts.note) out.push(opts.note, "");
   out.push(targetLine(s), "", ...modelWarnings(s), "");
   out.push(...(before ? compareTable(s, before) : totalsTable(s)), "");
+  const errs = s.runs.flatMap((r) => r.errors.map((e) => `- ${r.persona}: ${cell(e).slice(0, 300)}`));
+  if (errs.length) out.push(`⚠️ **Прогон неполный** — цифры ниже не показательны:`, "", ...errs.slice(0, 6), "");
   out.push("<details><summary>По прогонам</summary>", "", ...runsTable(s), "", "</details>", "");
   out.push("<details><summary>Корейский: сомнительные места (обратный перевод)</summary>", "", ...flagRows(s, 10), "", "</details>", "");
   if (opts.link) out.push(`Полный отчёт и главы — [артефакт запуска](${opts.link}).`);
