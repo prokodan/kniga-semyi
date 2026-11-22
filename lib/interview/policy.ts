@@ -26,6 +26,10 @@ export interface SessionState extends InterviewState {
   /** Блоки, куда засчитаны рассказы «не по теме» (offTopicBlock) */
   offtopic_blocks?: LifeBlock[];
   finished?: boolean;
+  /** Переспрос неуверенно распознанного имени / места («Правильно ли я поняла: Уштобе?») — ждём ответ */
+  name_check?: { storyId: string; heard: string; guess: string } | null;
+  /** Истории, по которым уже переспрашивали (один раз на историю) */
+  name_checked?: string[];
 }
 
 // ---------------- Сигналы в ответе (без ИИ, бесплатно) ----------------

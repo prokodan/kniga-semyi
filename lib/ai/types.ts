@@ -39,12 +39,16 @@ export const inputSchemas = {
     mimeType: z.string(),
     durationSec: z.number().positive().max(600),
     languageHint: z.enum(["ru", "ko", "mixed"]).default("ru"),
+    /** Имена, места и слова корё мар, которые могут прозвучать (карточка семьи, прошлые главы, docs/glossary.md) */
+    hints: z.array(z.string().max(80)).max(150).optional(),
   }),
   edit: z.object({
     transcript: z.string().min(1),
     storytellerName: z.string(),
     questionText: z.string(),
     block: lifeBlock.nullable(),
+    /** Как правильно пишутся имена и места этой семьи (карточка, прошлые главы, docs/glossary.md) */
+    hints: z.array(z.string().max(80)).max(150).optional(),
   }),
   translate: z.object({
     text_ru: z.string().min(1),

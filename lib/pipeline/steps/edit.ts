@@ -15,6 +15,7 @@ export const edit: StepFn = async ({ story, ai, repo, bank, deadline }) => {
   const block = (LIFE_BLOCKS as readonly string[]).includes(story.block ?? "") ? (story.block as LifeBlock) : null;
   const questionText = story.question_id ? (bank.get(story.question_id)?.ru ?? "") : "";
   const storytellerName = await repo.storytellerName(story.storyteller_id);
-  const out = await ai.run("edit", { transcript, storytellerName, questionText, block }, { storyId: story.id, deadline });
+  const hints = repo.nameHints ? await repo.nameHints(story) : undefined;
+  const out = await ai.run("edit", { transcript, storytellerName, questionText, block, ...(hints?.length ? { hints } : {}) }, { storyId: story.id, deadline });
   return { text_ru: out.text_ru, title: out.title, quote: out.quote, facts: out.facts };
 };

@@ -22,9 +22,10 @@ export const transcribe: StepFn = async ({ story, ai, repo, deadline }) => {
     throw new StepError(`Не удалось открыть запись: ${(e as Error).message}`);
   }
   const durationSec = duration && duration > 0 ? duration : estimateDurationSec(audio.bytes);
+  const hints = repo.nameHints ? await repo.nameHints(story) : undefined;
   const out = await ai.run(
     "transcribe",
-    { audioBase64: audio.base64, mimeType: audio.mimeType, durationSec, languageHint: "ru" },
+    { audioBase64: audio.base64, mimeType: audio.mimeType, durationSec, languageHint: "ru", ...(hints?.length ? { hints } : {}) },
     { storyId: story.id, deadline },
   );
   const text = out.text.trim();
