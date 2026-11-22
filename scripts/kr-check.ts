@@ -4,6 +4,7 @@
 //   npx tsx scripts/kr-check.ts --out r.md --json r.json --comment c.md --link <url>
 // Провайдер обратного перевода: OPENAI_API_KEY → OpenAI (перевод в проде на Gemini — значит, другой провайдер);
 // иначе GEMINI_API_KEY → Gemini Flash (другая модель); иначе mock. Принудительно: KR_CHECK_PROVIDER=openai|gemini|mock.
+// Модели — из прода (KR_CHECK_ROUTES_FILE = JSON {step: providers[]} из ai_routes), иначе lib/ai/config.ts.
 // Один запрос к ИИ на запуск (все тексты одним пакетом), ответ кэшируется в KR_CHECK_CACHE_FILE.
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
@@ -65,7 +66,7 @@ async function main() {
   let aiError: string | undefined;
   const meaning: Record<string, number> = {};
   if (!args["no-ai"]) {
-    const ai = createRouter({ store: new EvalStore({ cacheFile: process.env.KR_CHECK_CACHE_FILE }), mode: () => mode });
+    const ai = createRouter({ store: new EvalStore({ cacheFile: process.env.KR_CHECK_CACHE_FILE, routesFile: process.env.KR_CHECK_ROUTES_FILE }), mode: () => mode });
     try {
       const r = await backTranslate(ai, all);
       flags.push(...r.flags);
@@ -73,7 +74,7 @@ async function main() {
       provider = r.provider;
       model = r.model;
     } catch (e) {
-      aiError = (e as Error).message.slice(0, 300);
+      aiError = (e as Error).message.replace(/\s+/g, " ").slice(0, 300);
       console.error(`Обратный перевод не удался: ${aiError}`);
     }
   }

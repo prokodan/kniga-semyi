@@ -4,7 +4,7 @@ name: kr-check
 #   • правила без ИИ — глоссарий docs/glossary.md, годы, стиль речи (한다체 / 해요체 + -시-), кириллица, цитата;
 #   • обратный перевод KR→RU ДРУГИМ провайдером, чем переводил: перевод в проде — Gemini, проверяет OpenAI
 #     (OPENAI_API_KEY); нет ключа — Gemini Flash (другая модель, GEMINI_API_KEY); нет ключей — mock.
-# Один запрос к ИИ на запуск. Итог — комментарий в PR: короткий список флажков по 1–2 демо-главам для человека.
+# Модели — из ai_routes прода (как в eval). Один запрос к ИИ на запуск. Итог — комментарий в PR: короткий список флажков по 1–2 демо-главам для человека.
 # Флажки не валят проверку: это подсказка носителю, а не гейт.
 on:
   pull_request:
@@ -41,6 +41,8 @@ jobs:
       OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
       GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
       KR_CHECK_PROVIDER: ${{ inputs.provider != 'auto' && inputs.provider || '' }}
+      SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
+      KR_CHECK_ROUTES_FILE: ${{ github.workspace }}/kr-out/routes.json
       KR_CHECK_CACHE_FILE: ${{ github.workspace }}/kr-cache/cache.json
       OUT: ${{ github.workspace }}/kr-out
       RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
@@ -51,6 +53,15 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
+
+      - name: Модели из ai_routes прода
+        if: env.SUPABASE_DB_URL != ''
+        run: |
+          mkdir -p "$OUT"
+          command -v psql > /dev/null || (sudo apt-get update -qq && sudo apt-get install -y -qq postgresql-client)
+          psql "$SUPABASE_DB_URL" -tA -v ON_ERROR_STOP=1 \
+            -c "select coalesce(json_object_agg(step, providers), '{}'::json) from ai_routes" > "$KR_CHECK_ROUTES_FILE" \
+            || { echo "::warning::ai_routes не прочитаны — модели из lib/ai/config.ts"; rm -f "$KR_CHECK_ROUTES_FILE"; }
 
       - name: Кэш ответа
         uses: actions/cache/restore@v5
@@ -95,5 +106,7 @@ jobs:
         if: always()
         with:
           name: kr-check-${{ github.run_number }}
-          path: kr-out/
+          path: |
+            kr-out/
+            !kr-out/routes.json
           if-no-files-found: ignore
