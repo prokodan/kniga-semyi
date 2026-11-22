@@ -49,14 +49,16 @@ describe("mannerOf", () => {
 });
 
 describe("evaluateRun", () => {
-  it("mock: судья и обратный перевод — по одному пакетному вызову, голос 3 → цель не проверяется", async () => {
+  it("mock: судья, обратный перевод и сказка — по одному вызову, голос 3 → цель не проверяется", async () => {
     const { inst, sim } = await simulate(fakeRouter());
     const m = await evaluateRun({ sim, ai: inst.ai, models: inst.models, mock: true });
     expect(m.chapterQuality.length).toBeGreaterThan(0);
     expect(m.voiceAvg).toBe(3);
     expect(inst.steps().judge?.calls).toBe(1);
     expect(inst.steps().back_translate?.calls).toBe(1);
-    expect(m.aiCalls).toBe(sim.aiCalls.used + 2);
+    expect(inst.steps().tale?.calls).toBe(1);
+    expect(m.aiCalls).toBe(sim.aiCalls.used + 3);
+    expect(m.tale?.pages.length).toBeGreaterThan(0);
     expect(m.sameModel).toBe(false);
 
     const s = summarize([m], { mode: "mock" });

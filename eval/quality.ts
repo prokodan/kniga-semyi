@@ -4,18 +4,22 @@
 //   • голос: LLM-судья ai.run("judge") 1–5 по каждой главе (промпт eval/judge.md), цель MLP — среднее ≥ 4;
 //   • корейский: обратный перевод ai.run("back_translate") KR→RU ДРУГОЙ моделью, чем translate,
 //     с флажками сомнительных мест (промпт eval/back_translate.md);
-//   • время шага: среднее время ai.run по каждому шагу.
+//   • время шага: среднее время ai.run по каждому шагу;
+//   • уточнения, связки и сказка — эвристики без ИИ (eval/prompt-checks), сказка — один вызов ai.run("tale").
 // ИИ — только через роутер. В mock всё работает бесплатно и честно помечается «не показательна».
 import type { AiRouter, RunOptions } from "@/lib/ai/router";
 import { AiUnavailableError, type AiInput, type AiOutput, type AiStep } from "@/lib/ai/types";
+import { checkDialogue, checkTale, pickTaleChapters, type DialogueChecks, type TaleChecks, type TextIssue } from "./prompt-checks";
 import { SimBudgetError } from "./sim/budget";
 import { tally, type FactStatus } from "./sim/facts";
 import type { Persona } from "./sim/persona";
 import type { SimResult } from "./sim/run";
 
 export const VOICE_TARGET = 4;
-/** Вызовов ИИ после симуляции на один прогон: judge + back_translate (главы идут одним пакетом). */
-export const QUALITY_CALLS = 2;
+/** Вызовов ИИ после симуляции на один прогон: judge + back_translate (главы идут одним пакетом) + tale. */
+export const QUALITY_CALLS = 3;
+/** Сказку пишем, если готовых глав не меньше (как TALE_MIN_STORIES в lib/tale). */
+const TALE_MIN_CHAPTERS = 2;
 const BATCH_MAX = 20; // контракт judge / back_translate
 
 // ---------------- замер шагов ----------------
@@ -130,6 +134,10 @@ export interface RunMetrics {
   translateModels: string[];
   sameModel: boolean;
   chapterQuality: ChapterQuality[];
+  /** Уточнения и связки агента — эвристики без ИИ */
+  dialogue: DialogueChecks;
+  /** Сказка по главам прогона (null — глав меньше двух или шаг не ответил) */
+  tale: TaleChecks | null;
   aiCalls: number;
   stoppedBy: SimResult["stoppedBy"];
   errors: string[];
@@ -213,6 +221,19 @@ export async function evaluateRun(o: EvaluateOptions): Promise<RunMetrics> {
     }
   }
 
+  let tale: TaleChecks | null = null;
+  const taleStories = pickTaleChapters(done);
+  if (taleStories.length >= TALE_MIN_CHAPTERS) {
+    try {
+      extra += 1;
+      const source = { storytellerName: sim.persona.name, stories: taleStories };
+      tale = checkTale(await o.ai.run("tale", source), source);
+    } catch (e) {
+      if (!isAiStop(e)) throw e;
+      errors.push(`сказка: ${e.message}`);
+    }
+  }
+
   const chapterQuality = [...quality.values()];
   const t = tally(sim.factsInChapters);
   const followups = sim.questions.reduce((n, q) => n + q.followups, 0);
@@ -241,6 +262,8 @@ export async function evaluateRun(o: EvaluateOptions): Promise<RunMetrics> {
     translateModels,
     sameModel: !o.mock && backModels.some((m) => translateModels.includes(m)),
     chapterQuality,
+    dialogue: checkDialogue(sim),
+    tale,
     aiCalls: sim.aiCalls.used + extra,
     stoppedBy: sim.stoppedBy,
     errors,
@@ -273,6 +296,15 @@ export interface EvalSummary {
     followupsAvg: number;
     aiCalls: number;
     sameModelRuns: number;
+    /** Уточнений агента всего и с флажками (длина, два вопроса, «ты», «подробнее», повтор, давление) */
+    followupsTotal: number;
+    followupIssues: number;
+    /** Уточнение сразу после отказа / боли */
+    pressure: number;
+    bridgeIssues: number;
+    /** Сказок написано и флажков в них */
+    tales: number;
+    taleIssues: number;
   };
 }
 
@@ -309,6 +341,12 @@ export function summarize(
       followupsAvg: q ? sum((r) => r.followups) / q : 0,
       aiCalls: sum((r) => r.aiCalls),
       sameModelRuns: runs.filter((r) => r.sameModel).length,
+      followupsTotal: sum((r) => r.dialogue?.followups ?? 0),
+      followupIssues: sum((r) => r.dialogue?.followupIssues.length ?? 0),
+      pressure: sum((r) => r.dialogue?.pressure ?? 0),
+      bridgeIssues: sum((r) => r.dialogue?.bridgeIssues.length ?? 0),
+      tales: runs.filter((r) => r.tale).length,
+      taleIssues: sum((r) => r.tale?.issues.length ?? 0),
     },
   };
 }
@@ -345,6 +383,10 @@ export const METRICS: MetricDef[] = [
   { name: "KR: смысл по обратному переводу 1–5", get: (s) => s.totals.meaningAvg, better: "up", fmt: n2 },
   { name: "KR: флажки major", get: (s) => s.totals.krMajor, better: "down", fmt: (x) => String(x ?? "—") },
   { name: "KR: флажки minor", get: (s) => s.totals.krMinor, better: "down", fmt: (x) => String(x ?? "—") },
+  { name: "Уточнения: флажки (длина, два вопроса, «ты», «подробнее», повтор)", get: (s) => s.totals.followupIssues ?? null, better: "down", fmt: (x) => String(x ?? "—") },
+  { name: "Уточнения: давление после отказа / боли", get: (s) => s.totals.pressure ?? null, better: "down", fmt: (x) => String(x ?? "—") },
+  { name: "Связки: флажки (длина, вопрос, лесть, повтор)", get: (s) => s.totals.bridgeIssues ?? null, better: "down", fmt: (x) => String(x ?? "—") },
+  { name: "Сказка: флажки (страницы, длина, страшное, чужие годы / имена, финал)", get: (s) => s.totals.taleIssues ?? null, better: "down", fmt: (x) => String(x ?? "—") },
   { name: "Запросов к ИИ", get: (s) => s.totals.aiCalls, better: "none", fmt: (x) => String(x ?? "—") },
 ];
 
@@ -418,6 +460,36 @@ function flagRows(s: EvalSummary, limit = Number.POSITIVE_INFINITY): string[] {
 }
 
 /** Полный отчёт: eval/reports/<дата>.md */
+function issueRows(items: { persona: string; it: TextIssue }[], limit: number): string[] {
+  if (!items.length) return ["Флажков нет."];
+  const rows = items.slice(0, limit).map(({ persona, it }) => `| ${persona} | ${cell(it.issue)} | ${cell(it.text).slice(0, 220)} |`);
+  const more = items.length > limit ? [``, `…и ещё ${items.length - limit}`] : [];
+  return ["| Персонаж | Флажок | Текст |", "| --- | --- | --- |", ...rows, ...more];
+}
+
+/** Уточнения, связки и сказки — флажки и сами тексты (чтобы оценить глазами тон). */
+function agentSection(s: EvalSummary, limit: number): string[] {
+  const out: string[] = [];
+  const fu = s.runs.flatMap((r) => (r.dialogue?.followupIssues ?? []).map((it) => ({ persona: r.persona, it })));
+  const br = s.runs.flatMap((r) => (r.dialogue?.bridgeIssues ?? []).map((it) => ({ persona: r.persona, it })));
+  out.push(`**Уточнения** — всего ${s.totals.followupsTotal ?? 0}, флажков ${fu.length}, давление ${s.totals.pressure ?? 0}:`, "", ...issueRows(fu, limit), "");
+  out.push(`**Связки** — флажков ${br.length}:`, "", ...issueRows(br, limit), "");
+  for (const r of s.runs) {
+    const fx = r.dialogue?.followupTexts ?? [];
+    const bx = r.dialogue?.bridgeTexts ?? [];
+    if (fx.length) out.push(`Уточнения ${r.persona}: ${fx.slice(0, limit).map((t) => `«${cell(t)}»`).join(" · ")}`, "");
+    if (bx.length) out.push(`Связки ${r.persona}: ${bx.slice(0, limit).map((t) => `«${cell(t)}»`).join(" · ")}`, "");
+  }
+  for (const r of s.runs) {
+    if (!r.tale) continue;
+    out.push(`**Сказка — ${r.persona}: «${cell(r.tale.title)}»** (флажков ${r.tale.issues.length})`, "");
+    r.tale.pages.forEach((p, i) => out.push(`${i + 1}. ${cell(p)}`));
+    out.push("");
+    if (r.tale.issues.length) out.push(...r.tale.issues.map((it) => `- ⚠️ ${cell(it.issue)}`), "");
+  }
+  return out;
+}
+
 export function renderEvalReport(s: EvalSummary, before?: EvalSummary): string {
   const out: string[] = [
     `# Оценка качества${s.label ? `: ${s.label}` : ""}`,
@@ -435,6 +507,7 @@ export function renderEvalReport(s: EvalSummary, before?: EvalSummary): string {
   out.push("## По прогонам", "", ...runsTable(s), "");
   out.push("## Время шагов", "", ...stepsTable(s), "");
   out.push("## Корейский: обратный перевод KR → RU", "", ...flagRows(s), "");
+  out.push("## Уточнения, связки, сказка (эвристики без ИИ)", "", ...agentSection(s, Number.POSITIVE_INFINITY), "");
 
   out.push("## Главы: голос и смысл", "");
   for (const r of s.runs) {
@@ -475,6 +548,7 @@ export function renderPrComment(s: EvalSummary, before?: EvalSummary, opts: { li
   if (errs.length) out.push(`⚠️ **Прогон неполный** — цифры ниже не показательны:`, "", ...errs.slice(0, 6), "");
   out.push("<details><summary>По прогонам</summary>", "", ...runsTable(s), "", "</details>", "");
   out.push("<details><summary>Корейский: сомнительные места (обратный перевод)</summary>", "", ...flagRows(s, 10), "", "</details>", "");
+  out.push("<details><summary>Уточнения, связки, сказка</summary>", "", ...agentSection(s, 12), "", "</details>", "");
   if (opts.link) out.push(`Полный отчёт и главы — [артефакт запуска](${opts.link}).`);
   return out.join("\n").replace(/\n{3,}/g, "\n\n") + "\n";
 }
