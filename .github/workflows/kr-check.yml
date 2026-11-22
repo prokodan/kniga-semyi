@@ -11,6 +11,7 @@ on:
     paths:
       - "docs/glossary.md"
       - "lib/book/pdf/demo.ts"
+      - "fixtures/demo/family.ts"
       - "content/questions/bank.ts"
       - "prompts/translate.md"
       - "eval/back_translate.md"
