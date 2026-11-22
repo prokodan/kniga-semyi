@@ -1,0 +1,32 @@
+name: digest
+
+# Утренняя сводка в группу (I16): 04:00 UTC = 09:00 Алматы. Текст собирает бот
+# (прогресс milestone, кто что делает, что можно брать). Выключается в боте: 🔔 → «Утренняя сводка».
+on:
+  schedule:
+    - cron: "0 4 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  digest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    env:
+      NOTIFY_URL: ${{ secrets.PROD_URL }}
+      NOTIFY_SECRET: ${{ secrets.BOT_NOTIFY_SECRET }}
+    steps:
+      - name: Сводка
+        run: |
+          if [ -z "$NOTIFY_URL" ] || [ -z "$NOTIFY_SECRET" ]; then
+            echo "::warning::PROD_URL или BOT_NOTIFY_SECRET не заданы — сводка пропущена"
+            exit 0
+          fi
+          code=$(curl -sS --max-time 30 -o bot.json -w '%{http_code}' -X POST "${NOTIFY_URL%/}/api/telegram/notify" \
+            -H "content-type: application/json" -H "x-bot-notify-secret: $NOTIFY_SECRET" --data '{"event":"digest"}' || true)
+          echo "бот: HTTP $code $(jq -c '{delivered, reason}' bot.json 2>/dev/null || true)"
+          if [ "$code" != "200" ]; then
+            echo "::warning::Бот не принял сводку (HTTP $code)"
+          fi
