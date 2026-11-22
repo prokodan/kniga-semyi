@@ -1,0 +1,67 @@
+name: seed-demo
+
+# Демо-семья для питча (I12): пересоздать «Семью Ким · пример» и историю киоска — главы, сказку, книгу PDF.
+# Только вручную: Actions → seed-demo → Run workflow. Ссылки и QR после сброса не меняются.
+# То же самое — кнопка «Сбросить демо» в /admin и `npm run seed:demo` локально.
+on:
+  workflow_dispatch:
+    inputs:
+      illustrate:
+        description: "Нарисовать недостающие «золотые» картинки сказки через ИИ (OpenAI, ~4 картинки)"
+        type: boolean
+        default: false
+
+concurrency:
+  group: seed-demo
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  seed:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      NEXT_TELEMETRY_DISABLED: "1"
+      NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
+      SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+      PROD_URL: ${{ secrets.PROD_URL }}
+      LISTEN_SECRET: ${{ secrets.LISTEN_SECRET }}
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+      GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+      AI_MODE: ${{ inputs.illustrate && 'auto' || 'mock' }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Проверка секретов
+        run: |
+          if [ -z "$NEXT_PUBLIC_SUPABASE_URL" ] || [ -z "$SUPABASE_SERVICE_ROLE_KEY" ]; then
+            echo "::error::Нужны секреты NEXT_PUBLIC_SUPABASE_URL и SUPABASE_SERVICE_ROLE_KEY"
+            exit 1
+          fi
+          [ -n "$PROD_URL" ] || echo "::warning::PROD_URL не задан — QR в книге поведут на localhost"
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+
+      - name: npm run seed:demo
+        run: npm run seed:demo -- ${{ inputs.illustrate && '--illustrate' || '' }}
+
+      - name: Telegram — демо пересоздано
+        if: success()
+        uses: ./.github/actions/telegram
+        with:
+          token: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          chat_id: ${{ secrets.TELEGRAM_CHAT_ID }}
+          text: "🎭 Демо-семья пересоздана: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+      - name: Telegram — сброс демо упал
+        if: failure()
+        uses: ./.github/actions/telegram
+        with:
+          token: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          chat_id: ${{ secrets.TELEGRAM_CHAT_ID }}
+          text: "🔴 Сброс демо упал: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
