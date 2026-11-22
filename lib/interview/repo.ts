@@ -1,6 +1,8 @@
 // Хранилище интервью: sessions и stories. SupabaseInterviewRepo — прод (service-ключ, только сервер),
 // MemoryInterviewRepo — тесты, симулятор (I15) и локальный запуск без базы.
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { nameHints } from "./names";
+import { loadNameHints } from "./names-db";
 import type { Session, SessionMode, Story } from "@/lib/types";
 import type { SessionState } from "./policy";
 
@@ -20,6 +22,8 @@ export interface InterviewRepo {
   checkFamilyToken(familyId: string, token: string): Promise<boolean>;
   /** Имя рассказчика для фразы-связки (необязательно) */
   storytellerName?(storytellerId: string): Promise<string>;
+  /** Имена и места семьи + словарь (пункт 5) — для переспроса неуверенно распознанного имени */
+  nameHints?(storytellerId: string): Promise<string[]>;
 }
 
 // ---------------- Memory ----------------
@@ -101,6 +105,9 @@ export class MemoryInterviewRepo implements InterviewRepo {
   async storytellerName(storytellerId: string) {
     return this.names.get(storytellerId) ?? "";
   }
+  async nameHints(storytellerId: string) {
+    return nameHints({ storytellerName: this.names.get(storytellerId) });
+  }
 }
 
 // ---------------- Supabase ----------------
@@ -163,6 +170,13 @@ export class SupabaseInterviewRepo implements InterviewRepo {
   async storytellerName(storytellerId: string) {
     const { data } = await this.db.from("storytellers").select("name").eq("id", storytellerId).maybeSingle();
     return (data as { name?: string } | null)?.name ?? "";
+  }
+  async nameHints(storytellerId: string) {
+    try {
+      return await loadNameHints(this.db, storytellerId);
+    } catch {
+      return nameHints({});
+    }
   }
 }
 

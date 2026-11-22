@@ -58,7 +58,7 @@ export const geminiProvider: AiProvider = {
     if (req.step === "transcribe") {
       const input = req.input as ProviderCall<"transcribe">["input"];
       parts.push({ inline_data: { mime_type: input.mimeType.split(";")[0]!.trim(), data: input.audioBase64 } });
-      parts.push({ text: JSON.stringify({ languageHint: input.languageHint, durationSec: input.durationSec }) });
+      parts.push({ text: JSON.stringify({ languageHint: input.languageHint, durationSec: input.durationSec, ...(input.hints?.length ? { hints: input.hints } : {}) }) });
     } else {
       parts.push({ text: JSON.stringify(req.input) });
     }

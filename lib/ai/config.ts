@@ -50,7 +50,9 @@ export const DEFAULT_ROUTES: Record<AiStep, Route> = {
   completeness: route("completeness", [FLASH_LITE, OPENAI_TEXT], 12_000),
   next_question: route("next_question", [FLASH_LITE, OPENAI_TEXT], 12_000),
   tale: route("tale", [FLASH_LITE, FLASH, OPENAI_TEXT], 40_000),
-  illustrate: route("illustrate", [{ provider: "openai", model: "gpt-image-1" }], 60_000),
+  // gpt-image-1 OpenAI снял («The model 'gpt-image-1' does not exist», seed-demo 23.11) → gpt-image-2, резерв gpt-image-1.5.
+  // 45 с < лимита функции 60 с: если художник не успел, сказка успевает поставить картинку из набора.
+  illustrate: route("illustrate", [{ provider: "openai", model: "gpt-image-2" }, { provider: "openai", model: "gpt-image-1.5" }], 45_000),
   persona_reply: route("persona_reply", [FLASH_LITE, OPENAI_TEXT], 20_000),
   // I11: судья на Flash-Lite (квота); обратный перевод — сначала ДРУГАЯ модель (Flash), чем у translate.
   judge: route("judge", [FLASH_LITE, OPENAI_TEXT], 40_000),
@@ -71,7 +73,8 @@ export const PRICING: Record<string, { inPerM?: number; outPerM?: number; perAud
   "gpt-5-mini": { inPerM: 0.25, outPerM: 2 },
   "gpt-4o-mini": { inPerM: 0.15, outPerM: 0.6 },
   "gpt-4o-transcribe": { perAudioMin: 0.006 },
-  "gpt-image-1": { perImage: 0.042 },
+  "gpt-image-2": { perImage: 0.05 }, // оценка для бюджета: 1024², quality medium
+  "gpt-image-1.5": { perImage: 0.05 },
 };
 /** Для неизвестной платной модели считаем с запасом */
 export const FALLBACK_PRICING = { inPerM: 1, outPerM: 4, perAudioMin: 0.01, perImage: 0.08 };

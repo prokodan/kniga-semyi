@@ -24,6 +24,7 @@ import {
   wordCount,
   type SessionState,
 } from "./policy";
+import { applyName, findUncertain, resolveName } from "./names";
 import type { InterviewRepo } from "./repo";
 
 export type InterviewErrorCode = "bad_request" | "forbidden" | "not_found" | "finished" | "not_ready";
@@ -209,6 +210,82 @@ export function createInterview(deps: InterviewDeps) {
     return { type: "nextQuestion", question: view(next), bridge, pause: Boolean(opts.pause), storyId: opts.storyId, progress: progress(state) };
   }
 
+  /** Проверка полноты и решение: уточнение / уход в другую тему / ответ принят. */
+  async function checkCompleteness(
+    sessionId: string,
+    state: SessionState,
+    question: Question,
+    main: Story,
+    answer: string,
+    ctx: { name: string; wasBlockDone: boolean; answeringFollowup: boolean },
+  ): Promise<AnswerResult> {
+    const { name, wasBlockDone, answeringFollowup } = ctx;
+    let res: AiOutput<"completeness">;
+    let aiDown = false;
+    try {
+      res = await ai.run(
+        "completeness",
+        {
+          questionText: question.ru,
+          block: question.block,
+          minimum: question.minimum,
+          answer: answer,
+          followupsAsked: state.followups_asked ?? 0,
+          maxFollowups: MAX_FOLLOWUPS,
+        },
+        { storyId: main.id },
+      );
+    } catch (e) {
+      if (!(e instanceof AiUnavailableError)) throw e;
+      // ИИ недоступен — принимаем ответ как есть, разговор не останавливаем.
+      res = { covered: [], missing: [], followup: null, done: true, offTopicBlock: null };
+      aiDown = true;
+    }
+
+    const decision = decideAfterCompleteness(res, { question, state, answeringFollowup, bank, answer: aiDown ? undefined : answer });
+
+    if (decision.kind === "followup") {
+      state.pending_followup = decision.text;
+      state.followups_asked = (state.followups_asked ?? 0) + 1;
+      state.emotional_pause = false;
+      await repo.saveState(sessionId, state);
+      return {
+        type: "followup",
+        questionId: question.id,
+        text: decision.text,
+        followupsLeft: MAX_FOLLOWUPS - state.followups_asked,
+        storyId: main.id,
+        progress: progress(state),
+      };
+    }
+
+    if (decision.kind === "offtopic") {
+      // Рассказ не теряем: он уходит в свой блок и не считается ответом на текущий вопрос.
+      await repo.updateStory(main.id, { block: decision.block, question_id: null });
+      state.offtopic_blocks = addUnique(state.offtopic_blocks, decision.block);
+      state.current_story_id = null;
+      if (decision.returnText) {
+        state.followups_asked = (state.followups_asked ?? 0) + 1;
+        state.emotional_pause = false;
+        await repo.saveState(sessionId, state);
+        return {
+          type: "followup",
+          questionId: question.id,
+          text: decision.returnText,
+          followupsLeft: MAX_FOLLOWUPS - state.followups_asked,
+          storyId: main.id,
+          progress: progress(state),
+        };
+      }
+      state.later_question_ids = addUnique(state.later_question_ids, question.id);
+      return advance(sessionId, state, question, { storyteller: name, storyId: main.id, wasBlockDone });
+    }
+
+    state.answered_question_ids = addUnique(state.answered_question_ids, question.id);
+    state.later_question_ids = removeValue(state.later_question_ids, question.id);
+    return advance(sessionId, state, question, { storyteller: name, storyId: main.id, wasBlockDone });
+  }
+
   async function storytellerName(session: { storyteller_id: string }) {
     // Имя нужно только для фразы-связки; без него next_question работает.
     return repo.storytellerName ? await repo.storytellerName(session.storyteller_id) : "";
@@ -272,6 +349,29 @@ export function createInterview(deps: InterviewDeps) {
 
       const name = await storytellerName(session);
       const wasBlockDone = isBlockDone(bank, state, question.block);
+
+      // Ответ на «Правильно ли я поняла: Уштобе?» — не часть рассказа: выбираем написание и исправляем им
+      // расшифровку и уточнения, затем обычная проверка полноты (переспрос уточнением не считается).
+      if (state.name_check && state.current_story_id === state.name_check.storyId) {
+        const check = state.name_check;
+        let main = await repo.getStory(check.storyId);
+        if (!main) throw new InterviewError("not_found", "История текущего вопроса не найдена");
+        const chosen = resolveName(text, check);
+        const transcript = applyName(main.transcript ?? "", check.heard, chosen);
+        const followups = (main.followups ?? []).map((f) => ({ ...f, answer: applyName(f.answer, check.heard, chosen) }));
+        await repo.updateStory(main.id, { transcript, followups });
+        main = { ...main, transcript, followups };
+        // голос «да, Уштобе» в главу и на страницу голоса не идёт
+        if (incoming && incoming.id !== main.id) await repo.updateStory(incoming.id, { status: "skipped" });
+        state.name_check = null;
+        state.pending_followup = null;
+        return checkCompleteness(sessionId, state, question, main, combinedAnswer(main, text), {
+          name,
+          wasBlockDone,
+          answeringFollowup: followups.length > 0,
+        });
+      }
+
       const answeringFollowup = Boolean(state.pending_followup && state.current_story_id);
       const signal = detectSignal(text);
 
@@ -341,70 +441,27 @@ export function createInterview(deps: InterviewDeps) {
         return advance(sessionId, state, question, { storyteller: name, bridge: PHRASES.refused, storyId: main.id, wasBlockDone });
       }
 
-      let res: AiOutput<"completeness">;
-      let aiDown = false;
-      try {
-        res = await ai.run(
-          "completeness",
-          {
-            questionText: question.ru,
-            block: question.block,
-            minimum: question.minimum,
-            answer: combinedAnswer(main, text),
-            followupsAsked: state.followups_asked ?? 0,
-            maxFollowups: MAX_FOLLOWUPS,
-          },
-          { storyId: main.id },
-        );
-      } catch (e) {
-        if (!(e instanceof AiUnavailableError)) throw e;
-        // ИИ недоступен — принимаем ответ как есть, разговор не останавливаем.
-        res = { covered: [], missing: [], followup: null, done: true, offTopicBlock: null };
-        aiDown = true;
-      }
-
-      const decision = decideAfterCompleteness(res, { question, state, answeringFollowup, bank, answer: aiDown ? undefined : combinedAnswer(main, text) });
-
-      if (decision.kind === "followup") {
-        state.pending_followup = decision.text;
-        state.followups_asked = (state.followups_asked ?? 0) + 1;
-        state.emotional_pause = false;
-        await repo.saveState(sessionId, state);
-        return {
-          type: "followup",
-          questionId: question.id,
-          text: decision.text,
-          followupsLeft: MAX_FOLLOWUPS - state.followups_asked,
-          storyId: main.id,
-          progress: progress(state),
-        };
-      }
-
-      if (decision.kind === "offtopic") {
-        // Рассказ не теряем: он уходит в свой блок и не считается ответом на текущий вопрос.
-        await repo.updateStory(main.id, { block: decision.block, question_id: null });
-        state.offtopic_blocks = addUnique(state.offtopic_blocks, decision.block);
-        state.current_story_id = null;
-        if (decision.returnText) {
-          state.followups_asked = (state.followups_asked ?? 0) + 1;
+      // Имя или место распознано неуверенно («У штабе» ≈ Уштобе) — один раз переспросить.
+      if (!(state.name_checked ?? []).includes(main.id) && repo.nameHints) {
+        const hit = findUncertain(text, await repo.nameHints(session.storyteller_id));
+        if (hit) {
+          state.name_check = { storyId: main.id, ...hit };
+          state.name_checked = addUnique(state.name_checked, main.id);
+          state.pending_followup = `Правильно ли я поняла: ${hit.guess}?`;
           state.emotional_pause = false;
           await repo.saveState(sessionId, state);
           return {
             type: "followup",
             questionId: question.id,
-            text: decision.returnText,
-            followupsLeft: MAX_FOLLOWUPS - state.followups_asked,
+            text: state.pending_followup,
+            followupsLeft: MAX_FOLLOWUPS - (state.followups_asked ?? 0),
             storyId: main.id,
             progress: progress(state),
           };
         }
-        state.later_question_ids = addUnique(state.later_question_ids, question.id);
-        return advance(sessionId, state, question, { storyteller: name, storyId: main.id, wasBlockDone });
       }
 
-      state.answered_question_ids = addUnique(state.answered_question_ids, question.id);
-      state.later_question_ids = removeValue(state.later_question_ids, question.id);
-      return advance(sessionId, state, question, { storyteller: name, storyId: main.id, wasBlockDone });
+      return checkCompleteness(sessionId, state, question, main, combinedAnswer(main, text), { name, wasBlockDone, answeringFollowup });
     },
 
     /**

@@ -140,7 +140,7 @@ describe("художник и сказочник недоступны — без
     const id = await family(3);
     await writeTale(id);
     const { ai, AiUnavailableError } = await import("@/lib/ai");
-    const spy = vi.spyOn(ai, "run").mockRejectedValue(new AiUnavailableError("illustrate", [{ provider: "openai", model: "gpt-image-1", reason: "timeout" }]));
+    const spy = vi.spyOn(ai, "run").mockRejectedValue(new AiUnavailableError("illustrate", [{ provider: "openai", model: "gpt-image-2", reason: "timeout" }]));
     try {
       const r = await illustratePage(id, 0);
       expect(r.fallback).toBe(true);
