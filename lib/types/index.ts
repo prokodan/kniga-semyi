@@ -18,7 +18,8 @@ export const LIFE_BLOCKS = [
 ] as const;
 export type LifeBlock = (typeof LIFE_BLOCKS)[number];
 
-export type StoryStatus = "uploaded" | "transcribing" | "editing" | "translating" | "ready" | "failed";
+/** skipped — ответ-отказ («не хочу отвечать»): запись сохранена, вопрос пропущен, главой не становится. */
+export type StoryStatus = "uploaded" | "transcribing" | "editing" | "translating" | "ready" | "failed" | "skipped";
 export type BookStatus = "draft" | "building" | "ready" | "failed";
 export type SessionMode = "family" | "kiosk";
 export type DemoOrderStatus = "created" | "paid_demo" | "cancelled";

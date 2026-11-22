@@ -19,7 +19,9 @@ import {
   isClosed,
   MAX_FOLLOWUPS,
   pushRecent,
+  REFUSE_STORY_WORDS,
   removeValue,
+  wordCount,
   type SessionState,
 } from "./policy";
 import type { InterviewRepo } from "./repo";
@@ -94,7 +96,8 @@ export interface InterviewDeps {
 
 const PHRASES = {
   greeting: "Здравствуйте! Мы будем просто разговаривать — отвечайте, как вам удобно. Любой вопрос можно пропустить.",
-  refused: "Хорошо, не будем об этом. Давайте о другом.",
+  // Начало фразы — как в eval/prompt-checks.ts (ENGINE_BRIDGES): фраза движка, а не модели.
+  refused: "Хорошо, не будем об этом — это ваше право, и спасибо, что сказали. Давайте о другом.",
   skip: "Хорошо, давайте о другом.",
   later: "Хорошо, вернёмся к этому, когда захотите.",
   pause: "Спасибо, что поделились этим. Давайте немного передохнём — к этой теме можно вернуться позже, когда захотите.",
@@ -272,23 +275,25 @@ export function createInterview(deps: InterviewDeps) {
       const answeringFollowup = Boolean(state.pending_followup && state.current_story_id);
       const signal = detectSignal(text);
 
-      // Отказ от темы — сразу дальше, без уточнений и без проверки полноты.
-      if (signal === "refuses") {
+      // Отказ от темы — сразу дальше, без уточнений и без проверки полноты. Длинный рассказ с отказом
+      // только в конце («…а про войну не хочу») — это рассказ: засчитываем ниже, но не уточняем.
+      const refusesWhole = signal === "refuses" && (answeringFollowup || wordCount(text) <= REFUSE_STORY_WORDS);
+      if (refusesWhole) {
         state.recent_answers = pushRecent(state, text);
+        let storyId: string | null;
         if (answeringFollowup) {
-          // Основной ответ уже есть — засчитываем его, по уточнению не давим.
+          // Основной ответ уже есть — засчитываем его, по уточнению не давим. Голос «не хочу» в главу не идёт.
           state.answered_question_ids = addUnique(state.answered_question_ids, question.id);
-          state.later_question_ids = removeValue(state.later_question_ids, question.id);
+          if (incoming && incoming.id !== state.current_story_id) await repo.updateStory(incoming.id, { status: "skipped" });
+          storyId = state.current_story_id ?? null;
         } else {
+          // Вопрос пропущен: запись сохраняем (status skipped), но главой она не становится.
           state.skipped_question_ids = addUnique(state.skipped_question_ids, question.id);
-          state.later_question_ids = removeValue(state.later_question_ids, question.id);
+          if (incoming) await repo.updateStory(incoming.id, { status: "skipped", question_id: incoming.question_id ?? question.id, block: incoming.block ?? question.block });
+          storyId = null;
         }
-        return advance(sessionId, state, question, {
-          storyteller: name,
-          bridge: PHRASES.refused,
-          storyId: state.current_story_id ?? incoming?.id ?? null,
-          wasBlockDone,
-        });
+        state.later_question_ids = removeValue(state.later_question_ids, question.id);
+        return advance(sessionId, state, question, { storyteller: name, bridge: PHRASES.refused, storyId, wasBlockDone });
       }
 
       // Сохраняем сказанное до вызова ИИ: если модель упадёт, рассказ не потеряется.
@@ -327,6 +332,13 @@ export function createInterview(deps: InterviewDeps) {
       if (signal === "emotional") {
         state.later_question_ids = addUnique(state.later_question_ids, question.id);
         return advance(sessionId, state, question, { storyteller: name, bridge: PHRASES.pause, pause: true, storyId: main.id, wasBlockDone });
+      }
+
+      if (signal === "refuses") {
+        // Длинный рассказ, отказ — про часть: глава есть, уточнений нет.
+        state.answered_question_ids = addUnique(state.answered_question_ids, question.id);
+        state.later_question_ids = removeValue(state.later_question_ids, question.id);
+        return advance(sessionId, state, question, { storyteller: name, bridge: PHRASES.refused, storyId: main.id, wasBlockDone });
       }
 
       let res: AiOutput<"completeness">;

@@ -181,7 +181,7 @@ export class MemoryFamilyStore implements FamilyStore {
       .filter((s) => s.family_id === family.id)
       .sort((a, b) => a.created_at.localeCompare(b.created_at));
     const stories = [...this.stories.values()]
-      .filter((s) => s.family_id === family.id)
+      .filter((s) => s.family_id === family.id && s.status !== "skipped") // ответ-отказ — не глава
       .map(({ id, storyteller_id, question_id, block, status, parent_story_id, created_at, title }) => ({ id, storyteller_id, question_id, block, status, parent_story_id, created_at, title }));
     return structuredClone({ family, storytellers, storyteller: storytellers[0] ?? null, stories });
   }
@@ -289,6 +289,7 @@ export class SupabaseFamilyStore implements FamilyStore {
         .from("stories")
         .select("id, storyteller_id, question_id, block, status, parent_story_id, created_at, title")
         .eq("family_id", family.id)
+        .neq("status", "skipped") // ответ-отказ — не глава и не прогресс
         .order("created_at", { ascending: true }),
     ]);
     if (st.error) fail("рассказчики семьи", st.error);
