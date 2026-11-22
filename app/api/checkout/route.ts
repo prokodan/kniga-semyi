@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { findPlan, planExtras } from "@/app/(family)/checkout/[token]/plans";
+import { findPlan, planExtras } from "@/lib/payments/plans";
 import { AccessError } from "@/lib/db/access";
 import { createDemoPayments, EXTRAS_KZT } from "@/lib/payments";
 import { errorResponse, familyToken, ok, readJson, requireFamily } from "../_family/http";
