@@ -22,11 +22,14 @@ export const AI_PROVIDERS = ["mock", "gemini", "openai"] as const;
 export type AiProviderName = (typeof AI_PROVIDERS)[number];
 
 const lifeBlock = z.enum(LIFE_BLOCKS);
+const nullToUndefined = (v: unknown) => (v === null ? undefined : v);
 const fact = z.object({
   type: z.enum(["person", "place", "date", "event"]),
   value: z.string(),
-  year: z.number().int().optional(),
-  relation: z.string().optional(),
+  // Модели (Gemini, OpenAI) часто пишут "year": null / "relation": null — это «нет данных», а не ошибка.
+  // Без этого 8 из 10 глав kim падали на проверке схемы (V1, PR #38). В выходе null → undefined.
+  year: z.preprocess(nullToUndefined, z.number().int().optional()),
+  relation: z.preprocess(nullToUndefined, z.string().optional()),
 });
 
 /** Схемы входов: роутер валидирует вход до вызова провайдера. */
