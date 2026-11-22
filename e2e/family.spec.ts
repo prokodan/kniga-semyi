@@ -87,7 +87,10 @@ test("новая семья: старт → согласие → ответ → 
 test("демо: правка черновика → глава с новым заголовком", async ({ page }) => {
   const story = DEMO_STORY_SEEDS.at(-1)!;
   const title = `${story.edit.title} · ${test.info().project.name} ${Date.now().toString(36)}`;
-  await page.goto(`/draft/${story.id}?token=${T}`);
+  // В правку попадают кнопкой из главы, а не по адресу.
+  await page.goto(`/chapter/${story.id}?token=${T}`);
+  await page.getByRole("link", { name: /Исправить имена и даты/ }).click();
+  await page.waitForURL(/\/draft\//);
   await expect(page.getByRole("heading", { name: "Исправить главу" })).toBeVisible();
   await expect(page.getByLabel("Заголовок главы")).toHaveValue(/\S/);
   await page.getByLabel("Заголовок главы").fill(title);
@@ -114,7 +117,10 @@ test("демо: книга PDF — открыть, скачать, пересо�
 
 test("демо: оплата (демо) → допы → сказка", async ({ page }) => {
   await test.step("выбор книги и допа, «Оплатить (демо)»", async () => {
-    await page.goto(`/checkout/${T}`);
+    // К оплате попадают кнопкой со страницы семьи.
+    await page.goto(`/f/${T}`);
+    await page.getByRole("link", { name: /Выбрать книгу/ }).click();
+    await page.waitForURL(/\/checkout\//);
     const total = page.getByText("Итого").locator("..");
     await page.getByText("Цифровая · семейная").click();
     await expect(page.getByRole("radio", { checked: true })).toHaveValue("digital-2");
