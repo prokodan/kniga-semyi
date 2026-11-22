@@ -6,6 +6,12 @@ on:
   schedule:
     - cron: "23 2 * * *"
   workflow_dispatch:
+    inputs:
+      stage:
+        description: "Режим сцены на проде: on — утро 27.11 (STAGE_MODE=1), off — после питча, any — не проверять"
+        type: choice
+        options: [any, "on", "off"]
+        default: any
 
 permissions:
   contents: read
@@ -13,11 +19,12 @@ permissions:
 jobs:
   smoke:
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 10
     env:
       PROD_URL: ${{ secrets.PROD_URL }}
       SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
       SUPABASE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+      EXPECT_STAGE: ${{ inputs.stage || 'any' }}
     steps:
       - uses: actions/checkout@v7
 
@@ -58,16 +65,43 @@ jobs:
             exit 1
           fi
 
+          # Прод должен работать на этом коммите main. Сразу после слияния Vercel ещё собирает —
+          # ждём до 6 минут, иначе smoke «зеленел» на предыдущей выкладке.
+          want="${GITHUB_SHA:0:7}"
+          for i in $(seq 1 18); do
+            have=$(jq -r '.commit // "?"' health.json 2>/dev/null || echo "?")
+            [ "$have" = "$want" ] && break
+            echo "прод на $have, жду выкладку $want… ($i/18)"
+            sleep 20
+            curl -sS --max-time 20 -o health.json "$url" || true
+          done
+          have=$(jq -r '.commit // "?"' health.json 2>/dev/null || echo "?")
+          if [ "$have" != "$want" ]; then
+            out summary "прод на $have, а main — $want: выкладка не дошла"
+            echo "::error::Прод работает на коммите $have, а main — $want. Проверь деплой в Vercel."
+            exit 1
+          fi
+
           status=$(jq -r '.status // "?"' health.json)
           db=$(jq -r '.db // "?"' health.json)
           mode=$(jq -r '.ai_mode // "?"' health.json)
           db_error=$(jq -r '.db_error // empty' health.json)
-          summary="прод: $status, база: $db, ИИ: $mode"
+          stage=$(jq -r 'if .stage_mode then "on" else "off" end' health.json)
+          summary="прод: $status, база: $db, ИИ: $mode, сцена: $stage"
           [ -n "$db_error" ] && summary="$summary ($db_error)"
           out summary "$summary"
 
           if [ "$code" != "200" ] || [ "$status" != "ok" ] || [ "$db" != "ok" ]; then
             echo "::error::Прод не здоров: HTTP $code, status=$status, db=$db${db_error:+, db_error=$db_error}"
+            exit 1
+          fi
+          for k in admin_pin kiosk_pin; do
+            [ "$(jq -r ".config.$k // false" health.json)" = "true" ] || echo "::warning::$k не задан в Vercel Env — вход выключен"
+          done
+          [ "$(jq -r '.config.openai_key // false' health.json)" = "true" ] || echo "::notice::OPENAI_API_KEY нет в Vercel — картинки сказки и резерв OpenAI недоступны"
+          if [ "$EXPECT_STAGE" != "any" ] && [ "$stage" != "$EXPECT_STAGE" ]; then
+            out summary "$summary — ждали сцену: $EXPECT_STAGE"
+            echo "::error::Режим сцены $stage, а ждали $EXPECT_STAGE. Vercel → STAGE_MODE → Redeploy."
             exit 1
           fi
           echo "✓ $summary"

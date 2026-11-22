@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { getDbOrNull } from "@/lib/db";
-import { getAiMode } from "@/lib/env";
+import { env, getAiMode } from "@/lib/env";
+import { isStageMode } from "@/lib/stage";
 
 export const dynamic = "force-dynamic";
 
@@ -32,6 +33,14 @@ export async function GET() {
       db: dbStatus,
       ...(dbError ? { db_error: dbError } : {}),
       ai_mode: getAiMode(),
+      // Для утреннего чек-листа 27.11 и smoke: только «задано / нет», без значений.
+      stage_mode: isStageMode(),
+      config: {
+        admin_pin: Boolean(env.adminPin()),
+        kiosk_pin: Boolean(env.kioskPin()),
+        openai_key: Boolean(env.openaiApiKey()),
+        listen_secret: Boolean(env.listenSecret()),
+      },
       commit: process.env.VERCEL_GIT_COMMIT_SHA?.slice(0, 7) ?? "local",
       region: process.env.VERCEL_REGION ?? "local",
       latency_ms: Date.now() - started,
