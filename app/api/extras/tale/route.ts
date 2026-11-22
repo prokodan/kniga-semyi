@@ -9,12 +9,19 @@ const STATUS: Record<TaleError["code"], number> = { not_enough: 409, busy: 409, 
 
 const Body = z.discriminatedUnion("action", [
   z.object({ action: z.literal("write"), childName: z.string().max(80).optional(), again: z.boolean().default(false) }),
-  z.object({ action: z.literal("illustrate"), page: z.number().int().min(0).max(9), regenerate: z.boolean().default(false) }),
+  z.object({
+    action: z.literal("illustrate"),
+    page: z.number().int().min(0).max(9),
+    regenerate: z.boolean().default(false),
+    fallback: z.boolean().default(false),
+  }),
 ]);
 
 // POST /api/extras/tale — по ссылке семьи (x-family-token или поле token):
 //   { action: "write", childName?, again? }      → текст сказки (ai.run("tale")), ответ — TaleView
-//   { action: "illustrate", page, regenerate? }  → картинка страницы (ai.run("illustrate")), ответ — { page, image }
+//   { action: "illustrate", page, regenerate?, fallback? } → картинка страницы (ai.run("illustrate")),
+//     ответ — { page, image, fallback, notice }; художник недоступен → картинка из готового набора, не ошибка;
+//     fallback: true — сразу из набора (браузер не дождался ответа: функция упала по лимиту времени)
 // Картинки страница просит параллельно, по запросу на страницу: каждый укладывается в лимит функции.
 export async function POST(req: Request) {
   try {
@@ -24,7 +31,7 @@ export async function POST(req: Request) {
     if (body.action === "write") {
       return ok(await writeTale(view.family.id, { childName: body.childName, again: body.again }));
     }
-    return ok(await illustratePage(view.family.id, body.page, { regenerate: body.regenerate }));
+    return ok(await illustratePage(view.family.id, body.page, { regenerate: body.regenerate, fallback: body.fallback }));
   } catch (e) {
     if (e instanceof TaleError) return ok({ error: e.code, message: e.message }, STATUS[e.code]);
     return errorResponse(e);

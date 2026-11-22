@@ -10,16 +10,36 @@ const btn = "button flex items-center justify-center rounded-button px-6 py-4 te
 const primary = `${btn} bg-seal text-paper active:bg-seal-dark disabled:opacity-60`;
 const secondary = "button flex items-center justify-center rounded-button border border-line px-5 py-3 text-ink disabled:opacity-60";
 
+class CallError extends Error {
+  constructor(
+    message: string,
+    /** сервер не ответил по делу: сеть, 5xx без JSON (функция упала по лимиту времени) */
+    readonly lost: boolean,
+  ) {
+    super(message);
+  }
+}
+
 async function call<T>(token: string, body: Record<string, unknown>): Promise<T> {
-  const res = await fetch("/api/extras/tale", {
-    method: "POST",
-    headers: { "content-type": "application/json", "x-family-token": token },
-    body: JSON.stringify(body),
-  });
-  const data = (await res.json().catch(() => ({}))) as T & { message?: string };
-  if (!res.ok) throw new Error(data.message ?? "Что-то пошло не так. Попробуйте ещё раз.");
+  let res: Response;
+  try {
+    res = await fetch("/api/extras/tale", {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-family-token": token },
+      body: JSON.stringify(body),
+    });
+  } catch {
+    throw new CallError("Нет связи с сервером — проверьте интернет и нажмите «Попробовать ещё раз».", true);
+  }
+  const data = (await res.json().catch(() => null)) as (T & { message?: string }) | null;
+  if (!res.ok || !data) {
+    if (data?.message) throw new CallError(data.message, false);
+    throw new CallError("Сервер не успел ответить — нажмите «Попробовать ещё раз».", true);
+  }
   return data;
 }
+
+type Illustrated = { page: number; image: string; fallback: boolean; notice: string | null };
 
 export function TaleBook({ token, initial }: Props) {
   const [tale, setTale] = useState<TaleView>(initial);
@@ -45,8 +65,15 @@ export function TaleBook({ token, initial }: Props) {
       setDrawing((s) => new Set(s).add(i));
       setPage(i, { imageError: null });
       try {
-        const r = await call<{ page: number; image: string }>(token, { action: "illustrate", page: i, regenerate });
-        setPage(i, { image: r.image, imageError: null });
+        let r: Illustrated;
+        try {
+          r = await call<Illustrated>(token, { action: "illustrate", page: i, regenerate });
+        } catch (e) {
+          // Не дождались ответа (лимит времени функции) — сразу картинка из набора, без пустого места.
+          if (!(e instanceof CallError) || !e.lost) throw e;
+          r = await call<Illustrated>(token, { action: "illustrate", page: i, fallback: true });
+        }
+        setPage(i, { image: r.image, fallback: r.fallback, imageError: r.notice });
       } catch (e) {
         setPage(i, { imageError: e instanceof Error ? e.message : "Картинка не получилась" });
       } finally {
@@ -63,7 +90,7 @@ export function TaleBook({ token, initial }: Props) {
   // Готовый текст → все недостающие картинки параллельно (по запросу на страницу).
   useEffect(() => {
     if (tale.status !== "ready") return;
-    const missing = tale.pages.map((p, i) => (!p.image && !p.imageError && !requested.current.has(i) ? i : -1)).filter((i) => i >= 0);
+    const missing = tale.pages.map((p, i) => (!p.image && !requested.current.has(i) ? i : -1)).filter((i) => i >= 0);
     if (missing.length === 0) return;
     setStartedAt((s) => s ?? Date.now());
     for (const i of missing) {
@@ -102,7 +129,10 @@ export function TaleBook({ token, initial }: Props) {
       scroller.current?.scrollTo({ left: 0 });
     } catch (e) {
       setError(e instanceof Error ? e.message : "Сказка не получилась");
-      setTale((t) => ({ ...t, status: t.pages.length ? "ready" : "none" }));
+      // Сервер вернул прежнюю сказку (если была) или отметил «не получилось» — показываем как есть.
+      const res = await fetch(`/api/extras/tale?token=${encodeURIComponent(token)}`, { cache: "no-store" }).catch(() => null);
+      const view = res?.ok ? ((await res.json().catch(() => null)) as TaleView | null) : null;
+      setTale((t) => view ?? { ...t, status: "failed" });
     } finally {
       setBusy(false);
     }
@@ -123,7 +153,7 @@ export function TaleBook({ token, initial }: Props) {
     return (
       <section className="flex flex-col gap-4 rounded-card bg-paper-deep p-5 shadow-card">
         <p className="text-ink-soft">
-          Добрая сказка для детей 4–8 лет по настоящим рассказам{tale.storytellerName ? ` — ${tale.storytellerName}` : ""}: 4 страницы и 4 картинки в одном
+          Добрая сказка для детей 5–10 лет по настоящим рассказам{tale.storytellerName ? ` — ${tale.storytellerName}` : ""}: 4 страницы и 4 картинки в одном
           стиле, акварелью.
         </p>
         {writing ? (
@@ -155,8 +185,8 @@ export function TaleBook({ token, initial }: Props) {
                 className="min-h-12 rounded-button border border-line bg-paper px-5 text-elder text-ink"
               />
             </label>
-            <button type="button" onClick={() => void write(tale.status === "failed")} disabled={busy} className={primary}>
-              {tale.status === "failed" ? "Попробовать ещё раз" : "Написать сказку"}
+            <button type="button" onClick={() => void write(tale.status === "failed" || Boolean(error))} disabled={busy} className={primary}>
+              {tale.status === "failed" || error ? "Попробовать ещё раз" : "Написать сказку"}
             </button>
           </>
         )}
@@ -209,13 +239,14 @@ export function TaleBook({ token, initial }: Props) {
                 </div>
               )}
             </div>
+            {p.image && p.imageError ? <p className="text-sm text-muted">{p.imageError}</p> : null}
             <p className="font-serif text-2xl leading-relaxed text-ink">{p.text}</p>
             <div className="flex items-center justify-between gap-3">
               <span className="text-muted">
                 {i + 1} / {tale.pages.length}
               </span>
               <button type="button" onClick={() => void draw(i, true)} disabled={drawing.has(i)} className={secondary}>
-                {drawing.has(i) ? "Рисуем…" : p.image ? "Перерисовать" : "Нарисовать"}
+                {drawing.has(i) ? "Рисуем…" : p.fallback ? "Нарисовать свою" : p.image ? "Перерисовать" : "Нарисовать"}
               </button>
             </div>
           </article>
@@ -236,7 +267,14 @@ export function TaleBook({ token, initial }: Props) {
         </button>
       </div>
 
-      {error ? <p className="text-danger">{error}</p> : null}
+      {error ? (
+        <div role="alert" className="flex flex-col gap-3 rounded-card border border-danger/40 bg-paper p-4">
+          <p className="text-danger">{error}</p>
+          <button type="button" onClick={() => void write(true)} disabled={working} className={primary}>
+            Попробовать ещё раз
+          </button>
+        </div>
+      ) : null}
       <button type="button" onClick={() => void write(true)} disabled={working} className={secondary}>
         Написать сказку заново
       </button>
