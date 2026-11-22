@@ -54,6 +54,7 @@ export default async function DraftPage({
           token={token}
           chapterUrl={chapterUrl}
           initial={{ title: story.title ?? "", quote: story.quote ?? "", text_ru: story.text_ru ?? "" }}
+          sources={[story.transcript ?? ""].filter(Boolean)}
         />
       ) : (
         <section className="flex flex-col gap-4 rounded-card bg-paper-deep p-6 shadow-card">

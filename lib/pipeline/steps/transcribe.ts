@@ -9,7 +9,7 @@ export function estimateDurationSec(bytes: number): number {
   return Math.min(MAX_SEC, Math.max(1, Math.round(bytes / 8000)));
 }
 
-export const transcribe: StepFn = async ({ story, ai, repo }) => {
+export const transcribe: StepFn = async ({ story, ai, repo, deadline }) => {
   if (!story.audio_url) throw new StepError("Нет ни записи, ни текста ответа — запишите рассказ ещё раз");
   const duration = story.duration_sec ? Number(story.duration_sec) : null;
   if (duration !== null && duration > MAX_SEC) {
@@ -25,7 +25,7 @@ export const transcribe: StepFn = async ({ story, ai, repo }) => {
   const out = await ai.run(
     "transcribe",
     { audioBase64: audio.base64, mimeType: audio.mimeType, durationSec, languageHint: "ru" },
-    { storyId: story.id },
+    { storyId: story.id, deadline },
   );
   const text = out.text.trim();
   if (!text) throw new StepError("В записи не удалось разобрать речь — попробуйте записать ближе к телефону");

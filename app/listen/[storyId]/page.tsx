@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 import { cache } from "react";
-import { audioSignedUrl, lifeYears, loadChapter, photoSignedUrl } from "@/lib/book/chapter";
+import { chapterAudioParts, lifeYears, loadChapter, photoSignedUrl } from "@/lib/book/chapter";
 import { verifyListen } from "@/lib/book/qr";
 import { Quote } from "@/components/chapter/Quote";
 import { VoicePlayer } from "@/components/chapter/VoicePlayer";
@@ -11,6 +11,7 @@ export const dynamic = "force-dynamic";
 // Публичная страница голоса /listen/<storyId>?s=<подпись> — сюда ведёт QR главы и книги.
 // Без токена семьи и без входа: подпись открывает только эту историю; неверная подпись → 404.
 // Серверный рендер, из JS — только плеер: открывается быстро и на мобильном интернете.
+// Голос — вся глава: основной ответ и ответы на уточнения подряд (chapterAudioParts).
 type Props = { params: Promise<{ storyId: string }>; searchParams: Promise<{ s?: string }> };
 
 const load = cache(async (storyId: string, sig: string | undefined) => {
@@ -41,7 +42,7 @@ export default async function ListenPage({ params, searchParams }: Props) {
   if (!data) notFound();
 
   const { story, storyteller } = data;
-  const [audio, photo] = await Promise.all([audioSignedUrl(story.audio_url), photoSignedUrl(storyteller?.photo_url ?? null, 12 * 60 * 60)]);
+  const [parts, photo] = await Promise.all([chapterAudioParts(story), photoSignedUrl(storyteller?.photo_url ?? null, 12 * 60 * 60)]);
   const name = storyteller?.name ?? "Рассказчик";
   const meta = [lifeYears(storyteller), storyteller?.birth_place].filter(Boolean).join(" · ");
 
@@ -82,8 +83,8 @@ export default async function ListenPage({ params, searchParams }: Props) {
         </div>
       )}
 
-      {audio ? (
-        <VoicePlayer src={audio} durationHint={story.duration_sec} />
+      {parts.length ? (
+        <VoicePlayer parts={parts} />
       ) : (
         <p className="rounded-card bg-paper-deep px-5 py-4 text-ink-soft">Запись скоро появится здесь.</p>
       )}

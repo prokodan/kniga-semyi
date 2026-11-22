@@ -3,11 +3,12 @@ import type { ReactNode } from "react";
 import { LogoutButton } from "./LogoutButton";
 import { centerHref } from "./ui";
 
-type Tab = "home" | "families" | "volunteers";
+type Tab = "home" | "families" | "archive" | "volunteers";
 
 const TABS: { tab: Tab; href: string; label: string }[] = [
   { tab: "home", href: "/center", label: "Сводка" },
   { tab: "families", href: "/center/families", label: "Семьи" },
+  { tab: "archive", href: "/center/archive", label: "Архив АКНЦ" },
   { tab: "volunteers", href: "/center/volunteers", label: "Волонтёры" },
 ];
 

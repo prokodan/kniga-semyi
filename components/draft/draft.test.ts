@@ -6,7 +6,7 @@ import { MemoryInterviewRepo } from "@/lib/interview/repo";
 import type { Story } from "@/lib/types";
 import translateFixture from "@/fixtures/ai/translate.json";
 import { PATCH } from "@/app/api/stories/[id]/edit/route";
-import { draftChanged, normalizeForMatch, quoteInText } from "./draft";
+import { diffDraft, draftChanged, normalizeForMatch, quoteInText, quoteMatch } from "./draft";
 
 const g = globalThis as { __interviewMemoryRepo?: MemoryInterviewRepo };
 
@@ -102,6 +102,12 @@ describe("PATCH /api/stories/:id/edit", () => {
     expect(g.__interviewMemoryRepo!.stories.get(s.id)!.quote).toBe("Этих слов нет");
   });
 
+  it("цитата расходится с текстом только написанием («У штабе» / «Уштобе») — без предупреждения", async () => {
+    const s = addStory({ quote: "Мы жили в У штабе у реки.", text_ru: "Потом мы жили в У штабе у реки. Было тепло." });
+    const res = await patch(s.id, { title: s.title, quote: s.quote, text_ru: "Потом мы жили в Уштобе у реки. Было тепло." });
+    expect(await res.json()).toMatchObject({ changed: true, quoteWarning: false, quoteSpelling: true });
+  });
+
   it("без правок перевод не перезапускается", async () => {
     const s = addStory();
     const res = await patch(s.id, { title: s.title, quote: s.quote, text_ru: ` ${s.text_ru} ` });
@@ -121,5 +127,33 @@ describe("PATCH /api/stories/:id/edit", () => {
     expect((await patch(editing.id, { title: "А", quote: "", text_ru: "Т" })).status).toBe(409);
     const followup = addStory({ parent_story_id: "story-main" });
     expect((await patch(followup.id, { title: "А", quote: "", text_ru: "Т" })).status).toBe(409);
+  });
+});
+
+describe("исправление написания vs новое (#4)", () => {
+  const transcript = "Я родился в Уштобе в сороковом году. Мама варила кукси, папа ловил рыбу в реке.";
+
+  it("«У штабе» → «Уштобе» — правка написания, не новое", () => {
+    const d = diffDraft("Я родился в 1940 году в У штабе.", "Я родился в 1940 году в Уштобе.", [transcript]);
+    expect(d).toEqual({ spelling: [{ from: "у штабе", to: "уштобе" }], added: [] });
+    expect(diffDraft("Ким Чер су пришёл", "Ким Чер Су пришёл")).toEqual({ spelling: [], added: [] });
+    expect(diffDraft("Ким Чирсу пришёл", "Ким Чер Су пришёл").spelling).toHaveLength(1);
+  });
+
+  it("новые события и другие годы — предупреждение", () => {
+    const d = diffDraft("Я родился в 1940 году в Уштобе.", "Я родился в 1941 году в Уштобе. Потом мы уехали в Ташкент на поезде.", [transcript]);
+    expect(d.spelling).toEqual([]);
+    expect(d.added).toEqual(["1941", "потом мы уехали в ташкент на поезде"]);
+  });
+
+  it("слова из расшифровки рассказчика — не новое", () => {
+    expect(diffDraft("Мама варила кукси.", "Мама варила кукси, а папа ловил рыбу.", [transcript]).added).toEqual([]);
+  });
+
+  it("quoteMatch: точно / написание / нет", () => {
+    expect(quoteMatch("Помню всё как вчера", "Помню всё как вчера, правда.")).toBe("exact");
+    expect(quoteMatch("Мы жили в У штабе у реки.", "Потом мы жили в Уштобе у реки.")).toBe("spelling");
+    expect(quoteMatch("Мы жили в Ташкенте у реки.", "Потом мы жили в Уштобе у реки.")).toBe("missing");
+    expect(quoteMatch("Это было в 1941 году", "Это было в 1940 году")).toBe("missing");
   });
 });

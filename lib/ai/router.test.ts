@@ -129,3 +129,34 @@ describe("ai router", () => {
     expect(gemini.call).not.toHaveBeenCalled();
   });
 });
+
+describe("ai router: дедлайн шага (пункт 1)", () => {
+  it("урезает таймаут попытки до остатка и не начинает новую, если осталось < 4 с", async () => {
+    let t = 1_000_000;
+    const store = new MemoryStore();
+    const gemini = fakeProvider("gemini", async () => {
+      t += 41_000; // модель «думала» 41 с
+      throw new ProviderError("HTTP 503: high demand", "error", "gemini");
+    });
+    const openai = fakeProvider("openai", () => okOutput);
+    const router = createRouter({ store, providers: { gemini, openai }, mode: () => "auto", loadPrompt: prompt, now: () => new Date(t) });
+    await expect(router.runWithMeta("translate", translateInput, { deadline: t + 45_000 })).rejects.toBeInstanceOf(AiUnavailableError);
+    expect(gemini.call).toHaveBeenCalledTimes(1);
+    expect(openai.call).not.toHaveBeenCalled();
+  });
+
+  it("503 не ставит модель на 10-минутное остывание", async () => {
+    let n = 0;
+    const { router, store } = setup({
+      gemini: fakeProvider("gemini", () => {
+        if (n++ === 0) throw new ProviderError("HTTP 503: high demand", "error", "gemini");
+        return okOutput;
+      }),
+    });
+    await router.runWithMeta("translate", translateInput);
+    const second = await router.runWithMeta("translate", { ...translateInput, title: "Другое" });
+    expect(second.provider).toBe("gemini");
+    expect(second.model).toBe(DEFAULT_ROUTES.translate.providers[0]!.model);
+    expect(store.usage.some((u) => u.status === "rate_limited")).toBe(false);
+  });
+});

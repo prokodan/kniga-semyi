@@ -68,6 +68,8 @@ export class PipelineError extends Error {
 
 export interface StepResult {
   storyId: string;
+  /** Шаг уже выполняет другой вызов (аренда step_started_at) — этот ничего не делал */
+  running?: boolean;
   status: StoryStatus;
   /** Шаг, выполненный этим вызовом (null — делать было нечего) */
   ran: PipelineStep | null;
@@ -95,12 +97,19 @@ export interface PipelineDeps {
   bank?: QuestionBank;
   /** Через сколько минут повторить, если ИИ недоступен */
   retryInMinutes?: number;
+  now?: () => number;
 }
+
+/** Бюджет одного шага на все вызовы ИИ: функция Vercel живёт 60 с, остальное — на чтение аудио и запись. */
+export const STEP_BUDGET_MS = 48_000;
+/** Аренда шага: пока шаг идёт меньше этого, второй вызов его не дублирует. Больше — функцию убили, можно снова. */
+export const STEP_LEASE_MS = 65_000;
 
 export function createPipeline(deps: PipelineDeps) {
   const { ai, repo } = deps;
   const bank = deps.bank ?? getQuestionBank();
   const retryInMinutes = deps.retryInMinutes ?? DEFAULT_PROVIDERS.gemini.cooldown_minutes;
+  const now = deps.now ?? Date.now;
 
   async function load(storyId: string, token?: string): Promise<Story> {
     const story = await repo.getStory(storyId);
@@ -134,8 +143,10 @@ export function createPipeline(deps: PipelineDeps) {
   /**
    * Выполнить один шаг: `step` — конкретный (он должен быть следующим по данным), без него — следующий нужный.
    * Ничего не делать → история помечается ready (если ещё не).
+   * Шаг уже идёт в другом вызове (аренда < 65 с) → { running: true }, ничего не запускаем — без дублей и лишних трат.
+   * `restart` — кнопка «Перезапустить сборку»: снять аренду и обнулить счётчик kick-stuck.
    */
-  async function runStep(storyId: string, opts: { step?: PipelineStep; token?: string } = {}): Promise<StepResult> {
+  async function runStep(storyId: string, opts: { step?: PipelineStep; token?: string; restart?: boolean } = {}): Promise<StepResult> {
     let story = await load(storyId, opts.token);
     const step = nextStep(story);
     if (opts.step && opts.step !== step) {
@@ -145,24 +156,45 @@ export function createPipeline(deps: PipelineDeps) {
       throw new PipelineError("bad_request", `Сначала нужен шаг «${STEP_LABEL[step]}»`);
     }
     if (step === null) {
-      if (story.status !== "ready") story = await save(story, { status: "ready", error: null });
+      if (story.status !== "ready" || story.step_started_at) story = await save(story, { status: "ready", error: null, step_started_at: null });
       return result(story, null);
     }
+    const leased = story.step_started_at ? now() - new Date(story.step_started_at).getTime() < STEP_LEASE_MS : false;
+    if (leased && !opts.restart) return result(story, null, { running: true, next: step, message: STATUS_MESSAGE[STEP_STATUS[step]] });
 
-    story = await save(story, { status: STEP_STATUS[step], error: null });
+    const started = now();
+    const lease = new Date(started).toISOString();
+    story = await save(story, {
+      status: STEP_STATUS[step],
+      error: null,
+      step_started_at: lease,
+      ...(opts.restart ? { kick_attempts: 0 } : {}),
+    });
+    /** Пока шаг шёл, его перезапустили (пересборка, кнопка) — наш результат устарел, не перетираем. */
+    async function superseded(): Promise<Story | null> {
+      const fresh = await repo.getStory(storyId);
+      // Сравниваем моменты, а не строки: Postgres отдаёт timestamptz как «…+00:00», а мы пишем «…Z».
+      const theirs = fresh?.step_started_at ? new Date(fresh.step_started_at).getTime() : null;
+      return fresh && theirs !== started ? fresh : null;
+    }
     try {
-      const patch = await STEP_FNS[step]({ story, ai, repo, bank });
+      const patch = await STEP_FNS[step]({ story, ai, repo, bank, deadline: started + STEP_BUDGET_MS });
+      const newer = await superseded();
+      if (newer) return result(newer, null, { running: Boolean(newer.step_started_at) });
       const after = { ...story, ...patch } as Story;
       const next = nextStep(after);
-      story = await save(story, { ...patch, status: next ? STEP_STATUS[next] : "ready", error: null });
+      story = await save(story, { ...patch, status: next ? STEP_STATUS[next] : "ready", error: null, step_started_at: null });
       return result(story, step);
     } catch (e) {
+      const newer = await superseded();
+      if (newer) return result(newer, null, { running: Boolean(newer.step_started_at) });
       if (e instanceof AiUnavailableError) {
-        // Работа не теряется: статус остаётся на шаге, повторный вызов продолжит с него.
+        // Работа не теряется: статус остаётся на шаге, повторный вызов (экран главы или kick-stuck) продолжит с него.
+        story = await save(story, { step_started_at: null });
         return result(story, step, { queued: true, retryInMinutes, next: step, message: `Глава будет готова примерно через ${retryInMinutes} минут` });
       }
       const reason = e instanceof StepError ? e.message : `Техническая ошибка: ${(e as Error).message}`.slice(0, 500);
-      story = await save(story, { status: "failed", error: `Шаг «${STEP_LABEL[step]}»: ${reason}` });
+      story = await save(story, { status: "failed", error: `Шаг «${STEP_LABEL[step]}»: ${reason}`, step_started_at: null });
       return result(story, step);
     }
   }
@@ -179,7 +211,8 @@ export function createPipeline(deps: PipelineDeps) {
     const patch: PipelinePatch = {};
     for (const s of PIPELINE_STEPS.slice(PIPELINE_STEPS.indexOf(from))) Object.assign(patch, STEP_FIELDS[s]);
     story = await save(story, { ...patch, status: STEP_STATUS[from], error: null });
-    return runStep(story.id, { token: opts.token });
+    // Пересборка важнее идущего шага со старыми данными: аренду не ждём.
+    return runStep(story.id, { token: opts.token, restart: true });
   }
 
   /** Прогнать все шаги подряд (тесты, симулятор, скрипты). В HTTP — по одному шагу на вызов. */
@@ -187,7 +220,7 @@ export function createPipeline(deps: PipelineDeps) {
     let last: StepResult | null = null;
     for (let i = 0; i < (opts.maxSteps ?? PIPELINE_STEPS.length + 1); i++) {
       last = await runStep(storyId, { token: opts.token });
-      if (last.done || last.queued || last.status === "failed" || last.next === null) break;
+      if (last.done || last.queued || last.running || last.status === "failed" || last.next === null) break;
     }
     return last!;
   }

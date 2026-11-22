@@ -6,7 +6,7 @@ import { getDbOrNull } from "@/lib/db";
 import { MemoryInterviewRepo } from "@/lib/interview/repo";
 import { pipeline, PipelineError, runStep, STATUS_MESSAGE } from "@/lib/pipeline";
 import type { Story } from "@/lib/types";
-import { draftChanged, quoteInText, type DraftFields, type DraftSaveResult } from "./draft";
+import { draftChanged, quoteMatch, type DraftFields, type DraftSaveResult } from "./draft";
 
 type DraftPatch = Pick<Story, "title" | "quote" | "text_ru" | "title_ko" | "quote_ko" | "text_ko" | "status" | "error">;
 
@@ -43,9 +43,12 @@ export async function saveDraft(storyId: string, token: string, fields: DraftFie
     throw new DraftError("Глава ещё собирается — откройте правку, когда она будет готова");
   }
 
-  const quoteWarning = !quoteInText(fields.quote, fields.text_ru);
+  // Цитата расходится с текстом только написанием («У штабе» / «Уштобе») — не предупреждение.
+  const match = quoteMatch(fields.quote, fields.text_ru);
+  const quoteWarning = match === "missing";
+  const quoteSpelling = match === "spelling";
   if (!draftChanged(story, fields)) {
-    return { storyId, changed: false, quoteWarning, status: story.status, done: story.done, queued: false, message: "Правок нет — всё как было" };
+    return { storyId, changed: false, quoteWarning, quoteSpelling, status: story.status, done: story.done, queued: false, message: "Правок нет — всё как было" };
   }
 
   // Новый русский текст → старый перевод больше не верен: очищаем KR, следующий шаг по данным — translate.
@@ -66,6 +69,7 @@ export async function saveDraft(storyId: string, token: string, fields: DraftFie
       storyId,
       changed: true,
       quoteWarning,
+      quoteSpelling,
       status: res.status,
       done: res.done,
       queued: res.queued,
@@ -75,6 +79,6 @@ export async function saveDraft(storyId: string, token: string, fields: DraftFie
   } catch (e) {
     // Правка уже сохранена; перевод догонит экран главы (он сам двигает /process).
     console.error("[draft] translate", e instanceof Error ? e.message : e);
-    return { storyId, changed: true, quoteWarning, status: "translating", done: false, queued: true, message: STATUS_MESSAGE.translating };
+    return { storyId, changed: true, quoteWarning, quoteSpelling, status: "translating", done: false, queued: true, message: STATUS_MESSAGE.translating };
   }
 }

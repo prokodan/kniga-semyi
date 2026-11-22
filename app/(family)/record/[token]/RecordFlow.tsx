@@ -40,6 +40,7 @@ interface Current {
 interface StepResult {
   next: string | null;
   queued: boolean;
+  running?: boolean;
   status: string;
 }
 
@@ -199,7 +200,8 @@ export function RecordFlow(props: {
       for (let i = 0; i < MAX_STEPS; i++) {
         try {
           const r = await postJson<StepResult>(`/api/stories/${storyId}/process`, token, i === 0 && from ? { from } : {});
-          if (!r.next || r.queued || r.status === "failed") return;
+          // running — шаг уже ведёт сервер (цепочка after() в /process): дальше он сам, экран можно закрыть
+          if (!r.next || r.queued || r.running || r.status === "failed") return;
         } catch (e) {
           console.warn("[record] конвейер:", e instanceof Error ? e.message : e);
           return;

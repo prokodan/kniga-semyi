@@ -8,6 +8,7 @@ import { CenterShell } from "@/components/center/Shell";
 import { centerHref } from "@/components/center/ui";
 import { loadCenter, requireCenter, type CenterData } from "@/app/api/center/_lib/http";
 import { filterFamilies, type FamilyView } from "@/app/api/center/_lib/stats";
+import { loadArchive } from "@/app/api/center/_lib/archive";
 
 export const dynamic = "force-dynamic";
 export const metadata: Metadata = { title: "Семьи · кабинет АКНЦ", robots: { index: false, follow: false } };
@@ -28,8 +29,12 @@ export default async function CenterFamiliesPage({ searchParams }: { searchParam
   const view = (VIEWS.find((v) => v.view === sp.view)?.view ?? "all") as FamilyView;
 
   let data: CenterData | null = null;
+  // Семьи с согласием на архив — кнопка «Открыть книгу» (ссылка семьи видна только в кабинете)
+  let books = new Map<string, string>();
   try {
-    data = await loadCenter({ hideDemo });
+    const [d, archive] = await Promise.all([loadCenter({ hideDemo }), loadArchive({ hideDemo }).catch(() => [])]);
+    data = d;
+    books = new Map(archive.map((a) => [a.id, a.bookHref]));
   } catch (e) {
     console.error("[center]", e instanceof Error ? e.message : e);
   }
@@ -65,7 +70,7 @@ export default async function CenterFamiliesPage({ searchParams }: { searchParam
           <p className="text-sm text-muted">Семей: {list.length}</p>
           <ul className="flex flex-col gap-2">
             {list.map((f) => (
-              <FamilyCard key={f.id} f={f} />
+              <FamilyCard key={f.id} f={f} bookHref={f.archive ? books.get(f.id) : undefined} />
             ))}
           </ul>
         </>

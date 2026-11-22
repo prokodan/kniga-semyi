@@ -65,7 +65,7 @@ export function CountersGrid({ c }: { c: CenterCounters }) {
 const date = (iso: string) =>
   new Intl.DateTimeFormat("ru-RU", { timeZone: "Asia/Almaty", day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" }).format(new Date(iso));
 
-export function FamilyCard({ f }: { f: CenterFamily }) {
+export function FamilyCard({ f, bookHref }: { f: CenterFamily; bookHref?: string }) {
   const s = f.stories;
   return (
     <li className="flex flex-col gap-2 rounded-card border border-line bg-paper p-3">
@@ -103,6 +103,16 @@ export function FamilyCard({ f }: { f: CenterFamily }) {
           </>
         )}
       </p>
+      {bookHref ? (
+        <div className="flex flex-wrap gap-2">
+          <a href={bookHref} className="flex min-h-12 items-center rounded-button bg-seal px-5 font-semibold text-paper active:bg-seal-dark">
+            Открыть книгу
+          </a>
+          <a href={`/center/archive#f-${f.id}`} className="flex min-h-12 items-center rounded-button border border-line px-4 text-ink">
+            Главы и голос →
+          </a>
+        </div>
+      ) : null}
     </li>
   );
 }

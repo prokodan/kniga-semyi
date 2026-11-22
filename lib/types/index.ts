@@ -110,6 +110,10 @@ export interface Story {
   status: StoryStatus;
   error: string | null;
   sort_order: number | null;
+  /** Сколько раз kick-stuck перезапускал историю (после 3 → failed). Нет в старых строках — 0. */
+  kick_attempts?: number;
+  /** Шаг конвейера сейчас выполняется с этого момента (аренда 65 с); null — никто не работает. */
+  step_started_at?: IsoDateTime | null;
   created_at: IsoDateTime;
   updated_at: IsoDateTime;
 }
