@@ -1,0 +1,19 @@
+name: probe-52
+# Временная проба #52 — не сливать.
+on:
+  pull_request:
+    paths: [".github/probe/**", ".github/workflows/probe-52.yml"]
+permissions:
+  contents: read
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+      - run: node .github/probe/transcribe.mjs
