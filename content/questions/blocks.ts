@@ -6,7 +6,7 @@ export const BLOCKS: { id: LifeBlock; ru: string; ko: string }[] = [
   { id: "roots", ru: "Корни", ko: "뿌리" },
   { id: "childhood", ru: "Детство", ko: "어린 시절" },
   { id: "youth", ru: "Юность и учёба", ko: "청춘과 배움" },
-  { id: "work", ru: "Работа и дело", ko: "일과 삶의 업" },
+  { id: "work", ru: "Работа и дело", ko: "일과 보람" },
   { id: "love", ru: "Любовь и семья", ko: "사랑과 가족" },
   { id: "hardship", ru: "Трудные времена", ko: "힘든 시절" },
   { id: "traditions", ru: "Традиции и кухня", ko: "전통과 음식" },
