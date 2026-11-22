@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import { DEFAULT_PROVIDERS } from "@/lib/ai/config";
 import { createRouter } from "@/lib/ai/router";
 import { MemoryStore } from "@/lib/ai/store";
-import type { AiProvider, AiStep } from "@/lib/ai/types";
+import type { AiProvider } from "@/lib/ai/types";
 import { makeSessionToken, pinMatches, verifySessionToken } from "./pin";
 import { AdminEditError, mergeProviders, mergeRoutes, moveEntry, parseRouteRow, parseThresholdPct, setEntryLimits } from "./routes";
 import { MemorySource } from "./source";
@@ -144,7 +144,7 @@ describe("изменения применяются со следующего в
   const fake = (name: "gemini" | "openai"): AiProvider => ({
     name,
     isConfigured: () => true,
-    supports: (_s: AiStep) => true,
+    supports: () => true,
     call: vi.fn(async () => ({ output: out, usage: { inputTokens: 10, outputTokens: 10 } })),
   });
   const input = { text_ru: "Текст", title: "Т", quote: "Ц" };

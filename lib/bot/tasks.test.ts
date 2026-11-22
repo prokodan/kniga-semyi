@@ -132,3 +132,18 @@ describe("прогресс", () => {
     expect(progressBar(0, 0)).toBe("░░░░░░░░░░░░ 0/0");
   });
 });
+
+describe("метка in-progress у закрытых задач (#69)", () => {
+  it("закрытая задача с меткой in-progress — «готово», а не «в работе»", () => {
+    const tasks = buildTasks([
+      issue(1, "[V0] Банк вопросов", { state: "closed", labels: [{ name: "in-progress" }] }),
+      issue(2, "[I9] Кабинет", { labels: [{ name: "in-progress" }] }),
+    ]);
+    expect(tasks.map((t) => [t.number, t.status])).toEqual([
+      [1, "done"],
+      [2, "in_progress"],
+    ]);
+    const p = buildProgress(tasks, [], "MLP 27.11");
+    expect(p.inProgress.map((x) => x.task.number)).toEqual([2]);
+  });
+});
