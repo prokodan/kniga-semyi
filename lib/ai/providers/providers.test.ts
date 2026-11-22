@@ -77,3 +77,17 @@ describe("openai provider", () => {
     await expect(call(openaiProvider, "gpt-5-mini")).rejects.toMatchObject({ kind: "error" });
   });
 });
+
+describe("gemini-3.5-transcribe (#52)", async () => {
+  const { isTranscribeModel, transcribeModelBody, usesThinkingLevel } = await import("./gemini");
+  it("без thinkingConfig, systemInstruction и JSON-режима: инструкция и аудио в user", () => {
+    expect(isTranscribeModel("gemini-3.5-transcribe")).toBe(true);
+    expect(usesThinkingLevel("gemini-3.5-transcribe")).toBe(false);
+    expect(usesThinkingLevel("gemini-3.6-flash")).toBe(true);
+    const body = transcribeModelBody({ mimeType: "audio/mp4;codecs=mp4a", audioBase64: "AAAA", hints: ["Уштобе", "Володя"] }) as Record<string, unknown>;
+    expect(Object.keys(body)).toEqual(["contents"]);
+    const parts = (body.contents as { parts: Record<string, unknown>[] }[])[0]!.parts;
+    expect(parts[0]!.text).toContain("Уштобе, Володя");
+    expect(parts[1]).toEqual({ inline_data: { mime_type: "audio/mp4", data: "AAAA" } });
+  });
+});

@@ -119,6 +119,8 @@ async function geminiCall(model, kind) {
       : [{ text: JSON.stringify({ word: "привет" }) }];
   const system =
     kind === "audio" ? TRANSCRIBE_PROMPT : 'Проверка связи. Ответь только JSON: {"ok": true, "echo": "<слово из запроса>"}';
+  // Модель расшифровки (#52) не принимает systemInstruction, JSON-режим и thinkingConfig — только user-части.
+  const plainTranscribe = kind === "audio" && /transcri/i.test(model);
   const send = async (thinking) => {
     const started = Date.now();
     let res;
@@ -126,11 +128,15 @@ async function geminiCall(model, kind) {
       res = await fetch(`${BASE}/models/${encodeURIComponent(model)}:generateContent`, {
       method: "POST",
       headers: { "content-type": "application/json", "x-goog-api-key": GEMINI_KEY },
-      body: JSON.stringify({
-        systemInstruction: { parts: [{ text: system }] },
-        contents: [{ role: "user", parts }],
-        generationConfig: generationConfig(model, thinking),
-      }),
+      body: JSON.stringify(
+        plainTranscribe
+          ? { contents: [{ role: "user", parts: [{ text: "Расшифруй запись дословно. Только текст." }, parts[0]] }] }
+          : {
+              systemInstruction: { parts: [{ text: system }] },
+              contents: [{ role: "user", parts }],
+              generationConfig: generationConfig(model, thinking),
+            },
+      ),
       signal: AbortSignal.timeout(CALL_TIMEOUT_MS),
     });
     } catch (e) {
@@ -166,6 +172,8 @@ async function geminiCall(model, kind) {
   } catch {
     return { ok: false, ms: r.ms, note: "ответ не JSON" };
   }
+  // Ответ модели расшифровки — простой текст (на тестовом гудке может быть пустым): HTTP 200 = формат принят.
+  if (plainTranscribe) return { ok: true, ms: r.ms, note: `текст: ${text.slice(0, 40) || "(пусто — тон без речи)"}` };
   let out;
   try {
     out = JSON.parse(text.replace(/^```(?:json)?\s*|\s*```$/g, ""));

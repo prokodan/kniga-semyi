@@ -13,9 +13,30 @@ interface GeminiResponse {
   promptFeedback?: { blockReason?: string };
 }
 
+/**
+ * Отдельная модель расшифровки (gemini-3.5-transcribe, #52): принимает только аудио + текст в user.
+ * На systemInstruction отвечает 400 «Developer instruction is not enabled», на responseMimeType JSON —
+ * «JSON mode is not enabled», на thinkingConfig — «Thinking level is not supported» (проба 23.11).
+ */
+export function isTranscribeModel(model: string): boolean {
+  return /transcri/i.test(model);
+}
+
 /** Gemini 3.x думают по умолчанию долго; для расшифровки и редактуры хватает низкого уровня — быстрее и в лимит 60 с. */
 export function usesThinkingLevel(model: string): boolean {
-  return /^gemini-[3-9]/.test(model);
+  return /^gemini-[3-9]/.test(model) && !isTranscribeModel(model);
+}
+
+/** Тело запроса к модели расшифровки: инструкция (с подсказками имён) и аудио в user, без config. Ответ — простой текст. */
+export function transcribeModelBody(input: { mimeType: string; audioBase64: string; hints?: string[] }) {
+  const vocab = (input.hints ?? []).slice(0, 60).join(", ");
+  const instruction =
+    "Расшифруй запись дословно, на языке речи (обычно русский, иногда слова на корё мар — пиши их кириллицей так, как звучат). " +
+    "Только текст расшифровки, без пояснений." +
+    (vocab ? ` Имена, места и слова, которые могут прозвучать (пиши так): ${vocab}.` : "");
+  return {
+    contents: [{ role: "user", parts: [{ text: instruction }, { inline_data: { mime_type: input.mimeType.split(";")[0]!.trim(), data: input.audioBase64 } }] }],
+  };
 }
 
 export function generationConfig(model: string, thinking = true): Record<string, unknown> {
@@ -43,6 +64,21 @@ export const geminiProvider: AiProvider = {
     }
 
     const url = `${BASE}/${encodeURIComponent(req.model)}:generateContent`;
+    if (req.step === "transcribe" && isTranscribeModel(req.model)) {
+      const input = req.input as ProviderCall<"transcribe">["input"];
+      const json = (await fetchJson("gemini", url, {
+        method: "POST",
+        headers: { "content-type": "application/json", "x-goog-api-key": key },
+        body: JSON.stringify(transcribeModelBody(input)),
+        signal: req.signal,
+      })) as GeminiResponse;
+      const text = json.candidates?.[0]?.content?.parts?.map((p) => p.text ?? "").join("").trim() ?? "";
+      if (!text) throw new ProviderError(`пустой ответ (${json.candidates?.[0]?.finishReason ?? "empty"})`, "bad_output", "gemini");
+      return {
+        output: { text, language: input.languageHint },
+        usage: { inputTokens: json.usageMetadata?.promptTokenCount, outputTokens: json.usageMetadata?.candidatesTokenCount, audioSeconds: input.durationSec },
+      };
+    }
     const send = (thinking: boolean) =>
       fetchJson("gemini", url, {
         method: "POST",
