@@ -1,0 +1,31 @@
+name: supabase-cli
+description: >-
+  Supabase CLI без supabase/setup-cli@v1 (#63): тот работает на Node 20 и ищет «latest» анонимным запросом к GitHub API —
+  на общих раннерах это падало с «rate limit exceeded». Здесь — gh release download с токеном workflow.
+inputs:
+  version:
+    description: Тег релиза supabase/cli (v2.x.y) или latest
+    required: false
+    default: latest
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      env:
+        GH_TOKEN: ${{ github.token }}
+        VERSION: ${{ inputs.version }}
+      run: |
+        set -euo pipefail
+        dir="$RUNNER_TEMP/supabase-cli"
+        mkdir -p "$dir"
+        tag=()
+        [ "$VERSION" = "latest" ] || tag=("$VERSION")
+        for i in 1 2 3; do
+          gh release download "${tag[@]}" --repo supabase/cli --pattern 'supabase_linux_amd64.tar.gz' --dir "$dir" --clobber && break
+          [ "$i" = 3 ] && exit 1
+          echo "::warning::загрузка Supabase CLI не удалась, повтор $i"
+          sleep $((i * 5))
+        done
+        tar xzf "$dir/supabase_linux_amd64.tar.gz" -C "$dir"
+        echo "$dir" >> "$GITHUB_PATH"
+        "$dir/supabase" --version

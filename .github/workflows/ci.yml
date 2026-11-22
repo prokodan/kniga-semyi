@@ -91,9 +91,7 @@ jobs:
       LISTEN_SECRET: e2e-only-listen-secret
     steps:
       - uses: actions/checkout@v7
-      - uses: supabase/setup-cli@v1
-        with:
-          version: latest
+      - uses: ./.github/actions/supabase-cli
       # Поднимаем базу фоном, пока ставятся зависимости и идёт сборка; миграции применяются при старте.
       - name: Supabase локально (фоном)
         run: |
