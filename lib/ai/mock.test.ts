@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { mockOutput } from "./providers/mock";
+import { mockOutput, SHORT_ANSWER } from "./providers/mock";
 import { outputSchemas, AI_STEPS, inputSchemas, type AiStep } from "./types";
 
 const sampleInputs: Record<AiStep, unknown> = {
@@ -50,6 +50,13 @@ describe("mock provider", () => {
     expect(bt.chapters[1]!.flags[0]!.severity).toBe("major");
     const j = mockOutput("judge", inputSchemas.judge.parse(sampleInputs.judge)) as { scores: { id: string }[] };
     expect(j.scores.map((s) => s.id)).toEqual(["s1"]);
+  });
+
+  it("transcribe: запись ≤ 3 с — короткий ответ (→ уточнение), длиннее — полный рассказ из фикстуры", () => {
+    const at = (durationSec: number) =>
+      (mockOutput("transcribe", inputSchemas.transcribe.parse({ ...(sampleInputs.transcribe as object), durationSec })) as { text: string }).text;
+    expect(at(2)).toBe(SHORT_ANSWER);
+    expect(at(30).split(/\s+/).length).toBeGreaterThan(25);
   });
 
   it("next_question выбирает непокрытый блок", () => {

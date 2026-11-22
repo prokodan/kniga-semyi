@@ -11,3 +11,6 @@ next-env.d.ts
 /eval/reports/
 /supabase/.temp/
 /supabase/.branches/
+/playwright-report/
+/test-results/
+/blob-report/

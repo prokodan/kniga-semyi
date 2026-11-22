@@ -1,6 +1,6 @@
 import "server-only";
 // Сессия планшета киоска: cookie по PIN до конца дня + текущий волонтёр.
-import { cookies } from "next/headers";
+import { cookies, headers } from "next/headers";
 import { redirect } from "next/navigation";
 import { env } from "@/lib/env";
 import { KIOSK_COOKIE, KIOSK_VOLUNTEER_COOKIE, kioskDayEnd, makeKioskToken, verifyKioskToken } from "./pin";
@@ -19,9 +19,19 @@ export async function requireKiosk(): Promise<void> {
   if (!(await isKiosk())) redirect("/kiosk");
 }
 
-const cookieOpts = () => ({
+/** Secure — только для HTTPS (Vercel всегда https). На http://localhost (next start, e2e, телефон по Wi-Fi) Safari
+ *  не сохраняет Secure-cookie, и вход по PIN «не держится». */
+async function secureCookie(): Promise<boolean> {
+  if (process.env.NODE_ENV !== "production") return false;
+  const h = await headers();
+  const proto = (h.get("x-forwarded-proto") ?? "").split(",")[0]!.trim();
+  const host = h.get("x-forwarded-host") ?? h.get("host") ?? "";
+  return proto !== "http" && !/^(localhost|127\.0\.0\.1|\[::1\])(:\d+)?$/.test(host);
+}
+
+const cookieOpts = async () => ({
   httpOnly: true,
-  secure: process.env.NODE_ENV === "production",
+  secure: await secureCookie(),
   sameSite: "lax" as const,
   path: "/",
   expires: kioskDayEnd(),
@@ -31,7 +41,7 @@ export async function startKioskSession(): Promise<void> {
   const pin = env.kioskPin();
   if (!pin) return;
   const jar = await cookies();
-  jar.set(KIOSK_COOKIE, makeKioskToken(pin), cookieOpts());
+  jar.set(KIOSK_COOKIE, makeKioskToken(pin), await cookieOpts());
 }
 
 export async function endKioskSession(): Promise<void> {
@@ -47,5 +57,5 @@ export async function currentVolunteerId(): Promise<string | null> {
 
 export async function setCurrentVolunteer(id: string): Promise<void> {
   const jar = await cookies();
-  jar.set(KIOSK_VOLUNTEER_COOKIE, id, cookieOpts());
+  jar.set(KIOSK_VOLUNTEER_COOKIE, id, await cookieOpts());
 }
