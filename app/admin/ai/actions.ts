@@ -2,10 +2,12 @@
 // Server actions админки ИИ. Каждое действие проверяет cookie админа на сервере.
 // Пишут только ai_routes / ai_providers; роутер читает их на каждом вызове → применяется сразу.
 import { revalidatePath } from "next/cache";
+import { headers } from "next/headers";
 import { redirect } from "next/navigation";
 import { AI_STEPS, type AiStep } from "@/lib/ai/types";
 import { env } from "@/lib/env";
 import { getAdminSource } from "./_lib/data";
+import { clientIp, tryAdminPin } from "./_lib/attempts";
 import { pinMatches } from "./_lib/pin";
 import {
   AdminEditError,
@@ -60,11 +62,9 @@ async function guarded(anchor: string, fn: () => Promise<string>): Promise<never
 
 export async function login(fd: FormData) {
   const pin = env.adminPin();
-  if (!pinMatches(pin, str(fd, "pin"))) {
-    // Небольшая пауза против перебора
-    await new Promise((r) => setTimeout(r, 800));
-    back("Неверный PIN.", undefined, "err");
-  }
+  // Пауза и лимит 5 неверных за 10 минут с IP (#56) — общий счётчик с /admin и /center
+  const r = await tryAdminPin(str(fd, "pin"), clientIp(await headers()), (p) => pinMatches(pin, p));
+  if (!r.ok) back(r.message === "PIN не подошёл" ? "Неверный PIN." : r.message, undefined, "err");
   await startAdminSession();
   redirect(PATH);
 }

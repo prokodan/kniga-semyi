@@ -2,6 +2,7 @@
 // Вход по ADMIN_PIN — та же cookie, что у /admin/ai и /center.
 import type { Metadata } from "next";
 import Link from "next/link";
+import { headers } from "next/headers";
 import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
 import { Section, btnCls, btnGhostCls, inputCls, Notice } from "@/components/admin/ui";
@@ -12,6 +13,7 @@ import { audioExt } from "@/lib/db/access";
 import { env } from "@/lib/env";
 import { isStageMode, STAGE_TIMEOUT_MS } from "@/lib/stage";
 import { DEMO_VOICE_KEYS, demoLinks, seedDemo } from "@/scripts/seed-demo";
+import { clientIp, tryAdminPin } from "./ai/_lib/attempts";
 import { pinMatches } from "./ai/_lib/pin";
 import { endAdminSession, isAdmin, isAdminConfigured, startAdminSession } from "./ai/_lib/session";
 
@@ -41,10 +43,8 @@ const VOICE_LABEL: Record<string, string> = {
 async function login(fd: FormData) {
   "use server";
   const pin = String(fd.get("pin") ?? "");
-  if (!pinMatches(env.adminPin(), pin)) {
-    await new Promise((r) => setTimeout(r, 800));
-    back("err", "Неверный PIN.");
-  }
+  const r = await tryAdminPin(pin, clientIp(await headers()), (p) => pinMatches(env.adminPin(), p));
+  if (!r.ok) back("err", r.message === "PIN не подошёл" ? "Неверный PIN." : r.message);
   await startAdminSession();
   redirect(PATH);
 }
