@@ -26,15 +26,38 @@ export interface PaymentPort {
 }
 
 /**
- * Цены, ₸. ВРЕМЕННЫЕ — заменить на цены из финансовой модели питча (I7).
- * Один источник цен для экрана оплаты, демо-заказа и слайдов.
+ * Цены, ₸, из финансовой модели питча (I7). Один источник для экрана оплаты, демо-заказа и слайдов.
+ * Уровни: цифровая книга 6 900 / 14 900 / 24 900, печатная 39 900 / 59 900.
  */
+export const PLAN_PRICES_KZT = {
+  digital: [6_900, 14_900, 24_900],
+  print: [39_900, 59_900],
+} as const satisfies Record<ProductKind, readonly number[]>;
+
+/** B2B: АКНЦ платит за каждую записанную историю (кабинет центра, слайд модели). */
+export const B2B_KZT_PER_STORY = 25_000;
+
+/** Базовая цена продукта = первый уровень. */
 export const PRICES_KZT: Record<ProductKind, number> & Record<string, number> = {
-  digital: 0,
-  print: 0,
+  digital: PLAN_PRICES_KZT.digital[0],
+  print: PLAN_PRICES_KZT.print[0],
 };
+
+/** Ключ допа «уровень N продукта» (N ≥ 2): доплата до цены уровня, интерфейс порта не меняется. */
+export function planExtraKey(product: ProductKind, tier: number): string {
+  return `plan:${product}-${tier}`;
+}
+
+const planUpgrades: Record<string, number> = Object.fromEntries(
+  (Object.keys(PLAN_PRICES_KZT) as ProductKind[]).flatMap((p) =>
+    PLAN_PRICES_KZT[p].slice(1).map((price, i) => [planExtraKey(p, i + 2), price - PRICES_KZT[p]]),
+  ),
+);
+
+/** Допы. Цены сказки в финмодели нет — в демо она в подарок (0 ₸). */
 export const EXTRAS_KZT: Record<string, number> = {
   tale: 0,
+  ...planUpgrades,
 };
 
 export function quoteKzt(req: Pick<CheckoutRequest, "product" | "extras">): number {
