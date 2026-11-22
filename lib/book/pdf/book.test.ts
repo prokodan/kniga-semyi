@@ -29,11 +29,11 @@ describe("модель книги", () => {
     expect(extra.filter(isBookChapter)).toHaveLength(0);
   });
 
-  it("внутри блока — sort_order, затем время записи", () => {
+  it("внутри раздела — по времени записи", () => {
     const a = { ...DEMO_STORIES[1]!, id: "a", sort_order: 2, created_at: "2026-01-01" };
     const b = { ...DEMO_STORIES[1]!, id: "b", sort_order: 1, created_at: "2026-02-01" };
     const c = { ...DEMO_STORIES[1]!, id: "c", sort_order: null, created_at: "2025-01-01" };
-    expect(orderChapters([a, c, b]).map((s) => s.id)).toEqual(["b", "a", "c"]);
+    expect(orderChapters([a, c, b]).map((s) => s.id)).toEqual(["c", "a", "b"]);
   });
 
   it("дед или бабушка по имени", () => {

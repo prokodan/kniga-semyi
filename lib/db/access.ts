@@ -15,7 +15,8 @@ export function isTokenShape(token: string): boolean {
   return TOKEN_RE.test(token);
 }
 
-export type StorySummary = Pick<Story, "id" | "storyteller_id" | "question_id" | "block" | "status" | "parent_story_id" | "created_at">;
+export type StorySummary = Pick<Story, "id" | "storyteller_id" | "question_id" | "block" | "status" | "parent_story_id" | "created_at"> &
+  Partial<Pick<Story, "title">>;
 
 export interface FamilyView {
   family: Family;
@@ -181,7 +182,7 @@ export class MemoryFamilyStore implements FamilyStore {
       .sort((a, b) => a.created_at.localeCompare(b.created_at));
     const stories = [...this.stories.values()]
       .filter((s) => s.family_id === family.id)
-      .map(({ id, storyteller_id, question_id, block, status, parent_story_id, created_at }) => ({ id, storyteller_id, question_id, block, status, parent_story_id, created_at }));
+      .map(({ id, storyteller_id, question_id, block, status, parent_story_id, created_at, title }) => ({ id, storyteller_id, question_id, block, status, parent_story_id, created_at, title }));
     return structuredClone({ family, storytellers, storyteller: storytellers[0] ?? null, stories });
   }
 
@@ -286,7 +287,7 @@ export class SupabaseFamilyStore implements FamilyStore {
       this.db.from("storytellers").select("*").eq("family_id", family.id).order("created_at", { ascending: true }),
       this.db
         .from("stories")
-        .select("id, storyteller_id, question_id, block, status, parent_story_id, created_at")
+        .select("id, storyteller_id, question_id, block, status, parent_story_id, created_at, title")
         .eq("family_id", family.id)
         .order("created_at", { ascending: true }),
     ]);
