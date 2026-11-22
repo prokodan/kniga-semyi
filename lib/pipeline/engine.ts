@@ -173,7 +173,9 @@ export function createPipeline(deps: PipelineDeps) {
     /** Пока шаг шёл, его перезапустили (пересборка, кнопка) — наш результат устарел, не перетираем. */
     async function superseded(): Promise<Story | null> {
       const fresh = await repo.getStory(storyId);
-      return fresh && fresh.step_started_at !== lease ? fresh : null;
+      // Сравниваем моменты, а не строки: Postgres отдаёт timestamptz как «…+00:00», а мы пишем «…Z».
+      const theirs = fresh?.step_started_at ? new Date(fresh.step_started_at).getTime() : null;
+      return fresh && theirs !== started ? fresh : null;
     }
     try {
       const patch = await STEP_FNS[step]({ story, ai, repo, bank, deadline: started + STEP_BUDGET_MS });

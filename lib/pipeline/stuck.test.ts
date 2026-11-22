@@ -35,6 +35,20 @@ function setup(clock = { t: Date.parse("2026-11-23T10:00:00Z") }, hook?: (step: 
 }
 
 describe("застрявшие главы", () => {
+  it("аренда из базы в формате «+00:00» — своя, результат шага сохраняется", async () => {
+    const { pipeline, repo } = setup();
+    repo.add(story());
+    const orig = repo.updateStory.bind(repo);
+    repo.updateStory = async (id, patch) => {
+      const p = { ...patch };
+      if (typeof p.step_started_at === "string") p.step_started_at = p.step_started_at.replace("Z", "+00:00").replace(/\.\d+/, (m) => m.padEnd(7, "0"));
+      return orig(id, p);
+    };
+    const r = await pipeline.runStep("s1");
+    expect(r).toMatchObject({ ran: "edit", status: "translating" });
+    expect((await repo.getStory("s1"))!.text_ru).toBeTruthy();
+  });
+
   it("идущий шаг (аренда) второй вызов не дублирует: running, ИИ не вызывается", async () => {
     const { pipeline, repo, seen, clock } = setup();
     repo.add(story({ step_started_at: new Date(clock.t - 10_000).toISOString() }));
