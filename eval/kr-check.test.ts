@@ -1,0 +1,140 @@
+import { readFileSync } from "node:fs";
+import { describe, expect, it } from "vitest";
+import { QUESTIONS } from "@/content/questions/bank";
+import { DEMO_STORIES } from "@/lib/book/pdf/demo";
+import { createRouter } from "@/lib/ai/router";
+import { MemoryStore } from "@/lib/ai/store";
+import {
+  backTranslate,
+  checkItem,
+  chooseBackMode,
+  isHapsyo,
+  parseGlossary,
+  pickForHuman,
+  renderKrReport,
+  variantRegex,
+  yearsKo,
+  yearsRu,
+  type KrItem,
+} from "./kr-check";
+
+const glossary = parseGlossary(readFileSync("docs/glossary.md", "utf8"));
+const chapter = (text_ru: string, text_ko: string, extra: Partial<KrItem> = {}): KrItem => ({
+  id: "c1",
+  kind: "chapter",
+  label: "Глава 1",
+  text_ru,
+  text_ko,
+  ...extra,
+});
+const rules = (i: KrItem) => checkItem(i, glossary).map((f) => f.rule);
+
+describe("глоссарий docs/glossary.md", () => {
+  it("≥ 30 слов корё мар и реалий, топонимы и фамилии из критериев V2", () => {
+    expect(glossary.filter((g) => g.section === "koryo" || g.section === "realia").length).toBeGreaterThanOrEqual(30);
+    const ko = (ru: string) => glossary.find((g) => g.ru.some((v) => variantRegex(v, true).test(ru)))?.ko;
+    expect(ko("Уштобе")).toContain("우슈토베");
+    expect(ko("Кзыл-Орда")).toContain("크질오르다");
+    expect(ko("Алматы")).toContain("알마티");
+    expect(ko("Ташкент")).toContain("타슈켄트");
+    for (const w of ["кукси", "чимчи", "пигоди", "хансик", "асянди"]) expect(ko(w), w).toBeTruthy();
+  });
+
+  it("скобки в корейской колонке — пояснение, `*` — начало слова, регистр у топонимов", () => {
+    expect(glossary.find((g) => g.ru.includes("хансик"))?.ko).toEqual(["한식"]);
+    expect(variantRegex("колхоз*", false).test("работал в колхозе")).toBe(true);
+    expect(variantRegex("пап", false).test("мой папа")).toBe(false);
+    expect(variantRegex("Дальнем", true).test("в дальнем углу")).toBe(false);
+  });
+});
+
+describe("правила без ИИ", () => {
+  it("корё мар без эквивалента, топоним — major", () => {
+    expect(rules(chapter("Мама варила кукси.", "어머니가 라면을 끓이셨다."))).toContain("glossary:koryo");
+    const f = checkItem(chapter("Я родился в Уштобе.", "나는 우스토베에서 태어났다."), glossary);
+    expect(f.find((x) => x.rule === "glossary:place")?.severity).toBe("major");
+  });
+
+  it("колхоз при первом упоминании — с пояснением", () => {
+    expect(rules(chapter("Отец работал в колхозе.", "아버지는 콜호스에서 일하셨다."))).toContain("glossary:first-mention");
+    expect(rules(chapter("Отец работал в колхозе.", "아버지는 콜호스(집단농장)에서 일하셨다."))).not.toContain("glossary:first-mention");
+  });
+
+  it("годы цифрами и словами", () => {
+    expect([...yearsRu("В тридцать седьмом году, а в шестьдесят третьем — свадьба; в 1972 — орден")].sort()).toEqual([1937, 1963, 1972]);
+    expect([...yearsRu("в сороковом году, сорок лет на полях, двадцать пять человек")]).toEqual([1940]);
+    expect([...yearsKo("1963년에 만났다")]).toEqual([1963]);
+    expect(rules(chapter("В шестьдесят третьем мы поженились.", "1964년에 결혼했다."))).toEqual(["year", "year"]);
+  });
+
+  it("стиль: 습니다체, 그녀, без -시- о старших, кириллица, цитата", () => {
+    expect(isHapsyo("살았습니다")).toBe(true);
+    expect(isHapsyo("아닙니다")).toBe(true);
+    expect(isHapsyo("것이 아니다")).toBe(false);
+    expect(rules(chapter("Мы жили бедно.", "우리는 가난하게 살았습니다."))).toContain("style:hapsyo");
+    expect(rules(chapter("Я увидел её.", "그녀를 보았다."))).toContain("style:geunyeo");
+    expect(rules(chapter("Отец работал.", "아버지는 일했다."))).toContain("style:honorific");
+    expect(rules(chapter("Отец работал.", "아버지는 일하셨다."))).not.toContain("style:honorific");
+    expect(rules(chapter("Был колхоз.", "콜호스 Колхоз"))).toContain("cyrillic");
+    expect(rules(chapter("Да.", "그랬다.", { quote_ko: "아니었다." }))).toContain("quote");
+  });
+
+  it("прямая речь в кавычках не считается смешением стилей", () => {
+    expect(rules(chapter("Мама сказала: учись.", "\"공부해요.\" 어머니는 그렇게 말씀하셨다. 나는 공부했다."))).not.toContain("style:mixed");
+    expect(rules(chapter("Я жил. Внуки, слушайте.", "나는 살았다. 손주들아, 들어 봐요."))).toContain("style:mixed");
+  });
+
+  it("вопросы: 해요체 и почтительное -시-", () => {
+    const q = (ko: string): KrItem => ({ id: "q", kind: "question", label: "Вопросы", text_ru: "Вопрос?", text_ko: ko });
+    expect(rules(q("어디에서 태어나셨어요?"))).toEqual([]);
+    expect(rules(q("어디에서 태어났어?"))).toEqual(["style:haeyo", "style:honorific"]);
+    expect(rules(q("가장 자랑스러운 것은 무엇이에요?"))).toContain("style:natural");
+  });
+});
+
+describe("демо-книга и банк вопросов (регрессия)", () => {
+  it("демо-главы проходят правила без флажков", () => {
+    const flags = DEMO_STORIES.flatMap((s, i) =>
+      checkItem({ id: `demo-${i + 1}`, kind: "chapter", label: s.title ?? "", text_ru: s.text_ru!, text_ko: s.text_ko!, quote_ko: s.quote_ko ?? undefined }, glossary),
+    );
+    expect(flags).toEqual([]);
+  });
+
+  it("каждый вопрос банка — 해요체 с -시-", () => {
+    const flags = QUESTIONS.flatMap((q) => checkItem({ id: q.id, kind: "question", label: q.id, text_ru: q.ru, text_ko: q.ko }, glossary));
+    expect(flags).toEqual([]);
+  });
+});
+
+describe("обратный перевод и итог", () => {
+  it("провайдер: OpenAI, если есть ключ (перевод на Gemini), иначе Gemini Flash, иначе mock", () => {
+    expect(chooseBackMode({ OPENAI_API_KEY: "k", GEMINI_API_KEY: "g" })).toBe("openai");
+    expect(chooseBackMode({ GEMINI_API_KEY: "g" })).toBe("gemini");
+    expect(chooseBackMode({})).toBe("mock");
+    expect(chooseBackMode({ OPENAI_API_KEY: "k", KR_CHECK_PROVIDER: "gemini" })).toBe("gemini");
+  });
+
+  it("mock: один вызов, флажок ИИ при отсутствии хангыля", async () => {
+    const ai = createRouter({ store: new MemoryStore(), mode: () => "mock" });
+    const r = await backTranslate(ai, [chapter("Текст", "텍스트"), { ...chapter("Текст", "text"), id: "c2" }]);
+    expect(r.provider).toBe("mock");
+    expect(r.meaning).toEqual({ c1: 5, c2: 1 });
+    expect(r.flags.map((f) => [f.id, f.source, f.severity])).toEqual([["c2", "ai", "major"]]);
+  });
+
+  it("человеку — 1–2 главы с самыми весомыми флажками, без дублей; отчёт с маркером", () => {
+    const items = [chapter("a", "가"), { ...chapter("b", "나"), id: "c2", label: "Глава 2" }, { ...chapter("c", "다"), id: "c3", label: "Глава 3" }];
+    const f = (id: string, severity: "minor" | "major", ko: string) => ({ id, source: "rule" as const, rule: "x", ko, issue: "i", severity });
+    const flags = [f("c1", "minor", "가가"), f("c2", "major", "나나"), f("c2", "major", "나나"), f("c3", "minor", "다다"), f("c3", "minor", "라라")];
+    const picked = pickForHuman(items, flags);
+    expect(picked.map((p) => p.item.id)).toEqual(["c2", "c3"]);
+    expect(picked[0]!.flags).toHaveLength(1);
+    const md = renderKrReport(
+      { date: "2026-11-22", mode: "mock", provider: "mock", model: "mock", items, flags, meaning: {}, glossary: { total: 1, confirmed: 0 } },
+      { marker: true },
+    );
+    expect(md.startsWith("<!-- kniga-kr -->")).toBe(true);
+    expect(md).toContain("не показательно");
+    expect(md).toContain("**Глава 2**");
+  });
+});
