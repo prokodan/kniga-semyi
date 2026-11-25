@@ -14,6 +14,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import {
   DEMO_BOOK_TITLE,
+  DEMO_ENTITIES,
   DEMO_FAMILY,
   DEMO_FAMILY_IDS,
   DEMO_KIOSK_FAMILY,
@@ -53,6 +54,7 @@ export interface SeedReport {
   ms: number;
   chapters: number;
   followups: number;
+  entities: number;
   voices: { found: number; total: number; missing: string[] };
   tale: { pages: number; source: "golden" | "ai" | "bundled" | "mixed" };
   book: { status: string; pages: number | null; error: string | null };
@@ -207,6 +209,23 @@ export async function seedDemo(opts: SeedOptions): Promise<SeedReport> {
   must("главы", await db.from("stories").insert(mains));
   must("уточнения", await db.from("stories").insert(children));
 
+  // 3б. Словарь имён (#125): как после сборки глав (#102), source=auto. Сброс пересоздаёт — каскад от семьи.
+  const storyIdByKey = new Map(DEMO_STORY_SEEDS.map((s) => [s.key, s.id]));
+  must(
+    "словарь имён",
+    await db.from("family_entities").insert(
+      DEMO_ENTITIES.map((e) => ({
+        family_id: DEMO_FAMILY.id,
+        kind: e.kind,
+        name_ru: e.name_ru,
+        name_ko: e.name_ko,
+        description: e.description,
+        story_ids: e.stories.map((k) => storyIdByKey.get(k)!),
+        source: "auto",
+      })),
+    ),
+  );
+
   // 4. Киоск АКНЦ → кабинет центра
   must("семья киоска", await db.from("families").insert({ ...DEMO_KIOSK_FAMILY, created_at: at(200) }));
   must(
@@ -301,13 +320,14 @@ export async function seedDemo(opts: SeedOptions): Promise<SeedReport> {
     ms: Date.now() - started,
     chapters: mains.length,
     followups: children.length,
+    entities: DEMO_ENTITIES.length,
     voices: { found: wanted.length - missing.length, total: wanted.length, missing },
     tale: { pages: DEMO_TALE.pages.length, source: sources.size === 1 ? ([...sources][0] as SeedReport["tale"]["source"]) : "mixed" },
     book,
     kiosk: { stories: 1 },
   };
   log(
-    `демо готово за ${(report.ms / 1000).toFixed(1)} с: глав ${report.chapters}, уточнений ${report.followups}, голосов ${report.voices.found}/${report.voices.total}, ` +
+    `демо готово за ${(report.ms / 1000).toFixed(1)} с: глав ${report.chapters}, уточнений ${report.followups}, словарь ${report.entities}, голосов ${report.voices.found}/${report.voices.total}, ` +
       `сказка ${report.tale.pages} стр. (${report.tale.source}), книга ${book.status}${book.pages ? `, ${book.pages} стр.` : ""}${book.error ? ` — ${book.error}` : ""}`,
   );
   return report;
@@ -329,6 +349,7 @@ export function demoLinks(): DemoLink[] {
     { label: "Запись следующего ответа (интервью)", path: `/record/${t}` },
     { label: `Глава «${first.edit.title}» RU | KR + QR`, path: `/chapter/${first.id}?token=${t}` },
     { label: "Голос по QR (без токена)", path: listenPath(first.id) },
+    { label: "Словарь имён семьи", path: `/f/${t}/names` },
     { label: "Книга — экран", path: `/book/${t}` },
     { label: "Книга — PDF", path: `/api/books/${DEMO_FAMILY.id}/pdf?token=${t}` },
     { label: "Сказка для внуков", path: `/extras/${t}/tale` },
@@ -362,7 +383,7 @@ async function main() {
 
   const lines = [
     `### Демо-семья пересоздана за ${(report.ms / 1000).toFixed(1)} с`,
-    `- глав RU | KR: ${report.chapters}, записей-уточнений: ${report.followups}, история киоска: ${report.kiosk.stories}`,
+    `- глав RU | KR: ${report.chapters}, записей-уточнений: ${report.followups}, словарь имён: ${report.entities}, история киоска: ${report.kiosk.stories}`,
     `- голос: ${report.voices.found} из ${report.voices.total}${report.voices.missing.length ? ` (нет: ${report.voices.missing.join(", ")} — загрузить в /admin)` : ""}`,
     `- сказка: ${report.tale.pages} стр., картинки — ${report.tale.source}`,
     `- книга: ${report.book.status}${report.book.pages ? `, ${report.book.pages} стр.` : ""}${report.book.error ? ` — ${report.book.error}` : ""}`,
