@@ -1,7 +1,8 @@
 // Роутер ИИ: «сначала бесплатное, потом платное».
 // Для шага берёт упорядоченный список провайдеров (ai_routes) и выбирает первый подходящий:
 //   выключен / нет ключа / не умеет шаг  → пропуск
-//   «остывает» после 429 или таймаута     → пропуск (cooldown_minutes, по умолчанию 10)
+//   «остывает» после 429 или таймаута     → пропуск (cooldown_minutes, по умолчанию 10); #161 #162: если из-за
+//                                          остывания не осталось ни одного вызова — всё же пробуем остывшие по порядку
 //   квота за сутки ≥ daily_limit × threshold → пропуск
 //   платный и бюджет дня/месяца исчерпан   → пропуск
 //   429 / таймаут при вызове               → запись в ai_usage (запускает cooldown) → следующий
@@ -105,7 +106,7 @@ export function createRouter(deps: RouterDeps) {
   }
 
   /** Почему кандидат не подходит прямо сейчас (null — подходит). */
-  async function skipReason(entry: RouteEntry, step: AiStep): Promise<string | null> {
+  async function skipReason(entry: RouteEntry, step: AiStep, ignoreCooldown = false): Promise<string | null> {
     const impl = providers[entry.provider];
     if (!impl) return "неизвестный провайдер";
     if (!impl.isConfigured()) return "нет ключа";
@@ -114,7 +115,7 @@ export function createRouter(deps: RouterDeps) {
     if (!settings.enabled) return "выключен в админке";
 
     const t = now();
-    if (settings.cooldown_minutes > 0) {
+    if (settings.cooldown_minutes > 0 && !ignoreCooldown) {
       const since = new Date(t.getTime() - settings.cooldown_minutes * 60_000);
       if (await store.hadFailureSince(entry.provider, entry.model, since)) return "остывает после 429/таймаута";
     }
@@ -157,20 +158,16 @@ export function createRouter(deps: RouterDeps) {
     }
 
     const { entries, timeoutMs } = await candidates(step);
-    for (const [i, entry] of entries.entries()) {
-      const reason = await skipReason(entry, step);
-      if (reason) {
-        attempts.push({ provider: entry.provider, model: entry.model, reason });
-        continue;
-      }
+    /** Одна попытка: результат, null — не вышло (идём дальше), "stop" — время шага кончилось. */
+    async function attempt(entry: RouteEntry, isLast: boolean): Promise<RunResult<S> | null | "stop"> {
       let callTimeout = timeoutMs;
       if (opts.deadline !== undefined) {
         const left = opts.deadline - now().getTime() - 1_000;
         if (left < MIN_ATTEMPT_MS) {
           attempts.push({ provider: entry.provider, model: entry.model, reason: "не хватило времени шага" });
-          break;
+          return "stop";
         }
-        callTimeout = i === entries.length - 1 ? left : Math.min(timeoutMs, left);
+        callTimeout = isLast ? left : Math.min(timeoutMs, left);
       }
       const impl = providers[entry.provider]!;
       const settings = await store.getProviderSettings(entry.provider);
@@ -214,9 +211,31 @@ export function createRouter(deps: RouterDeps) {
           err.kind === "rate_limited" ? "rate_limited" : fullTimeout ? "timeout" : "error";
         await record(step, entry, status, { error: err.message.slice(0, 500), latency_ms: Date.now() - started }, opts.storyId);
         attempts.push({ provider: entry.provider, model: entry.model, reason: `${status}: ${err.message.slice(0, 120)}` });
+        return null;
       } finally {
         clearTimeout(timer);
       }
+    }
+
+    // Первый проход — как всегда: остывшие модели пропускаем.
+    const allowed: RouteEntry[] = [];
+    const cooled: RouteEntry[] = [];
+    for (const entry of entries) {
+      const reason = await skipReason(entry, step);
+      if (!reason) allowed.push(entry);
+      else {
+        attempts.push({ provider: entry.provider, model: entry.model, reason });
+        // Остывание (после 429 / таймаута на любом шаге) — предпочтение, а не запрет: кандидат на последний шанс.
+        if (reason.startsWith("остывает") && !(await skipReason(entry, step, true))) cooled.push(entry);
+      }
+    }
+    // #161 #162: все модели шага «остывают» (например, после перегрузки 25.11 — сказка и редактура падали без единого
+    // вызова, глава висела «готовится»). Тогда пробуем остывшие по порядку маршрута: лучше попытка, чем пустая очередь.
+    const order = allowed.length > 0 ? allowed : cooled;
+    for (const [i, entry] of order.entries()) {
+      const res = await attempt(entry, i === order.length - 1);
+      if (res === "stop") break;
+      if (res) return res;
     }
     throw new AiUnavailableError(step, attempts);
   }

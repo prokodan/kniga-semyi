@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { DEFAULT_ROUTES } from "./config";
+import { DEFAULT_PROVIDERS, DEFAULT_ROUTES } from "./config";
 import { createRouter } from "./router";
 import { MemoryStore } from "./store";
 import { AiUnavailableError, ProviderError, type AiProvider, type AiStep } from "./types";
@@ -158,5 +158,50 @@ describe("ai router: дедлайн шага (пункт 1)", () => {
     expect(second.provider).toBe("gemini");
     expect(second.model).toBe(DEFAULT_ROUTES.translate.providers[0]!.model);
     expect(store.usage.some((u) => u.status === "rate_limited")).toBe(false);
+  });
+});
+
+describe("ai router: все модели остывают (#161 #162)", () => {
+  function failOnce(name: "gemini" | "openai") {
+    const failed = new Set<string>();
+    return fakeProvider(name, (model) => {
+      if (!failed.has(model)) {
+        failed.add(model);
+        throw new ProviderError("429", "rate_limited", name);
+      }
+      return okOutput;
+    });
+  }
+
+  it("если остыли все модели шага, всё же пробует их по порядку маршрута, а не сдаётся без вызова", async () => {
+    const gemini = failOnce("gemini");
+    const openai = failOnce("openai");
+    const { router } = setup({ gemini, openai });
+    await expect(router.runWithMeta("translate", translateInput)).rejects.toBeInstanceOf(AiUnavailableError);
+    // все три модели получили 429 и «остывают» — раньше следующий вызов падал сразу, без единой попытки
+    const res = await router.runWithMeta("translate", { ...translateInput, title: "Другое" });
+    expect(res.provider).toBe("gemini");
+    expect(res.model).toBe(DEFAULT_ROUTES.translate.providers[0]!.model);
+  });
+
+  it("пока есть не остывшая модель, остывшие не трогает", async () => {
+    const gemini = failOnce("gemini");
+    const { router } = setup({ gemini });
+    await router.runWithMeta("translate", translateInput); // Flash-Lite и Flash — 429, ответил OpenAI
+    const geminiCalls = (gemini.call as ReturnType<typeof vi.fn>).mock.calls.length;
+    const res = await router.runWithMeta("translate", { ...translateInput, title: "Другое" });
+    expect(res.provider).toBe("openai");
+    expect((gemini.call as ReturnType<typeof vi.fn>).mock.calls.length).toBe(geminiCalls);
+  });
+
+  it("бюджет платного провайдера остаётся жёстким и в последнем шансе", async () => {
+    const gemini = failOnce("gemini");
+    const openai = failOnce("openai");
+    const { router, store } = setup({ gemini, openai });
+    await expect(router.runWithMeta("translate", translateInput)).rejects.toBeInstanceOf(AiUnavailableError);
+    store.providers.openai = { ...DEFAULT_PROVIDERS.openai, daily_budget_usd: 0 };
+    const res = await router.runWithMeta("translate", { ...translateInput, title: "Другое" });
+    expect(res.provider).toBe("gemini");
+    expect((openai.call as ReturnType<typeof vi.fn>).mock.calls.length).toBe(1); // только первая попытка с 429, в последнем шансе OpenAI не вызывался
   });
 });
