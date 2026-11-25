@@ -148,6 +148,9 @@ describe("evaluateRun", () => {
     const router = fakeRouter({ translate: () => ({ text_ko: "우리 아버지 Пётр는 엄격하셨다.", title_ko: "아버지", quote_ko: "" }) });
     const { inst, sim } = await simulate(router);
     const m = await evaluateRun({ sim, ai: inst.ai, models: inst.models, mock: true, glossary });
+    // #197: sim, как конвейер, чинит кириллицу после translate (fixCyrillic) — «Пётр» в KR не остаётся
+    expect(m.krRules?.cyrillic).toBe(0);
+    expect(sim.chapters.some((c) => (c.text_ko ?? "").includes("표트르"))).toBe(true);
     const after = summarize([m], { mode: "mock", label: "PR" });
     expect(after.totals.krCyrillic).toBe(m.krRules?.cyrillic ?? 0);
     const before = summarize([{ ...m, krRules: undefined }], { mode: "mock", label: "main" });

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { fixCyrillic, hangulizeRu, hasCyrillic } from "./cyrillic";
+import { abbrKo, fixCyrillic, hangulizeRu, hasCyrillic, replaceCyrillic } from "./cyrillic";
 
 describe("#163 транслитерация русских слов хангылем", () => {
   it.each([
@@ -42,12 +42,57 @@ describe("#163 кириллица в переводе главы", () => {
     expect(out.text_ko).toBe("에를란이 질을 몰고 이시크쿨에 갔다.");
     expect(out.title_ko).toBe("에를란과 함께");
     expect(hasCyrillic(out.text_ko, out.title_ko, out.quote_ko)).toBe(false);
-    expect(fixed.map((f) => f.how)).toEqual(["dict", "translit", "translit"]);
+    expect(fixed.map((f) => f.how)).toEqual(["dict", "abbr", "translit"]); // ЗИЛ — словарь аббревиатур (#197), по-прежнему 질
   });
 
   it("корейский текст без кириллицы не меняется", () => {
     const ko = { text_ko: "우슈토베에서 태어났다. 1963년.", title_ko: "시작", quote_ko: "고맙습니다" };
     expect(fixCyrillic(ko, []).out).toEqual(ko);
     expect(fixCyrillic(ko, []).fixed).toEqual([]);
+  });
+});
+
+describe("#197 аббревиатуры — по смыслу, не по буквам", () => {
+  const fix = (ko: string) => replaceCyrillic(ko, [], []);
+  it.each([
+    // примеры из issue: было 카자흐 스르의 / 스르 시절
+    ["카자흐 ССР의 수도", "카자흐 소비에트 사회주의 공화국의 수도"],
+    ["СССР 시절", "소련 시절"],
+    ["Казахская ССР에서 태어났다.", "카자흐 소비에트 사회주의 공화국에서 태어났다."],
+    ["Узбекской ССР에서 일했다.", "우즈베크 소비에트 사회주의 공화국에서 일했다."],
+    ["КазССР 우슈토베", "카자흐 소비에트 사회주의 공화국 우슈토베"],
+    ["УзССР", "우즈베크 소비에트 사회주의 공화국"],
+    ["КГБ 사람들", "KGB 사람들"],
+    ["ЗИЛ을 몰았다", "질을 몰았다"],
+    ["ГАИ가 세웠다", "GAI가 세웠다"],
+    // частица под новое слово: модель ставила её под своё «чтение» кириллицы
+    ["СССР를 떠났다", "소련을 떠났다"],
+    ["СССР는 컸다", "소련은 컸다"],
+    ["СССР로 왔다", "소련으로 왔다"],
+    ["Казахская ССР가 생겼다", "카자흐 소비에트 사회주의 공화국이 생겼다"],
+    ["ЗИЛ로 갔다", "질로 갔다"],
+    ["Пётр은 엄격했다", "표트르는 엄격했다"],
+  ])("%s → %s", (ko, want) => {
+    expect(fix(ko)).toBe(want);
+  });
+
+  it("обычные слова и имена — как раньше: транслитерация хангылем", () => {
+    expect(fix("Ерлан이")).toBe("예를란이");
+    expect(abbrKo("Ерлан")).toBeNull();
+    expect(abbrKo("Зил")).toBeNull(); // не заглавными — не аббревиатура
+    expect(abbrKo("Я")).toBeNull(); // одна буква — не аббревиатура
+    expect(abbrKo("ЖЕЛЕЗО")).toBeNull(); // длиннее 5 — слово, не аббревиатура
+  });
+
+  it("в главе: без кириллицы, без «스르», причина — abbr", () => {
+    const { out, fixed } = fixCyrillic(
+      { text_ko: "나는 1950년 Казахская ССР 우슈토베에서 태어났다. СССР 시절이었다.", title_ko: "СССР의 아이", quote_ko: "" },
+      [],
+    );
+    expect(out.text_ko).toBe("나는 1950년 카자흐 소비에트 사회주의 공화국 우슈토베에서 태어났다. 소련 시절이었다.");
+    expect(out.title_ko).toBe("소련의 아이");
+    expect(hasCyrillic(out.text_ko, out.title_ko, out.quote_ko)).toBe(false);
+    expect(out.text_ko + out.title_ko).not.toContain("스르");
+    expect(fixed.every((f) => f.how === "abbr")).toBe(true);
   });
 });
