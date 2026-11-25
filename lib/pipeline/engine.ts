@@ -16,6 +16,7 @@ import { AiUnavailableError } from "@/lib/ai/types";
 import { getQuestionBank, type QuestionBank } from "@/lib/interview/bank";
 import type { Story, StoryStatus } from "@/lib/types";
 import type { PipelinePatch, PipelineRepo } from "./repo";
+import { checkDeferred, needsDeferredCheck } from "./deferred";
 import { entitiesFromChapter } from "./entities";
 import { attachChildren, represented } from "./sources";
 import { PIPELINE_STEPS, StepError, StepSkip, type PipelineStep, type StepFn } from "./steps/context";
@@ -167,6 +168,22 @@ export function createPipeline(deps: PipelineDeps) {
   async function runStep(storyId: string, opts: { step?: PipelineStep; token?: string; restart?: boolean } = {}): Promise<StepResult> {
     let story = await load(storyId, opts.token);
     if (story.status === "skipped") return result(story, null); // ответ-отказ: не глава, ничего не делаем
+    // #140: ответ засчитали до расшифровки (#107) — теперь расшифровка есть: проверить полноту отдельным вызовом
+    // (свои 48 с), глава следующим. Сбой проверки — как до #140: просто собираем главу.
+    if (needsDeferredCheck(story)) {
+      let deferred = null;
+      try {
+        deferred = await checkDeferred(story, { ai, bank, deadline: now() + STEP_BUDGET_MS, now });
+      } catch (e) {
+        console.warn(`[pipeline] полнота ${story.id.slice(0, 8)}:`, (e as Error).message);
+      }
+      try {
+        story = await save(story, { deferred_followup: deferred });
+        return result(story, null);
+      } catch (e) {
+        console.warn(`[pipeline] deferred_followup ${story.id.slice(0, 8)}:`, (e as Error).message);
+      }
+    }
     const step = nextStep(story);
     if (opts.step && opts.step !== step) {
       if (step === null || PIPELINE_STEPS.indexOf(opts.step) < PIPELINE_STEPS.indexOf(step)) {
@@ -280,7 +297,7 @@ export function createPipeline(deps: PipelineDeps) {
   /** Прогнать все шаги подряд (тесты, симулятор, скрипты). В HTTP — по одному шагу на вызов. */
   async function processStory(storyId: string, opts: { token?: string; maxSteps?: number } = {}): Promise<StepResult> {
     let last: StepResult | null = null;
-    for (let i = 0; i < (opts.maxSteps ?? PIPELINE_STEPS.length + 1); i++) {
+    for (let i = 0; i < (opts.maxSteps ?? PIPELINE_STEPS.length + 2); i++) {
       last = await runStep(storyId, { token: opts.token });
       if (last.done || last.queued || last.running || last.waiting || last.status === "failed" || last.next === null) break;
     }

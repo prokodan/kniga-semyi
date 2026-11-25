@@ -7,7 +7,7 @@ import type { Session, SessionMode, Story } from "@/lib/types";
 import type { SessionState } from "./policy";
 
 export type StoryDraft = Pick<Story, "family_id" | "storyteller_id" | "session_id" | "question_id" | "block" | "transcript">;
-export type StoryPatch = Partial<Pick<Story, "question_id" | "block" | "followups" | "transcript" | "parent_story_id" | "status">>;
+export type StoryPatch = Partial<Pick<Story, "question_id" | "block" | "followups" | "transcript" | "parent_story_id" | "status" | "deferred_followup">>;
 
 export interface InterviewRepo {
   createSession(s: { family_id: string; storyteller_id: string; mode: SessionMode; volunteer_id: string | null; state: SessionState }): Promise<Session>;
@@ -28,6 +28,24 @@ export interface InterviewRepo {
   nameHints?(storytellerId: string): Promise<string[]>;
   /** #99: прошлые ответы рассказчика (основной ответ + уточнения, по времени) — не спрашивать уже рассказанное */
   earlierAnswers?(storytellerId: string): Promise<string[]>;
+  /**
+   * #140: уточнения, отложенные конвейером (stories.deferred_followup.status = "ask") по основным рассказам
+   * рассказчика, от старых к новым. Нет колонки / ошибка — пусто (интервью идёт как до #140).
+   */
+  deferredFollowups?(storytellerId: string): Promise<DeferredAsk[]>;
+}
+
+export interface DeferredAsk {
+  storyId: string;
+  questionId: string;
+  text: string;
+}
+
+function asDeferred(s: Pick<Story, "id" | "question_id" | "deferred_followup" | "parent_story_id" | "status">): DeferredAsk | null {
+  const d = s.deferred_followup;
+  if (!d || d.status !== "ask" || !d.text?.trim() || s.parent_story_id || s.status === "skipped") return null;
+  const questionId = d.question_id || s.question_id;
+  return questionId ? { storyId: s.id, questionId, text: d.text.trim() } : null;
 }
 
 /** Ответ истории одной строкой: расшифровка + ответы на уточнения. */
@@ -125,6 +143,12 @@ export class MemoryInterviewRepo implements InterviewRepo {
       .filter((s) => s.storyteller_id === storytellerId && s.status !== "skipped" && !s.parent_story_id && s.question_id)
       .map((s) => s.question_id!);
   }
+  async deferredFollowups(storytellerId: string) {
+    return [...this.stories.values()]
+      .filter((s) => s.storyteller_id === storytellerId)
+      .map(asDeferred)
+      .filter((d): d is DeferredAsk => d !== null);
+  }
   async earlierAnswers(storytellerId: string) {
     return [...this.stories.values()]
       .filter((s) => s.storyteller_id === storytellerId && s.status !== "skipped" && !s.parent_story_id)
@@ -212,6 +236,17 @@ export class SupabaseInterviewRepo implements InterviewRepo {
       .not("question_id", "is", null);
     if (error) fail("отвеченные вопросы", error);
     return ((data ?? []) as { question_id: string }[]).map((r) => r.question_id);
+  }
+  async deferredFollowups(storytellerId: string) {
+    const { data, error } = await this.db
+      .from("stories")
+      .select("id, question_id, deferred_followup, parent_story_id, status, created_at")
+      .eq("storyteller_id", storytellerId)
+      .not("deferred_followup", "is", null)
+      .order("created_at", { ascending: true })
+      .limit(20);
+    if (error) fail("отложенные уточнения", error);
+    return ((data ?? []) as Story[]).map(asDeferred).filter((d): d is DeferredAsk => d !== null);
   }
   async earlierAnswers(storytellerId: string) {
     const { data, error } = await this.db
