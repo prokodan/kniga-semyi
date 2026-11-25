@@ -132,7 +132,20 @@ export const outputSchemas = {
     quote: z.string(),
     facts: z.array(fact).default([]),
   }),
-  translate: z.object({ text_ko: z.string().min(1), title_ko: z.string(), quote_ko: z.string() }),
+  translate: z.object({
+    text_ko: z.string().min(1),
+    title_ko: z.string(),
+    quote_ko: z.string(),
+    /**
+     * #121: как переводчик написал людей и места главы (ru — как в тексте, ko — как в text_ko); по ним словарь семьи
+     * держит одно написание во всей книге. Необязательно; кривой список не роняет перевод (catch → нет списка).
+     */
+    names: z
+      .array(z.object({ ru: z.string().max(80), ko: z.string().max(80) }))
+      .max(80)
+      .optional()
+      .catch(undefined),
+  }),
   completeness: z.object({
     covered: z.array(z.string()),
     missing: z.array(z.string()),

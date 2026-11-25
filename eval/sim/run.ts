@@ -7,7 +7,9 @@ import type { QuestionBank } from "@/lib/interview/bank";
 import { createInterview, type AnswerResult } from "@/lib/interview/engine";
 import type { SessionState } from "@/lib/interview/policy";
 import { MemoryInterviewRepo } from "@/lib/interview/repo";
-import type { LifeBlock, Story } from "@/lib/types";
+import { entitiesFromChapter, mergeEntities, namesForTranslate } from "@/lib/pipeline/entities";
+import { applySpellings, learnSpellings, requiredSpellings, type NamePair } from "@/lib/pipeline/names";
+import type { FamilyEntity, LifeBlock, Story } from "@/lib/types";
 import { SimBudgetError, withBudget } from "./budget";
 import { checkFacts, type FactCheck } from "./facts";
 import type { Persona } from "./persona";
@@ -47,6 +49,8 @@ export interface Chapter {
   title_ko?: string;
   text_ko?: string;
   quote_ko?: string;
+  /** #121: как переводчик написал имена главы (после приведения к словарю) */
+  names?: NamePair[];
   error?: string;
 }
 
@@ -66,6 +70,8 @@ export interface SimResult {
   /** Почему остановились раньше конца банка (null — интервью завершено агентом) */
   stoppedBy: null | "questions" | "budget" | "ai_unavailable";
   stopDetail?: string;
+  /** #121: словарь семьи после прогона — люди и места с корейским написанием (как в конвейере) */
+  names?: NamePair[];
 }
 
 export interface SimOptions {
@@ -188,6 +194,7 @@ export async function runSimulation(opts: SimOptions): Promise<SimResult> {
 
   // Главы: каждая основная история → edit → translate. Ответы на уточнения уже в followups.
   const chapters: Chapter[] = [];
+  const entities: FamilyEntity[] = [];
   for (const story of mainStories()) {
     const transcript = combined(story);
     const ch: Chapter = { storyId: story.id, questionId: story.question_id, block: story.block, transcript };
@@ -202,8 +209,16 @@ export async function runSimulation(opts: SimOptions): Promise<SimResult> {
         block: story.block,
       });
       Object.assign(ch, { title: edited.title, text_ru: edited.text_ru, quote: edited.quote });
-      const tr = await budget.ai.run("translate", { text_ru: edited.text_ru, title: edited.title, quote: edited.quote });
-      Object.assign(ch, { title_ko: tr.title_ko, text_ko: tr.text_ko, quote_ko: tr.quote_ko });
+      // Словарь семьи — как в конвейере (#102, #121): после edit — люди и места главы, в translate — names,
+      // после — приведение к словарю и запоминание написаний новых имён.
+      const { inserts, updates } = mergeEntities(entities, entitiesFromChapter(edited), "sim", story.id);
+      for (const u of updates) Object.assign(entities.find((e) => e.id === u.id)!, u.patch);
+      for (const i of inserts) entities.push({ ...i, id: `ent-${entities.length + 1}`, updated_at: now().toISOString() });
+      const names = namesForTranslate(entities);
+      const raw = await budget.ai.run("translate", { text_ru: edited.text_ru, title: edited.title, quote: edited.quote, ...(names.length ? { names } : {}) });
+      const tr = applySpellings(raw, requiredSpellings(entities)).out;
+      for (const l of learnSpellings(entities, raw.names, story.id)) Object.assign(entities.find((e) => e.id === l.id)!, { name_ko: l.name_ko });
+      Object.assign(ch, { title_ko: tr.title_ko, text_ko: tr.text_ko, quote_ko: tr.quote_ko, names: tr.names });
     } catch (e) {
       if (!(e instanceof AiUnavailableError || e instanceof SimBudgetError)) throw e;
       ch.error = e.message;
@@ -226,5 +241,6 @@ export async function runSimulation(opts: SimOptions): Promise<SimResult> {
     aiCalls: { used: budget.used(), limit: budget.limit, byStep: budget.byStep() },
     stoppedBy,
     stopDetail,
+    names: requiredSpellings(entities),
   };
 }
