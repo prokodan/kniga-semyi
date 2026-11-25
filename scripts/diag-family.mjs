@@ -78,7 +78,8 @@ for (const fam of families) {
     calls.set(u.story_id, m);
   }
 
-  log(`## Семья ${short(fam.id)} · создана ${hhmm(fam.created_at)} · историй ${stories.length} · сессий ${sessions.length}`);
+  const books = await rest(`books?select=status,built_at,page_count&family_id=eq.${fam.id}&order=created_at.desc&limit=3`);
+  log(`## Семья ${short(fam.id)} · создана ${hhmm(fam.created_at)} · историй ${stories.length} · сессий ${sessions.length} · книга: ${books.map((b) => `${b.status}${b.built_at ? " " + hhmm(b.built_at) : ""}${b.page_count ? ", " + b.page_count + " с." : ""}`).join("; ") || "нет"}`);
   log();
 
   // Источник главы: основной ответ + ответы на уточнения (как editSource)

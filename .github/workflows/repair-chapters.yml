@@ -1,0 +1,37 @@
+name: repair-chapters
+
+# #98: пересборка глав, пострадавших до исправления «один ответ → одна глава» (scripts/repair-chapters.ts):
+# failed после kick-stuck → перезапуск; глава без своего уточнения или с повтором другой главы → пересборка с edit.
+# Только вручную. По умолчанию dry run — показывает план. Семьи — короткие id из Actions → diag (families).
+on:
+  workflow_dispatch:
+    inputs:
+      families:
+        description: "Короткие id семей через запятую (из diag)"
+        required: true
+      apply:
+        description: "Пересобрать (иначе только показать план)"
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  repair:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    env:
+      NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
+      SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+      PROD_URL: ${{ secrets.PROD_URL }}
+      REPAIR_FAMILIES: ${{ inputs.families }}
+      REPAIR_APPLY: ${{ inputs.apply && '1' || '0' }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npx tsx scripts/repair-chapters.ts

@@ -9,7 +9,7 @@ import type { Story } from "@/lib/types";
 export type PipelinePatch = Partial<
   Pick<
     Story,
-    "transcript" | "text_ru" | "title" | "quote" | "facts" | "text_ko" | "title_ko" | "quote_ko" | "status" | "error" | "duration_sec" | "kick_attempts" | "step_started_at"
+    "transcript" | "followups" | "text_ru" | "title" | "quote" | "facts" | "text_ko" | "title_ko" | "quote_ko" | "status" | "error" | "duration_sec" | "kick_attempts" | "step_started_at"
   >
 >;
 
@@ -33,6 +33,15 @@ export interface PipelineRepo {
   interviewHold?(story: Story): Promise<boolean>;
   /** Имена и места для расшифровки и редактуры (пункт 5). Нет реализации — без подсказок. */
   nameHints?(story: Story): Promise<string[]>;
+  /** #98: записи-уточнения этой истории (parent_story_id = id). Нет реализации — только то, что приклеило интервью. */
+  children?(story: Story): Promise<Pick<Story, "id" | "transcript" | "status" | "created_at">[]>;
+  /** #98: более ранние основные истории того же рассказчика (не пропущенные) — чтобы не повторять рассказ в двух главах. */
+  earlier?(story: Story): Promise<Pick<Story, "id" | "transcript" | "followups" | "created_at">[]>;
+}
+
+/** Более ранние основные истории рассказчика: не уточнения, не пропуски, создана раньше. */
+export function isEarlier(s: Pick<Story, "id" | "storyteller_id" | "parent_story_id" | "status" | "created_at">, story: Story): boolean {
+  return s.id !== story.id && s.storyteller_id === story.storyteller_id && !s.parent_story_id && s.status !== "skipped" && s.created_at < story.created_at;
 }
 
 /** Сессия ещё на вопросе этой истории: не завершена, текущий вопрос тот же и он не закрыт. */
@@ -108,6 +117,12 @@ export class MemoryPipelineRepo implements PipelineRepo {
   async nameHints(story: Story) {
     return nameHints({ storytellerName: this.names.get(story.storyteller_id) });
   }
+  async children(story: Story) {
+    return [...this.stories.values()].filter((s) => s.parent_story_id === story.id).map((s) => structuredClone(s));
+  }
+  async earlier(story: Story) {
+    return [...this.stories.values()].filter((s) => isEarlier(s, story)).map((s) => structuredClone(s));
+  }
   async interviewHold(story: Story) {
     return story.session_id && this.sessions ? holdsStory(this.sessions.get(story.session_id) ?? null, story) : false;
   }
@@ -167,6 +182,25 @@ export class SupabasePipelineRepo implements PipelineRepo {
     } catch {
       return nameHints({}); // без карточки — хотя бы словарь
     }
+  }
+  async children(story: Story) {
+    const { data, error } = await this.db.from("stories").select("id, transcript, status, created_at").eq("parent_story_id", story.id);
+    if (error) throw new Error(`уточнения истории: ${error.message}`);
+    return (data ?? []) as Pick<Story, "id" | "transcript" | "status" | "created_at">[];
+  }
+  async earlier(story: Story) {
+    const { data, error } = await this.db
+      .from("stories")
+      .select("id, transcript, followups, created_at")
+      .eq("storyteller_id", story.storyteller_id)
+      .is("parent_story_id", null)
+      .neq("status", "skipped")
+      .neq("id", story.id)
+      .lt("created_at", story.created_at)
+      .order("created_at", { ascending: true })
+      .limit(80);
+    if (error) throw new Error(`прошлые истории: ${error.message}`);
+    return (data ?? []) as Pick<Story, "id" | "transcript" | "followups" | "created_at">[];
   }
   async interviewHold(story: Story) {
     if (!story.session_id) return false;
