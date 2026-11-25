@@ -1,0 +1,138 @@
+name: ci
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  ci:
+    name: ci
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      AI_MODE: mock
+      NEXT_TELEMETRY_DISABLED: "1"
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Типы
+        run: npm run typecheck
+      - name: Линтер
+        run: npm run lint
+      - name: Тесты
+        run: npm run test
+      - name: Миграции (PGlite)
+        run: npm run db:check
+      - name: Сборка
+        run: npm run build
+
+      # Сначала событие в бота (I16): он учитывает настройки уведомлений. Не ответил 200 — шлём напрямую, как раньше.
+      - name: Бот — CI упал
+        id: bot
+        if: failure() && (github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository)
+        env:
+          NOTIFY_URL: ${{ secrets.PROD_URL }}
+          NOTIFY_SECRET: ${{ secrets.BOT_NOTIFY_SECRET }}
+          EVENT: ci_failed
+          STATUS: failed
+          TEXT: "${{ github.event_name == 'push' && '🔴 CI упал на main' || format('🟠 CI упал в PR #{0}: {1}', github.event.pull_request.number, github.event.pull_request.title) }}"
+          URL: "${{ github.event_name == 'push' && format('{0}/{1}/actions/runs/{2}', github.server_url, github.repository, github.run_id) || github.event.pull_request.html_url }}"
+        run: |
+          sent=false
+          if [ -n "$NOTIFY_URL" ] && [ -n "$NOTIFY_SECRET" ]; then
+            payload=$(jq -n --arg e "$EVENT" --arg s "$STATUS" --arg t "$TEXT" --arg u "$URL" '{event:$e, status:$s, text:$t, url:$u}')
+            code=$(curl -sS --max-time 15 -o bot.json -w '%{http_code}' -X POST "${NOTIFY_URL%/}/api/telegram/notify" \
+              -H "content-type: application/json" -H "x-bot-notify-secret: $NOTIFY_SECRET" --data "$payload" || true)
+            echo "бот: HTTP $code $(jq -c '{delivered, reason}' bot.json 2>/dev/null || true)"
+            [ "$code" = "200" ] && sent=true
+          fi
+          echo "sent=$sent" >> "$GITHUB_OUTPUT"
+
+      - name: Telegram — CI упал на main
+        if: failure() && github.event_name == 'push' && steps.bot.outputs.sent != 'true'
+        uses: ./.github/actions/telegram
+        with:
+          token: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          chat_id: ${{ secrets.TELEGRAM_CHAT_ID }}
+          text: "🔴 CI упал на main: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+      - name: Telegram — CI упал в PR
+        if: failure() && github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && steps.bot.outputs.sent != 'true'
+        uses: ./.github/actions/telegram
+        with:
+          token: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          chat_id: ${{ secrets.TELEGRAM_CHAT_ID }}
+          text: "🟠 CI упал в PR #${{ github.event.pull_request.number }}: ${{ github.event.pull_request.html_url }}"
+
+  # I13: главные пути в браузере на локальной базе Supabase (Docker на раннере) в AI_MODE=mock.
+  # Отдельный job параллельно с ci — PR ждёт дольше не больше чем на пару минут. Профили: iPhone + iPad (WebKit).
+  e2e:
+    name: e2e
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      AI_MODE: mock
+      CI: "true"
+      NEXT_TELEMETRY_DISABLED: "1"
+      NEXT_PUBLIC_SUPABASE_URL: http://127.0.0.1:54321
+      ADMIN_PIN: "246810"
+      KIOSK_PIN: "1357"
+      LISTEN_SECRET: e2e-only-listen-secret
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/supabase-cli
+      # Поднимаем базу фоном, пока ставятся зависимости и идёт сборка; миграции применяются при старте.
+      - name: Supabase локально (фоном)
+        run: |
+          nohup supabase start -x studio,imgproxy,mailpit,realtime,edge-runtime,logflare,vector,supavisor,postgres-meta \
+            > "$RUNNER_TEMP/supabase.log" 2>&1 &
+          echo $! > "$RUNNER_TEMP/supabase.pid"
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Кэш браузера Playwright
+        id: pw-cache
+        uses: actions/cache@v5
+        with:
+          path: ~/.cache/ms-playwright
+          key: pw-webkit-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
+      - name: WebKit (iPhone / iPad)
+        run: |
+          if [ "${{ steps.pw-cache.outputs.cache-hit }}" = "true" ]; then npx playwright install-deps webkit; else npx playwright install --with-deps webkit; fi
+      - name: Сборка
+        run: npm run build
+      - name: Ждём Supabase
+        run: |
+          pid=$(cat "$RUNNER_TEMP/supabase.pid")
+          for i in $(seq 1 120); do kill -0 "$pid" 2>/dev/null || break; sleep 2; done
+          tail -n 20 "$RUNNER_TEMP/supabase.log"
+          supabase status -o env > "$RUNNER_TEMP/sb.env"
+          set -a; . "$RUNNER_TEMP/sb.env"; set +a
+          key="${SERVICE_ROLE_KEY:-$SECRET_KEY}"
+          [ -n "$key" ] || { echo "::error::supabase start не поднял стек — см. лог выше"; exit 1; }
+          # Ключ локального стека — публичный демо-ключ Supabase CLI, не секрет проекта.
+          echo "SUPABASE_SERVICE_ROLE_KEY=$key" >> "$GITHUB_ENV"
+      - name: E2E — seed:demo → семья (iPhone) · киоск (iPad) · кабинет · админка
+        run: npx playwright test --project=iphone --project=ipad --project=admin
+      - name: Отчёт Playwright (скриншоты и трейсы)
+        if: failure()
+        uses: actions/upload-artifact@v6
+        with:
+          name: playwright-report
+          path: |
+            playwright-report/
+            test-results/
+          retention-days: 7

@@ -1,0 +1,36 @@
+name: kick-stuck
+
+# Подстраховка конвейера глав (scripts/kick-stuck.mjs): перезапускает истории, которые стоят на шаге дольше
+# 5 минут; не больше 3 попыток, потом failed с понятной причиной. Теперь только вручную (с dry run):
+# #171 — по расписанию это делает Supabase pg_cron раз в 5 мин → /api/cron/kick (GitHub cron «*/10» запускался
+# раз в 8–12 ч). Ручной запуск и таймер не мешают друг другу: счётчик попыток берётся с проверкой старого значения.
+on:
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Только показать, что перезапустили бы"
+        type: boolean
+        default: false
+
+concurrency:
+  group: kick-stuck
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  kick:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    env:
+      NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
+      SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+      PROD_URL: ${{ secrets.PROD_URL }}
+      KICK_DRY_RUN: ${{ inputs.dry_run && '1' || '0' }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+      - run: node scripts/kick-stuck.mjs

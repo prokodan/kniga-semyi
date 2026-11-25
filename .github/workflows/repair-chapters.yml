@@ -1,0 +1,51 @@
+name: repair-chapters
+
+# #98: пересборка глав, пострадавших до исправления «один ответ → одна глава» (scripts/repair-chapters.ts):
+# failed после kick-stuck → перезапуск; глава без своего уточнения или с повтором другой главы → пересборка с edit;
+# кириллица в KR (#163) и 해요체 к внукам (#183, платно) → пересборка с translate. Демо-семья не трогается.
+# Предохранители apply: > max_chapters глав или OpenAI за сегодня > $max_openai_usd → только план, job красный.
+# Только вручную. По умолчанию dry run — показывает план. Семьи — короткие id из Actions → diag (families).
+on:
+  workflow_dispatch:
+    inputs:
+      families:
+        description: "Короткие id семей через запятую (из diag) или all — все, кроме демо"
+        required: true
+      reasons:
+        description: "Причины: all | через запятую из failed, edit, cyrillic, grandkids"
+        default: "all"
+      max_chapters:
+        description: "Apply не начнётся, если глав больше"
+        default: "30"
+      max_openai_usd:
+        description: "Apply не начнётся (если есть платные), если OpenAI за сегодня (UTC) потрачено больше, $"
+        default: "1"
+      apply:
+        description: "Пересобрать (иначе только показать план)"
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  repair:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    env:
+      NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
+      SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+      PROD_URL: ${{ secrets.PROD_URL }}
+      REPAIR_FAMILIES: ${{ inputs.families }}
+      REPAIR_APPLY: ${{ inputs.apply && '1' || '0' }}
+      REPAIR_REASONS: ${{ inputs.reasons }}
+      REPAIR_MAX_CHAPTERS: ${{ inputs.max_chapters }}
+      REPAIR_MAX_OPENAI_USD: ${{ inputs.max_openai_usd }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npx tsx scripts/repair-chapters.ts

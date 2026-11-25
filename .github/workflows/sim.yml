@@ -1,0 +1,150 @@
+name: sim
+
+# Симулятор интервью I15 на настоящем Gemini (запуск вручную, Actions → sim → Run workflow).
+# Персонаж ↔ интервью-агент → главы edit + translate → отчёт: в summary запуска и артефактом.
+# Ключ — GEMINI_API_KEY из Secrets, AI_MODE=auto, только Flash-Lite, не больше 60 запросов на прогон
+# (бесплатная квота ~500/сутки общая с продом — не больше 4 прогонов на задачу).
+# Модели берутся из ai_routes прода (если задан SUPABASE_DB_URL), иначе из lib/ai/config.ts.
+# replay=true: кэш ответов прошлых прогонов этого персонажа — диалог повторяется один в один, заново
+# считаются только шаги, чей промпт изменился (так сравнивают «до/после» правки prompts/*.md).
+on:
+  workflow_dispatch:
+    inputs:
+      persona:
+        description: "Персонаж"
+        type: choice
+        options: [kim, pak, tsoi]
+        default: kim
+      behavior:
+        description: "Профиль поведения (none — без профиля)"
+        type: choice
+        options: [none, one-word, wanders, confuses-dates, koryo-mar, refuses, long, emotional]
+        default: none
+      questions:
+        description: "Сколько основных вопросов (пусто — пока хватает лимита)"
+        default: ""
+      max_calls:
+        description: "Лимит запросов к ИИ на прогон (не больше 60)"
+        default: "60"
+      replay:
+        description: "Повторить диалог из кэша прошлых прогонов (для сравнения «до/после»)"
+        type: boolean
+        default: true
+      model:
+        description: "Модель Gemini вместо ai_routes (пусто — как в проде)"
+        default: ""
+      label:
+        description: "Подпись прогона в summary, например «до V1» / «после V1»"
+        default: ""
+
+concurrency:
+  group: sim
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  sim:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      AI_MODE: auto
+      NEXT_TELEMETRY_DISABLED: "1"
+      GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+      SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
+      PERSONA: ${{ inputs.persona }}
+      BEHAVIOR: ${{ inputs.behavior }}
+      QUESTIONS: ${{ inputs.questions }}
+      MAX_CALLS: ${{ inputs.max_calls }}
+      SIM_MODEL: ${{ inputs.model }}
+      LABEL: ${{ inputs.label }}
+      SIM_ROUTES_FILE: ${{ github.workspace }}/sim-out/routes.json
+      SIM_CACHE_FILE: ${{ github.workspace }}/sim-cache/cache.json
+      SIM_USAGE_FILE: ${{ github.workspace }}/sim-out/usage.json
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+
+      - name: Проверка входов
+        run: |
+          if [ -z "$GEMINI_API_KEY" ]; then
+            echo "## 🔴 sim: GEMINI_API_KEY не задан в GitHub Secrets" >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
+          if ! [[ "$MAX_CALLS" =~ ^[0-9]+$ ]] || [ "$MAX_CALLS" -lt 5 ] || [ "$MAX_CALLS" -gt 60 ]; then
+            echo "## 🔴 sim: max_calls должен быть числом от 5 до 60 (сейчас: $MAX_CALLS)" >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
+          if [ -n "$QUESTIONS" ] && ! [[ "$QUESTIONS" =~ ^[0-9]+$ ]]; then
+            echo "## 🔴 sim: questions должен быть числом" >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
+          mkdir -p sim-out sim-cache
+
+      - name: Модели из ai_routes прода
+        if: inputs.model == ''
+        run: |
+          if [ -z "$SUPABASE_DB_URL" ]; then
+            echo "SUPABASE_DB_URL не задан — модели из lib/ai/config.ts"
+            exit 0
+          fi
+          command -v psql > /dev/null || (sudo apt-get update -qq && sudo apt-get install -y -qq postgresql-client)
+          psql "$SUPABASE_DB_URL" -tA -v ON_ERROR_STOP=1 \
+            -c "select coalesce(json_object_agg(step, providers), '{}'::json) from ai_routes" > "$SIM_ROUTES_FILE" \
+            || { echo "::warning::ai_routes не прочитаны — модели из lib/ai/config.ts"; rm -f "$SIM_ROUTES_FILE"; }
+
+      - name: Кэш ответов (replay)
+        if: inputs.replay
+        uses: actions/cache/restore@v5
+        with:
+          path: sim-cache
+          key: sim-cache-${{ inputs.persona }}-${{ inputs.behavior }}-${{ github.run_id }}
+          restore-keys: sim-cache-${{ inputs.persona }}-${{ inputs.behavior }}-
+
+      - name: Симулятор
+        run: |
+          args=(--persona "$PERSONA" --max-calls "$MAX_CALLS")
+          [ "$BEHAVIOR" != "none" ] && args+=(--behavior "$BEHAVIOR")
+          [ -n "$QUESTIONS" ] && args+=(--questions "$QUESTIONS")
+          set -o pipefail
+          npx tsx --import ./.github/sim/preload.ts scripts/sim.ts "${args[@]}" 2>&1 | tee sim-out/sim.log
+
+      - name: Отчёт в summary
+        if: always()
+        run: |
+          report=$(ls -t eval/reports/*.md 2>/dev/null | head -1 || true)
+          [ -n "$report" ] && cp "$report" sim-out/
+          {
+            echo "# sim: $PERSONA${BEHAVIOR:+ [$BEHAVIOR]}${LABEL:+ — $LABEL}"
+            echo
+            echo "- Коммит: \`${GITHUB_SHA::7}\` (${GITHUB_REF_NAME})"
+            echo "- Версии промптов: $(for f in prompts/*.md; do printf '%s %s · ' "$(basename "$f" .md)" "$(sha256sum "$f" | cut -c1-12)"; done)"
+            if [ -f "$SIM_USAGE_FILE" ]; then
+              echo "- Модели: $(jq -r '.models | to_entries | map("\(.key) \(.value)") | join(", ")' "$SIM_USAGE_FILE")"
+              echo "- Реальных запросов к Gemini: $(jq '[.usage[] | to_entries[] | select(.key != "cache_hit") | .value] | add // 0' "$SIM_USAGE_FILE"), из кэша: $(jq '[.usage[] | .cache_hit // 0] | add // 0' "$SIM_USAGE_FILE") (в кэше было $(jq .cachedAtStart "$SIM_USAGE_FILE"))"
+              echo "- По шагам: $(jq -c '.usage' "$SIM_USAGE_FILE")"
+            fi
+            echo "- Итог: $(tail -1 sim-out/sim.log 2>/dev/null)"
+            echo
+            if [ -n "$report" ]; then cat "$report"; else echo "Отчёт не создан — см. лог шага «Симулятор»."; fi
+          } | tee -a "$GITHUB_STEP_SUMMARY"
+          # Отчёт целиком — и в лог: артефакты и summary не везде доступны (агентам — только логи).
+
+      - name: Сохранить кэш
+        if: always() && hashFiles('sim-cache/cache.json') != ''
+        uses: actions/cache/save@v5
+        with:
+          path: sim-cache
+          key: sim-cache-${{ inputs.persona }}-${{ inputs.behavior }}-${{ github.run_id }}
+
+      - uses: actions/upload-artifact@v6
+        if: always()
+        with:
+          name: sim-${{ inputs.persona }}-${{ inputs.behavior }}-${{ github.run_number }}
+          path: sim-out/
+          if-no-files-found: ignore

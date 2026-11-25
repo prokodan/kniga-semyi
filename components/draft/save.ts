@@ -1,0 +1,84 @@
+import "server-only";
+// Сохранение правки черновика (I6) и перезапуск только перевода.
+// Конвейер (I2) не меняем: проверка ссылки семьи и текущие поля — pipeline.view(),
+// запись правки — та же строка stories (Supabase или общая память процесса), перевод — runStep(id, "translate").
+import { getDbOrNull } from "@/lib/db";
+import { MemoryInterviewRepo } from "@/lib/interview/repo";
+import { pipeline, PipelineError, runStep, STATUS_MESSAGE } from "@/lib/pipeline";
+import type { Story } from "@/lib/types";
+import { draftChanged, quoteMatch, type DraftFields, type DraftSaveResult } from "./draft";
+
+type DraftPatch = Pick<Story, "title" | "quote" | "text_ru" | "title_ko" | "quote_ko" | "text_ko" | "status" | "error">;
+
+const g = globalThis as { __interviewMemoryRepo?: MemoryInterviewRepo };
+
+async function writeStory(storyId: string, patch: DraftPatch): Promise<void> {
+  const db = getDbOrNull();
+  if (db) {
+    const { error } = await db
+      .from("stories")
+      .update({ ...patch, updated_at: new Date().toISOString() })
+      .eq("id", storyId);
+    if (error) throw new Error(`сохранение правки: ${error.message}`);
+    return;
+  }
+  // Локально без базы — та же карта историй, что у конвейера и интервью-агента (lib/pipeline/index.ts).
+  g.__interviewMemoryRepo ??= new MemoryInterviewRepo();
+  const s = g.__interviewMemoryRepo.stories.get(storyId);
+  if (!s) throw new PipelineError("not_found", "История не найдена");
+  Object.assign(s, patch, { updated_at: new Date().toISOString() });
+}
+
+export class DraftError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "DraftError";
+  }
+}
+
+export async function saveDraft(storyId: string, token: string, fields: DraftFields): Promise<DraftSaveResult> {
+  const story = await pipeline.view(storyId, { token }); // not_found / forbidden → PipelineError
+  if (story.isFollowup) throw new DraftError("Это ответ на уточнение — правьте основную главу");
+  if (!story.text_ru || story.status === "transcribing" || story.status === "editing") {
+    throw new DraftError("Глава ещё собирается — откройте правку, когда она будет готова");
+  }
+
+  // Цитата расходится с текстом только написанием («У штабе» / «Уштобе») — не предупреждение.
+  const match = quoteMatch(fields.quote, fields.text_ru);
+  const quoteWarning = match === "missing";
+  const quoteSpelling = match === "spelling";
+  if (!draftChanged(story, fields)) {
+    return { storyId, changed: false, quoteWarning, quoteSpelling, status: story.status, done: story.done, queued: false, message: "Правок нет — всё как было" };
+  }
+
+  // Новый русский текст → старый перевод больше не верен: очищаем KR, следующий шаг по данным — translate.
+  await writeStory(storyId, {
+    title: fields.title,
+    quote: fields.quote || null,
+    text_ru: fields.text_ru,
+    title_ko: null,
+    quote_ko: null,
+    text_ko: null,
+    status: "translating",
+    error: null,
+  });
+
+  try {
+    const res = await runStep(storyId, "translate");
+    return {
+      storyId,
+      changed: true,
+      quoteWarning,
+      quoteSpelling,
+      status: res.status,
+      done: res.done,
+      queued: res.queued,
+      retryInMinutes: res.retryInMinutes,
+      message: res.done ? "Сохранили, перевод обновлён" : res.message,
+    };
+  } catch (e) {
+    // Правка уже сохранена; перевод догонит экран главы (он сам двигает /process).
+    console.error("[draft] translate", e instanceof Error ? e.message : e);
+    return { storyId, changed: true, quoteWarning, quoteSpelling, status: "translating", done: false, queued: true, message: STATUS_MESSAGE.translating };
+  }
+}

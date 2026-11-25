@@ -1,0 +1,66 @@
+name: Задача
+description: Задача для агента (Claude Code / Codex / Gemini) или человека
+title: "[Ix] "
+body:
+  - type: textarea
+    id: goal
+    attributes:
+      label: Цель
+      description: Что должно стать возможным для пользователя. 1–3 предложения.
+    validations:
+      required: true
+  - type: dropdown
+    id: zone
+    attributes:
+      label: Зона
+      options:
+        - Z1 Запись и интервью
+        - Z2 ИИ-конвейер
+        - Z3 Глава, книга, QR
+        - Z4 Демо-оплата и допы
+        - Z5 АКНЦ
+        - Z6 Платформа
+        - Ручная работа (без агента)
+    validations:
+      required: true
+  - type: textarea
+    id: files
+    attributes:
+      label: Файлы
+      description: Точный список файлов и папок, которые можно создавать и менять. Агент не сканирует репозиторий сверх этого.
+      render: text
+    validations:
+      required: true
+  - type: textarea
+    id: context
+    attributes:
+      label: Что прочитать
+      description: Контракты и документы, на которые опирается задача.
+      value: |
+        - AGENTS.md
+        - docs/STATUS.md
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Критерии приёмки
+      description: Проверяемые пункты. PR не сливается, пока все не отмечены.
+      value: |
+        - [ ] 
+        - [ ] `npm run check` зелёный
+    validations:
+      required: true
+  - type: textarea
+    id: dont
+    attributes:
+      label: Чего не трогать
+      value: |
+        - Общие файлы Z6: lib/types, lib/ai/index.ts, lib/ai/types.ts, supabase/migrations, .github — только через PR Z6
+  - type: input
+    id: estimate
+    attributes:
+      label: Оценка, ч
+  - type: input
+    id: depends
+    attributes:
+      label: Зависит от
+      placeholder: "#2, #10"

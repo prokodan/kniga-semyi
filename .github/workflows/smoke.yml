@@ -1,0 +1,162 @@
+name: smoke
+
+# Ежедневная проверка прода: /api/health, таблицы и хранилища Supabase.
+# 02:23 UTC = 07:23 Алматы. Также запускается вручную (и утром 27.11 перед питчем).
+on:
+  schedule:
+    - cron: "23 2 * * *"
+  workflow_dispatch:
+    inputs:
+      stage:
+        description: "Режим сцены на проде: on — утро 27.11 (STAGE_MODE=1), off — после питча, any — не проверять"
+        type: choice
+        options: [any, "on", "off"]
+        default: any
+
+permissions:
+  contents: read
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      PROD_URL: ${{ secrets.PROD_URL }}
+      SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
+      SUPABASE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+      EXPECT_STAGE: ${{ inputs.stage || 'any' }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Прод /api/health
+        id: health
+        run: |
+          # В $GITHUB_OUTPUT пишем только однострочные key=value (переводы строк вырезаем).
+          out() { printf '%s=%s\n' "$1" "$(printf '%s' "$2" | tr '\r\n' '  ')" >> "$GITHUB_OUTPUT"; }
+
+          if [ -z "$PROD_URL" ]; then
+            echo "::warning::PROD_URL не задан — проверка прода пропущена"
+            out summary "прод: PROD_URL не задан"
+            exit 0
+          fi
+
+          url="${PROD_URL%/}/api/health"
+          # Без curl --retry: на 503 он повторяет запрос и склеивает тела ответов в одну строку вывода.
+          # Повторяем сами и только при сетевой ошибке (код 000); тело каждый раз перезаписывается.
+          code=000
+          rm -f health.json
+          for i in 1 2 3; do
+            code=$(curl -sS --max-time 20 -o health.json -w '%{http_code}' "$url" || true)
+            [ "$code" != "000" ] && break
+            sleep 5
+          done
+
+          echo "HTTP $code — ответ /api/health:"
+          if jq . health.json 2>/dev/null; then :; else cat health.json 2>/dev/null; echo; fi
+
+          if [ "$code" = "000" ]; then
+            out summary "прод: недоступен ($url)"
+            echo "::error::/api/health не ответил за 3 попытки: $url"
+            exit 1
+          fi
+          if ! jq -e 'type == "object"' health.json > /dev/null 2>&1; then
+            out summary "прод: HTTP $code, ответ не JSON"
+            echo "::error::/api/health вернул HTTP $code и не JSON — смотри ответ выше"
+            exit 1
+          fi
+
+          # Прод должен работать на этом коммите main. Сразу после слияния Vercel ещё собирает —
+          # ждём до 6 минут, иначе smoke «зеленел» на предыдущей выкладке.
+          want="${GITHUB_SHA:0:7}"
+          for i in $(seq 1 18); do
+            have=$(jq -r '.commit // "?"' health.json 2>/dev/null || echo "?")
+            [ "$have" = "$want" ] && break
+            echo "прод на $have, жду выкладку $want… ($i/18)"
+            sleep 20
+            curl -sS --max-time 20 -o health.json "$url" || true
+          done
+          have=$(jq -r '.commit // "?"' health.json 2>/dev/null || echo "?")
+          if [ "$have" != "$want" ]; then
+            out summary "прод на $have, а main — $want: выкладка не дошла"
+            echo "::error::Прод работает на коммите $have, а main — $want. Проверь деплой в Vercel."
+            exit 1
+          fi
+
+          status=$(jq -r '.status // "?"' health.json)
+          db=$(jq -r '.db // "?"' health.json)
+          mode=$(jq -r '.ai_mode // "?"' health.json)
+          db_error=$(jq -r '.db_error // empty' health.json)
+          stage=$(jq -r 'if .stage_mode then "on" else "off" end' health.json)
+          summary="прод: $status, база: $db, ИИ: $mode, сцена: $stage"
+          [ -n "$db_error" ] && summary="$summary ($db_error)"
+          out summary "$summary"
+
+          if [ "$code" != "200" ] || [ "$status" != "ok" ] || [ "$db" != "ok" ]; then
+            echo "::error::Прод не здоров: HTTP $code, status=$status, db=$db${db_error:+, db_error=$db_error}"
+            exit 1
+          fi
+          for k in admin_pin kiosk_pin; do
+            [ "$(jq -r ".config.$k // false" health.json)" = "true" ] || echo "::warning::$k не задан в Vercel Env — вход выключен"
+          done
+          [ "$(jq -r '.config.openai_key // false' health.json)" = "true" ] || echo "::notice::OPENAI_API_KEY нет в Vercel — картинки сказки и резерв OpenAI недоступны"
+          if [ "$EXPECT_STAGE" != "any" ] && [ "$stage" != "$EXPECT_STAGE" ]; then
+            out summary "$summary — ждали сцену: $EXPECT_STAGE"
+            echo "::error::Режим сцены $stage, а ждали $EXPECT_STAGE. Vercel → STAGE_MODE → Redeploy."
+            exit 1
+          fi
+          echo "✓ $summary"
+
+      - name: Supabase — таблицы и хранилища
+        id: db
+        run: |
+          if [ -z "$SUPABASE_URL" ] || [ -z "$SUPABASE_KEY" ]; then
+            echo "::warning::Секреты Supabase не заданы — проверка базы пропущена"
+            exit 0
+          fi
+          h=(-H "apikey: $SUPABASE_KEY" -H "Authorization: Bearer $SUPABASE_KEY")
+          for t in families storytellers sessions stories books extras demo_orders kiosk_volunteers ai_usage ai_routes ai_providers ai_cache; do
+            code=$(curl -s -o /dev/null -w "%{http_code}" "${h[@]}" "${SUPABASE_URL%/}/rest/v1/$t?select=*&limit=1")
+            echo "$t: $code"; [ "$code" = "200" ]
+          done
+          buckets=$(curl -sS "${h[@]}" "${SUPABASE_URL%/}/storage/v1/bucket" | jq -r '[.[].id] | sort | join(",")')
+          echo "buckets: $buckets"
+          [ "$buckets" = "audio,books,illustrations,photos" ]
+          routes=$(curl -sS "${h[@]}" "${SUPABASE_URL%/}/rest/v1/ai_routes?select=step" | jq length)
+          echo "ai_routes: $routes"; [ "$routes" -ge 8 ]
+
+      # Событие в бота (I16) с учётом настроек 🔔; не ответил 200 — шлём напрямую, как раньше.
+      - name: Бот — smoke
+        id: bot
+        if: always()
+        env:
+          NOTIFY_URL: ${{ secrets.PROD_URL }}
+          NOTIFY_SECRET: ${{ secrets.BOT_NOTIFY_SECRET }}
+          EVENT: smoke
+          STATUS: ${{ job.status == 'success' && 'ok' || 'failed' }}
+          TEXT: ${{ job.status == 'success' && format('🟢 Smoke прода ок — {0}', steps.health.outputs.summary) || format('🔴 Smoke прода упал — {0}', steps.health.outputs.summary) }}
+          URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          sent=false
+          if [ -n "$NOTIFY_URL" ] && [ -n "$NOTIFY_SECRET" ]; then
+            payload=$(jq -n --arg e "$EVENT" --arg s "$STATUS" --arg t "$TEXT" --arg u "$URL" '{event:$e, status:$s, text:$t, url:$u}')
+            code=$(curl -sS --max-time 15 -o bot.json -w '%{http_code}' -X POST "${NOTIFY_URL%/}/api/telegram/notify" \
+              -H "content-type: application/json" -H "x-bot-notify-secret: $NOTIFY_SECRET" --data "$payload" || true)
+            echo "бот: HTTP $code $(jq -c '{delivered, reason}' bot.json 2>/dev/null || true)"
+            [ "$code" = "200" ] && sent=true
+          fi
+          echo "sent=$sent" >> "$GITHUB_OUTPUT"
+
+      - name: Telegram — smoke ок
+        if: success() && steps.bot.outputs.sent != 'true'
+        uses: ./.github/actions/telegram
+        with:
+          token: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          chat_id: ${{ secrets.TELEGRAM_CHAT_ID }}
+          text: "🟢 Smoke прода ок — ${{ steps.health.outputs.summary }}"
+      - name: Telegram — smoke упал
+        if: failure() && steps.bot.outputs.sent != 'true'
+        uses: ./.github/actions/telegram
+        with:
+          token: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          chat_id: ${{ secrets.TELEGRAM_CHAT_ID }}
+          text: "🔴 Smoke прода упал — ${{ steps.health.outputs.summary }}: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"

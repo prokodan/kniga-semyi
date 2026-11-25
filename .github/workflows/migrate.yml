@@ -1,0 +1,64 @@
+name: migrate
+
+# Применяет новые миграции к Supabase при слиянии в main. Руками базу не правим.
+# Первый запуск после того, как задан секрет SUPABASE_DB_URL: Actions → migrate → Run workflow.
+on:
+  push:
+    branches: [main]
+    paths: ["supabase/migrations/**"]
+  workflow_dispatch:
+
+concurrency:
+  group: migrate
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  migrate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Проверка секрета
+        id: guard
+        run: |
+          if [ -z "$SUPABASE_DB_URL" ]; then
+            echo "::warning::SUPABASE_DB_URL не задан — миграции пропущены"
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: actions/setup-node@v7
+        if: steps.guard.outputs.skip != 'true'
+        with:
+          node-version: 22
+          cache: npm
+      - name: Проверка SQL в PGlite
+        if: steps.guard.outputs.skip != 'true'
+        run: npm ci && npm run db:check
+
+      - uses: ./.github/actions/supabase-cli
+        if: steps.guard.outputs.skip != 'true'
+
+      - name: supabase db push
+        if: steps.guard.outputs.skip != 'true'
+        run: supabase --yes db push --db-url "$SUPABASE_DB_URL" --include-all
+
+      - name: Telegram — миграции применены
+        if: success() && steps.guard.outputs.skip != 'true'
+        uses: ./.github/actions/telegram
+        with:
+          token: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          chat_id: ${{ secrets.TELEGRAM_CHAT_ID }}
+          text: "🗄 Миграции применены к Supabase (${{ github.sha }})"
+      - name: Telegram — миграции упали
+        if: failure()
+        uses: ./.github/actions/telegram
+        with:
+          token: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          chat_id: ${{ secrets.TELEGRAM_CHAT_ID }}
+          text: "🔴 Миграции упали: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
