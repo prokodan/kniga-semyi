@@ -54,13 +54,13 @@ RLS включён на всех таблицах без политик: anon-к
 | Шаг | Порядок по умолчанию | Заглушка |
 | --- | --- | --- |
 | `transcribe` | Flash-Lite → Flash → gpt-4o-transcribe | `fixtures/ai/transcribe.json` |
-| `edit` (текст, заголовок, цитата, факты) | Flash-Lite → Flash → gpt-5-mini | `edit.json` |
-| `translate` | Flash-Lite → Flash → gpt-5-mini | `translate.json` |
-| `completeness` (интервью-агент) | Flash-Lite → gpt-5-mini | эвристика по длине ответа |
-| `next_question` | Flash-Lite → gpt-5-mini | первый непокрытый блок |
-| `tale` | Flash-Lite → Flash → gpt-5-mini | `tale.json` |
+| `edit` (текст, заголовок, цитата, факты) | Flash-Lite → Flash → gpt-5.4-mini | `edit.json` |
+| `translate` | Flash-Lite → Flash → gpt-5.4-mini | `translate.json` |
+| `completeness` (интервью-агент) | Flash-Lite → Flash → gpt-5.4-mini (7 с) | эвристика по длине ответа |
+| `next_question` | Flash-Lite → Flash → gpt-5.4-mini (7 с) | первый непокрытый блок |
+| `tale` | Flash-Lite → Flash → gpt-5.4-mini | `tale.json` |
 | `illustrate` | gpt-image-2 → gpt-image-1.5 | SVG-плейсхолдер |
-| `persona_reply` (симулятор) | Flash-Lite → gpt-5-mini | строка из биографии персонажа |
+| `persona_reply` (симулятор) | Flash-Lite → gpt-5.4-mini | строка из биографии персонажа |
 
 Модели и лимиты — данные, а не код: меняются в `ai_routes` / админке `/admin/ai` (I14).
 

@@ -2,7 +2,8 @@
 // 1. models.list Gemini (ключ GEMINI_API_KEY) → новейшие текстовые Gemini 3.x Flash-Lite и Flash
 //    (без TTS / Image / Live / preview / exp) и модель Transcribe для аудио, если есть.
 // 2. Тестовый запрос к каждой — тем же телом, что lib/ai/providers/gemini.ts (JSON-ответ, thinkingLevel low).
-// 3. gpt-5-mini — проверка, если задан OPENAI_API_KEY, иначе «не проверено».
+// 3. gpt-5.4-mini — проверка, если задан OPENAI_API_KEY, иначе «не проверено» (#105: gpt-5-mini устаревает;
+//    если gpt-5.4-mini не ответила, а gpt-5-mini ответила — резервом остаётся gpt-5-mini, с предупреждением).
 // 4. Пишет SQL для ai_routes (OUT_SQL) и таблицу в summary запуска ($GITHUB_STEP_SUMMARY).
 // Ключи не печатаются. Зависимостей нет — Node 22 (fetch). Запуск: node scripts/ai-models.mjs
 import { appendFileSync, readFileSync, writeFileSync } from "node:fs";
@@ -282,15 +283,26 @@ if (!transcribeList.length) {
   });
 }
 
+const GPT_MODEL = "gpt-5.4-mini";
+const GPT_OLD = "gpt-5-mini";
+let gptModel = GPT_MODEL;
 let gpt = { ok: null, ms: 0, note: "не проверено: OPENAI_API_KEY не задан" };
-if (OPENAI_KEY) gpt = await openaiCall("gpt-5-mini");
-rows.push({ role: "Резерв (платный)", model: "gpt-5-mini", text: gpt, audio: { ok: null, ms: 0, note: "—" } });
+if (OPENAI_KEY) gpt = await openaiCall(GPT_MODEL);
+rows.push({ role: "Резерв (платный)", model: GPT_MODEL, text: gpt, audio: { ok: null, ms: 0, note: "—" } });
+if (gpt.ok === false) {
+  const old = await openaiCall(GPT_OLD);
+  rows.push({ role: "Резерв (старый)", model: GPT_OLD, text: old, audio: { ok: null, ms: 0, note: "—" } });
+  if (old.ok) {
+    gptModel = GPT_OLD;
+    warn.push(`\`${GPT_MODEL}\` не ответила — резервом оставлен \`${GPT_OLD}\``);
+  }
+}
 
 // ---------- маршруты ----------
 const FL = flashLite && { provider: "gemini", model: flashLite.id, daily_limit: LIMIT_FL, threshold: 0.9 };
 const F = flash && { provider: "gemini", model: flash.id, daily_limit: LIMIT_F, threshold: 0.9 };
 const T = transcribeModel && { provider: "gemini", model: transcribeModel };
-const GPT = { provider: "openai", model: "gpt-5-mini" };
+const GPT = { provider: "openai", model: gptModel };
 const WHISPER = { provider: "openai", model: "gpt-4o-transcribe" };
 const audioOk = (entry, info) => entry && info?.audio;
 
@@ -298,15 +310,16 @@ const routes = {
   transcribe: [T, audioOk(FL, flashLite) && FL, audioOk(F, flash) && F, WHISPER].filter(Boolean),
   edit: [FL, F, GPT].filter(Boolean),
   translate: [FL, F, GPT].filter(Boolean),
-  completeness: [FL ?? F, GPT].filter(Boolean),
-  next_question: [FL ?? F, GPT].filter(Boolean),
+  // #178: ответ интервью ждёт эти шаги — после Flash-Lite сначала Flash (1–2 с), потом gpt (медиана 8 с)
+  completeness: [FL, F, GPT].filter(Boolean),
+  next_question: [FL, F, GPT].filter(Boolean),
   tale: [FL, F, GPT].filter(Boolean),
   persona_reply: [FL ?? F, GPT].filter(Boolean),
   // I11 (eval): обратный перевод — другая модель, чем у translate (Flash раньше Flash-Lite).
   judge: [FL ?? F, GPT].filter(Boolean),
   back_translate: [F, GPT, FL].filter(Boolean),
 };
-const TIMEOUTS = { transcribe: 45000, edit: 30000, translate: 30000, completeness: 12000, next_question: 12000, tale: 40000, persona_reply: 20000, judge: 40000, back_translate: 60000 };
+const TIMEOUTS = { transcribe: 45000, edit: 30000, translate: 30000, completeness: 7000, next_question: 7000, tale: 40000, persona_reply: 20000, judge: 40000, back_translate: 60000 };
 const geminiWorks = Boolean(FL || F);
 
 const esc = (s) => s.replace(/'/g, "''");
@@ -321,7 +334,7 @@ const sql = [
   "select step, jsonb_path_query_array(providers, '$[*].model') as models from ai_routes order by step;",
 ].join("\n");
 writeFileSync(OUT_SQL, sql + "\n");
-writeFileSync(OUT_JSON, JSON.stringify({ flashLite: flashLite?.id ?? null, flash: flash?.id ?? null, transcribe: transcribeModel, gpt5mini: gpt, routes }, null, 2));
+writeFileSync(OUT_JSON, JSON.stringify({ flashLite: flashLite?.id ?? null, flash: flash?.id ?? null, transcribe: transcribeModel, gpt: { model: gptModel, ...gpt }, routes }, null, 2));
 
 // ---------- summary ----------
 const mark = (r) => (r.ok === null ? "—" : r.ok ? `✅ ${(r.ms / 1000).toFixed(1)} с` : "❌");
