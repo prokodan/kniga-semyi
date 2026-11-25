@@ -4,12 +4,13 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { nameHints } from "@/lib/interview/names";
 import { loadNameHints } from "@/lib/interview/names-db";
-import type { Story } from "@/lib/types";
+import type { FamilyEntity, Story } from "@/lib/types";
+import { mergeEntities, rankEntities, type EntityDraft } from "./entities";
 
 export type PipelinePatch = Partial<
   Pick<
     Story,
-    "transcript" | "text_ru" | "title" | "quote" | "facts" | "text_ko" | "title_ko" | "quote_ko" | "status" | "error" | "duration_sec" | "kick_attempts" | "step_started_at"
+    "transcript" | "followups" | "text_ru" | "title" | "quote" | "facts" | "text_ko" | "title_ko" | "quote_ko" | "status" | "error" | "duration_sec" | "kick_attempts" | "step_started_at" | "deferred_followup"
   >
 >;
 
@@ -33,6 +34,19 @@ export interface PipelineRepo {
   interviewHold?(story: Story): Promise<boolean>;
   /** Имена и места для расшифровки и редактуры (пункт 5). Нет реализации — без подсказок. */
   nameHints?(story: Story): Promise<string[]>;
+  /** #98: записи-уточнения этой истории (parent_story_id = id). Нет реализации — только то, что приклеило интервью. */
+  children?(story: Story): Promise<Pick<Story, "id" | "transcript" | "status" | "created_at">[]>;
+  /** #98: более ранние основные истории того же рассказчика (не пропущенные) — чтобы не повторять рассказ в двух главах. */
+  earlier?(story: Story): Promise<Pick<Story, "id" | "transcript" | "followups" | "created_at">[]>;
+  /** #102: словарь семьи (family_entities). Нет реализации / нет таблицы — пустой. */
+  familyEntities?(story: Story): Promise<FamilyEntity[]>;
+  /** #102: дописать в словарь семьи сущности собранной главы (source='family' не перезаписывается). */
+  saveEntities?(story: Story, drafts: EntityDraft[]): Promise<void>;
+}
+
+/** Более ранние основные истории рассказчика: не уточнения, не пропуски, создана раньше. */
+export function isEarlier(s: Pick<Story, "id" | "storyteller_id" | "parent_story_id" | "status" | "created_at">, story: Story): boolean {
+  return s.id !== story.id && s.storyteller_id === story.storyteller_id && !s.parent_story_id && s.status !== "skipped" && s.created_at < story.created_at;
 }
 
 /** Сессия ещё на вопросе этой истории: не завершена, текущий вопрос тот же и он не закрыт. */
@@ -106,7 +120,24 @@ export class MemoryPipelineRepo implements PipelineRepo {
     return t === undefined ? true : t === token; // без заведённой семьи — локальный режим
   }
   async nameHints(story: Story) {
-    return nameHints({ storytellerName: this.names.get(story.storyteller_id) });
+    const entities = rankEntities(this.entities.filter((e) => e.family_id === story.family_id)).map((e) => e.name_ru);
+    return nameHints({ storytellerName: this.names.get(story.storyteller_id), entities });
+  }
+  entities: FamilyEntity[] = [];
+  async familyEntities(story: Story) {
+    return this.entities.filter((e) => e.family_id === story.family_id).map((e) => structuredClone(e));
+  }
+  async saveEntities(story: Story, drafts: EntityDraft[]) {
+    const { inserts, updates } = mergeEntities(this.entities.filter((e) => e.family_id === story.family_id), drafts, story.family_id, story.id);
+    const now = new Date().toISOString();
+    for (const u of updates) Object.assign(this.entities.find((e) => e.id === u.id)!, u.patch, { updated_at: now });
+    for (const i of inserts) this.entities.push({ ...i, id: `ent-${this.entities.length + 1}`, updated_at: now });
+  }
+  async children(story: Story) {
+    return [...this.stories.values()].filter((s) => s.parent_story_id === story.id).map((s) => structuredClone(s));
+  }
+  async earlier(story: Story) {
+    return [...this.stories.values()].filter((s) => isEarlier(s, story)).map((s) => structuredClone(s));
   }
   async interviewHold(story: Story) {
     return story.session_id && this.sessions ? holdsStory(this.sessions.get(story.session_id) ?? null, story) : false;
@@ -167,6 +198,47 @@ export class SupabasePipelineRepo implements PipelineRepo {
     } catch {
       return nameHints({}); // без карточки — хотя бы словарь
     }
+  }
+  async familyEntities(story: Story) {
+    const { data, error } = await this.db.from("family_entities").select("*").eq("family_id", story.family_id).limit(500);
+    if (error) return []; // нет таблицы до migrate — работаем без словаря
+    return (data ?? []) as FamilyEntity[];
+  }
+  async saveEntities(story: Story, drafts: EntityDraft[]) {
+    if (drafts.length === 0) return;
+    const existing = await this.familyEntities(story);
+    const { inserts, updates } = mergeEntities(existing, drafts, story.family_id, story.id);
+    for (const u of updates) {
+      const { error } = await this.db.from("family_entities").update(u.patch).eq("id", u.id);
+      if (error) throw new Error(`словарь семьи: ${error.message}`);
+    }
+    for (const row of inserts) {
+      const { error } = await this.db.from("family_entities").insert(row);
+      // 23505 — ту же запись только что добавила соседняя глава: дописываем главу к ней
+      if (error?.code === "23505") {
+        const again = mergeEntities(await this.familyEntities(story), [{ kind: row.kind, name_ru: row.name_ru, description: row.description }], story.family_id, story.id);
+        for (const u of again.updates) await this.db.from("family_entities").update(u.patch).eq("id", u.id);
+      } else if (error) throw new Error(`словарь семьи: ${error.message}`);
+    }
+  }
+  async children(story: Story) {
+    const { data, error } = await this.db.from("stories").select("id, transcript, status, created_at").eq("parent_story_id", story.id);
+    if (error) throw new Error(`уточнения истории: ${error.message}`);
+    return (data ?? []) as Pick<Story, "id" | "transcript" | "status" | "created_at">[];
+  }
+  async earlier(story: Story) {
+    const { data, error } = await this.db
+      .from("stories")
+      .select("id, transcript, followups, created_at")
+      .eq("storyteller_id", story.storyteller_id)
+      .is("parent_story_id", null)
+      .neq("status", "skipped")
+      .neq("id", story.id)
+      .lt("created_at", story.created_at)
+      .order("created_at", { ascending: true })
+      .limit(80);
+    if (error) throw new Error(`прошлые истории: ${error.message}`);
+    return (data ?? []) as Pick<Story, "id" | "transcript" | "followups" | "created_at">[];
   }
   async interviewHold(story: Story) {
     if (!story.session_id) return false;

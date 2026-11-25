@@ -4,7 +4,7 @@ import { Document, Image, Page, Path, StyleSheet, Svg, Text, View } from "@react
 import QRCode from "qrcode";
 import type { BookChapter, BookModel } from "./model";
 import { paragraphs } from "./model";
-import { FONT_KO, FONT_RU } from "./fonts";
+import { FAMILY_KO, FAMILY_RU } from "./fonts";
 import { COLOR, PAGE, TYPE } from "./theme";
 
 /** Номера страниц глав: заполняется на первом проходе, используется в оглавлении на втором. */
@@ -28,7 +28,7 @@ const s = StyleSheet.create({
   page: {
     backgroundColor: COLOR.paper,
     color: COLOR.ink,
-    fontFamily: FONT_RU,
+    fontFamily: FAMILY_RU,
     fontSize: TYPE.body,
     lineHeight: TYPE.leading,
     paddingTop: PAGE.top,
@@ -59,10 +59,10 @@ const s = StyleSheet.create({
     lineHeight: 1,
     color: COLOR.muted,
   },
-  ko: { fontFamily: FONT_KO, fontSize: TYPE.bodyKo, lineHeight: 1.75 },
+  ko: { fontFamily: FAMILY_KO, fontSize: TYPE.bodyKo, lineHeight: 1.75 },
   kicker: { fontSize: 8, letterSpacing: 1.6, color: COLOR.seal, textTransform: "uppercase" },
   h1: { fontSize: 21, fontWeight: 700, lineHeight: 1.25, marginTop: 6 },
-  h1ko: { fontFamily: FONT_KO, fontSize: 13.5, color: COLOR.inkSoft, lineHeight: 1.4, marginTop: 3 },
+  h1ko: { fontFamily: FAMILY_KO, fontSize: 13.5, color: COLOR.inkSoft, lineHeight: 1.4, marginTop: 3 },
   rule: { width: 36, height: 1.5, backgroundColor: COLOR.gold, marginVertical: 14 },
   para: { marginBottom: 7, textAlign: "justify" },
   paraKo: { marginBottom: 7 },
@@ -111,7 +111,7 @@ function VoiceBox({ url, her }: { url: string; her: boolean }) {
       </View>
       <View style={{ flex: 1 }}>
         <Text style={{ fontWeight: 700, fontSize: 9.5, lineHeight: 1.35 }}>Послушайте этот рассказ {her ? "её" : "его"} голосом</Text>
-        <Text style={{ fontFamily: FONT_KO, fontSize: 8.5, color: COLOR.inkSoft, lineHeight: 1.45 }}>목소리로 직접 들어 보세요</Text>
+        <Text style={{ fontFamily: FAMILY_KO, fontSize: 8.5, color: COLOR.inkSoft, lineHeight: 1.45 }}>목소리로 직접 들어 보세요</Text>
         <Text style={{ fontSize: 7.5, color: COLOR.muted, lineHeight: 1.4, marginTop: 2 }}>Наведите камеру телефона на код</Text>
       </View>
     </View>
@@ -127,7 +127,7 @@ function RunningHead({ title }: { title: string }) {
   return (
     <View style={s.header} fixed>
       <Text>{title}</Text>
-      <Text style={{ fontFamily: FONT_KO }}>우리 이야기</Text>
+      <Text style={{ fontFamily: FAMILY_KO }}>우리 이야기</Text>
     </View>
   );
 }
@@ -149,12 +149,12 @@ function Cover({ book }: { book: BookModel }) {
   const st = book.storyteller;
   const meta = [book.years, st.birth_place].filter(Boolean).join(" · ");
   return (
-    <Page size={PAGE.size} style={{ backgroundColor: COLOR.paperDeep, color: COLOR.ink, fontFamily: FONT_RU, padding: 44 }}>
+    <Page size={PAGE.size} style={{ backgroundColor: COLOR.paperDeep, color: COLOR.ink, fontFamily: FAMILY_RU, padding: 44 }}>
       <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center" }}>
         <Text style={{ fontSize: 8.5, letterSpacing: 2, color: COLOR.muted }}>КНИГА СЕМЬИ</Text>
         {/* красная печать-тоджан */}
         <View style={{ width: 34, height: 34, backgroundColor: COLOR.seal, borderRadius: 3, alignItems: "center", justifyContent: "center" }}>
-          <Text style={{ fontFamily: FONT_KO, fontWeight: 700, fontSize: 9.5, color: COLOR.paper, lineHeight: 1.1, textAlign: "center" }}>
+          <Text style={{ fontFamily: FAMILY_KO, fontWeight: 700, fontSize: 9.5, color: COLOR.paper, lineHeight: 1.1, textAlign: "center" }}>
             {"우리\n이야기"}
           </Text>
         </View>
@@ -171,14 +171,14 @@ function Cover({ book }: { book: BookModel }) {
         )}
         <Text style={{ fontSize: 28, fontWeight: 700, textAlign: "center", lineHeight: 1.2 }}>{st.name}</Text>
         {st.name_ko && (
-          <Text style={{ fontFamily: FONT_KO, fontSize: 17, color: COLOR.inkSoft, marginTop: 6, textAlign: "center" }}>{st.name_ko}</Text>
+          <Text style={{ fontFamily: FAMILY_KO, fontSize: 17, color: COLOR.inkSoft, marginTop: 6, textAlign: "center" }}>{st.name_ko}</Text>
         )}
         {meta && <Text style={{ fontSize: 10.5, color: COLOR.muted, marginTop: 10, textAlign: "center" }}>{meta}</Text>}
       </View>
 
       <View style={{ alignItems: "center", borderTopWidth: 0.75, borderTopColor: COLOR.gold, paddingTop: 14 }}>
         <Text style={{ fontSize: 14, textAlign: "center" }}>{book.title}</Text>
-        <Text style={{ fontFamily: FONT_KO, fontSize: 10, color: COLOR.inkSoft, marginTop: 4 }}>우리 가족 이야기</Text>
+        <Text style={{ fontFamily: FAMILY_KO, fontSize: 10, color: COLOR.inkSoft, marginTop: 4 }}>우리 가족 이야기</Text>
       </View>
     </Page>
   );
@@ -189,7 +189,7 @@ function TocLine({ ch, page }: { ch: BookChapter; page: number | undefined }) {
     <View style={{ flexDirection: "row", alignItems: "flex-end", marginBottom: 3 }} wrap={false}>
       <View style={{ flex: 1, paddingRight: 8 }}>
         <Text style={{ fontSize: 10, lineHeight: 1.3 }}>{ch.title}</Text>
-        {ch.titleKo && <Text style={{ fontFamily: FONT_KO, fontSize: 8, color: COLOR.muted, lineHeight: 1.3 }}>{ch.titleKo}</Text>}
+        {ch.titleKo && <Text style={{ fontFamily: FAMILY_KO, fontSize: 8, color: COLOR.muted, lineHeight: 1.3 }}>{ch.titleKo}</Text>}
       </View>
       <Text style={{ fontSize: 10, color: COLOR.inkSoft, minWidth: 18, textAlign: "right" }}>{page ?? "·"}</Text>
     </View>
@@ -200,13 +200,13 @@ function Toc({ book, pages }: { book: BookModel; pages: PageMap }) {
   return (
     <View>
       <Text style={s.kicker}>
-        СОДЕРЖАНИЕ <Text style={{ fontFamily: FONT_KO }}>· 차례</Text>
+        СОДЕРЖАНИЕ <Text style={{ fontFamily: FAMILY_KO }}>· 차례</Text>
       </Text>
       <View style={s.rule} />
       {book.groups.map((g) => (
         <View key={g.ru} style={{ marginBottom: 7 }}>
           <Text style={{ fontSize: 7.5, letterSpacing: 1.2, color: COLOR.seal, marginBottom: 2, lineHeight: 1.3 }}>
-            {g.ru.toUpperCase()} <Text style={{ fontFamily: FONT_KO }}>· {g.ko}</Text>
+            {g.ru.toUpperCase()} <Text style={{ fontFamily: FAMILY_KO }}>· {g.ko}</Text>
           </Text>
           {g.chapters.map((ch) => (
             <TocLine key={ch.id} ch={ch} page={pages[ch.id]} />
@@ -216,7 +216,7 @@ function Toc({ book, pages }: { book: BookModel; pages: PageMap }) {
       {book.legacy.chapters.length > 0 && (
         <View style={{ marginTop: 6, borderTopWidth: 0.5, borderTopColor: COLOR.line, paddingTop: 10 }}>
           <Text style={{ fontSize: 8, letterSpacing: 1.2, color: COLOR.seal, marginBottom: 4 }}>
-            {book.legacy.ru.toUpperCase()} <Text style={{ fontFamily: FONT_KO }}>· {book.legacy.ko}</Text>
+            {book.legacy.ru.toUpperCase()} <Text style={{ fontFamily: FAMILY_KO }}>· {book.legacy.ko}</Text>
           </Text>
           {book.legacy.chapters.map((ch) => (
             <TocLine key={ch.id} ch={ch} page={pages[ch.id]} />
@@ -264,7 +264,7 @@ function Chapter({ ch, legacy, title, her, collect }: { ch: BookChapter; legacy:
       <PageMark id={ch.id} collect={collect} />
       <View>
         <Text style={s.kicker}>
-          {legacy ? "Наказ" : ch.blockRu} <Text style={{ fontFamily: FONT_KO }}>· {legacy ? "당부" : ch.blockKo}</Text>
+          {legacy ? "Наказ" : ch.blockRu} <Text style={{ fontFamily: FAMILY_KO }}>· {legacy ? "당부" : ch.blockKo}</Text>
         </Text>
         <Text style={s.h1}>{ch.title}</Text>
         {ch.titleKo && <Text style={s.h1ko}>{ch.titleKo}</Text>}
@@ -274,7 +274,7 @@ function Chapter({ ch, legacy, title, her, collect }: { ch: BookChapter; legacy:
           <View style={{ borderLeftWidth: 2, borderLeftColor: COLOR.seal, paddingLeft: 10, marginBottom: 12 }} wrap={false}>
             <Text style={{ fontStyle: "italic", fontSize: legacy ? 14 : 12.5, lineHeight: 1.45 }}>«{ch.quote}»</Text>
             {ch.quoteKo && (
-              <Text style={{ fontFamily: FONT_KO, fontSize: legacy ? 11 : 10, color: COLOR.inkSoft, lineHeight: 1.6, marginTop: 4 }}>
+              <Text style={{ fontFamily: FAMILY_KO, fontSize: legacy ? 11 : 10, color: COLOR.inkSoft, lineHeight: 1.6, marginTop: 4 }}>
                 “{ch.quoteKo}”
               </Text>
             )}
@@ -293,7 +293,7 @@ function Chapter({ ch, legacy, title, her, collect }: { ch: BookChapter; legacy:
       {paraKo.length > 0 && (
         <View break>
           <Text style={s.kicker}>
-            <Text style={{ fontFamily: FONT_KO }}>{legacy ? "당부" : ch.blockKo}</Text> · по-корейски
+            <Text style={{ fontFamily: FAMILY_KO }}>{legacy ? "당부" : ch.blockKo}</Text> · по-корейски
           </Text>
           <Text style={{ ...s.h1ko, fontSize: 17, color: COLOR.ink, fontWeight: 700, marginTop: 6 }}>{ch.titleKo ?? ch.title}</Text>
           <View style={s.rule} />
@@ -315,7 +315,7 @@ function LegacyDivider({ book }: { book: BookModel }) {
     <View style={{ alignItems: "center", paddingTop: 120 }}>
       <View style={{ width: 40, height: 40, backgroundColor: COLOR.seal, borderRadius: 3, marginBottom: 22 }} />
       <Text style={{ fontSize: 24, fontWeight: 700, textAlign: "center", lineHeight: 1.3 }}>{book.legacy.ru}</Text>
-      <Text style={{ fontFamily: FONT_KO, fontSize: 15, color: COLOR.inkSoft, marginTop: 8, lineHeight: 1.4 }}>{book.legacy.ko}</Text>
+      <Text style={{ fontFamily: FAMILY_KO, fontSize: 15, color: COLOR.inkSoft, marginTop: 8, lineHeight: 1.4 }}>{book.legacy.ko}</Text>
       <View style={{ ...s.rule, marginVertical: 18 }} />
       <Text style={{ fontSize: 10.5, color: COLOR.inkSoft, textAlign: "center", maxWidth: 240 }}>
         То, что {book.storyteller.name} просит передать детям и внукам.
@@ -333,7 +333,7 @@ function Colophon({ book }: { book: BookModel }) {
         Эту книгу {book.elder === "grandmother" ? "рассказала" : "рассказал"} {book.storyteller.name} — своим голосом, для своей семьи. Каждая глава записана на диктофон
         телефона, бережно отредактирована без переписывания и переведена на корейский язык.
       </Text>
-      <Text style={{ fontFamily: FONT_KO, fontSize: 8.5, color: COLOR.muted, lineHeight: 1.7, marginTop: 6 }}>
+      <Text style={{ fontFamily: FAMILY_KO, fontSize: 8.5, color: COLOR.muted, lineHeight: 1.7, marginTop: 6 }}>
         이 책은 가족을 위해 직접 목소리로 들려준 이야기를 담았습니다.
       </Text>
       <Text style={{ fontSize: 8, color: COLOR.muted, marginTop: 14 }}>

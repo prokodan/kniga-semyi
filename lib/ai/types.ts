@@ -49,11 +49,18 @@ export const inputSchemas = {
     block: lifeBlock.nullable(),
     /** Как правильно пишутся имена и места этой семьи (карточка, прошлые главы, docs/glossary.md) */
     hints: z.array(z.string().max(80)).max(150).optional(),
+    /** #102: словарь семьи (family_entities) — кто есть кто в прошлых главах: люди, места, слова корё мар */
+    entities: z
+      .array(z.object({ kind: z.enum(["person", "place", "word"]), name: z.string().max(80), about: z.string().max(120).optional() }))
+      .max(80)
+      .optional(),
   }),
   translate: z.object({
     text_ru: z.string().min(1),
     title: z.string(),
     quote: z.string(),
+    /** #102: как семья пишет имена и места по-корейски (family_entities.name_ko) — держать одно написание во всей книге */
+    names: z.array(z.object({ ru: z.string().max(80), ko: z.string().max(80) })).max(80).optional(),
   }),
   completeness: z.object({
     questionText: z.string(),

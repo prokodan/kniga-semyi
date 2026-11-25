@@ -9,6 +9,9 @@ on:
       limit:
         description: "Сколько последних историй показать"
         default: "30"
+      families:
+        description: "#98: связь ответ → глава по семьям — дата (2026-11-24: семьи с историями с этого дня, без демо) или короткие id через запятую; пусто — не показывать"
+        default: ""
 
 permissions:
   contents: read
@@ -27,3 +30,7 @@ jobs:
         with:
           node-version: 22
       - run: node scripts/diag.mjs
+      - if: ${{ inputs.families != '' }}
+        run: node scripts/diag-family.mjs
+        env:
+          DIAG_FAMILIES: ${{ inputs.families }}

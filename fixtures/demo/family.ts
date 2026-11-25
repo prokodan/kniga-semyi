@@ -335,6 +335,35 @@ export const DEMO_TALE: AiOutput<"tale"> = {
 /** Главы, из которых «написана» сказка (как выбрал бы pickTaleStories: разные блоки, сказочные первыми). */
 export const DEMO_TALE_STORY_KEYS = ["roots", "childhood", "youth", "traditions"] as const;
 
+// ---------------- словарь имён демо-семьи (#125 → страница /f/<токен>/names, #104) ----------------
+
+export interface DemoEntitySeed {
+  kind: "person" | "place" | "word";
+  name_ru: string;
+  /** Как написано в корейском тексте глав (сверяет тест fixtures/demo/family.test.ts) */
+  name_ko: string;
+  description: string;
+  /** Ключи глав (DemoStorySeed.key), где встречается — в тексте главы RU есть это слово */
+  stories: string[];
+}
+
+/**
+ * Словарь «Семьи Ким»: seed-demo пишет его как сборка глав (#102, source=auto), потому что демо-главы
+ * вставляются готовыми, без конвейера. KR — ровно как в корейском тексте глав и по docs/glossary.md.
+ */
+export const DEMO_ENTITIES: DemoEntitySeed[] = [
+  { kind: "place", name_ru: "Уштобе", name_ko: "우슈토베", description: "куда в 1937 году привезли родителей; здесь родился рассказчик", stories: ["roots", "childhood", "work"] },
+  { kind: "place", name_ru: "Дальний Восток", name_ko: "극동", description: "родина родителей, под Владивостоком", stories: ["roots"] },
+  { kind: "place", name_ru: "Владивосток", name_ko: "블라디보스토크", description: "рядом с ним родились родители", stories: ["roots"] },
+  { kind: "person", name_ru: "Анна Петровна", name_ko: "안나 페트로브나", description: "учительница, учила русскому после уроков", stories: ["youth"] },
+  { kind: "person", name_ru: "Валентина", name_ko: "발렌티나", description: "жена, бабушка внуков", stories: ["love"] },
+  { kind: "word", name_ru: "кукси", name_ko: "국수", description: "лапша — зимняя еда детства и блюдо на хансик", stories: ["childhood", "traditions", "legacy"] },
+  { kind: "word", name_ru: "аппади", name_ko: "아버지", description: "отец (корё мар)", stories: ["childhood"] },
+  { kind: "word", name_ru: "омани", name_ko: "어머니", description: "мама (корё мар)", stories: ["childhood"] },
+  { kind: "word", name_ru: "хансик", name_ko: "한식", description: "весенний день поминовения, едут к родителям", stories: ["traditions"] },
+  { kind: "word", name_ru: "чальтоги", name_ko: "찰떡", description: "клейкие рисовые лепёшки к свадебному столу", stories: ["love"] },
+];
+
 // ---------------- все ID демо: сброс удаляет только их ----------------
 
 export const DEMO_FAMILY_IDS = [DEMO_FAMILY.id, DEMO_KIOSK_FAMILY.id] as const;

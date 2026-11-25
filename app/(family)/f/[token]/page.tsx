@@ -115,6 +115,15 @@ export default async function FamilyPage({ params, searchParams }: { params: Pro
             <span className="text-seal">открыть →</span>
           </Link>
           <Link
+            href={`/f/${token}/names`}
+            className="flex min-h-12 items-center justify-between gap-3 rounded-card border border-line bg-paper px-4 py-3"
+          >
+            <span>
+              Словарь имён <span className="text-ink-soft">· люди, места, слова</span>
+            </span>
+            <span className="text-seal">→</span>
+          </Link>
+          <Link
             href={`/checkout/${token}`}
             className="flex min-h-12 items-center justify-between gap-3 rounded-card border border-line bg-paper px-4 py-3"
           >

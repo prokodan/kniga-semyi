@@ -2,6 +2,9 @@
 // Подстраховка конвейера (пункт 1): истории, которые стоят на шаге дольше 5 минут, перезапускаются через
 // прод POST /api/stories/:id/process (с токеном семьи — новых секретов не нужно). Не больше 3 попыток
 // (stories.kick_attempts), потом failed с понятной причиной — семья видит «Перезапустить сборку».
+// #98: такой failed — это перегрузка ИИ, а не ошибка в записи. Раньше глава терялась навсегда (в книгах 24.11 —
+// «Где вы родились», «Мама», «Папа», «Каким был дом»). Теперь — поздние попытки: раз в час, ещё до
+// KICK_LATE_ATTEMPTS раз в первые 72 ч после записи.
 // Ничего персонального в лог не пишет: только начала id и статусы.
 // Запуск: workflow kick-stuck (cron раз в 10 мин) или локально с NEXT_PUBLIC_SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, PROD_URL.
 import { appendFileSync } from "node:fs";
@@ -12,6 +15,10 @@ const PROD = (process.env.PROD_URL ?? "").replace(/\/+$/, "");
 const STALE_MIN = Number(process.env.KICK_STALE_MIN ?? 5);
 const MAX_ATTEMPTS = Number(process.env.KICK_MAX_ATTEMPTS ?? 3);
 const DRY = process.env.KICK_DRY_RUN === "1";
+const LATE_ATTEMPTS = Number(process.env.KICK_LATE_ATTEMPTS ?? 6);
+const LATE_EVERY_MIN = Number(process.env.KICK_LATE_EVERY_MIN ?? 60);
+const LATE_WINDOW_H = Number(process.env.KICK_LATE_WINDOW_H ?? 72);
+const KICK_FAILED = "Глава не собралась за";
 if (!SB || !KEY || !PROD) {
   console.error("Нужны NEXT_PUBLIC_SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY и PROD_URL");
   process.exit(1);
@@ -40,14 +47,21 @@ const since = new Date(Date.now() - STALE_MIN * 60_000).toISOString();
 const stuck = await rest(
   `stories?select=id,family_id,status,kick_attempts,updated_at&status=in.(uploaded,transcribing,editing,translating)&updated_at=lt.${since}&order=updated_at.asc&limit=40`,
 );
+// Поздние попытки: failed по перегрузке ИИ (наша же причина), не чаще раза в час, не дольше 72 ч от записи
+const lateSince = new Date(Date.now() - LATE_EVERY_MIN * 60_000).toISOString();
+const lateFrom = new Date(Date.now() - LATE_WINDOW_H * 3600_000).toISOString();
+const late = await rest(
+  `stories?select=id,family_id,status,kick_attempts,updated_at&status=eq.failed&error=like.${encodeURIComponent(KICK_FAILED)}*&parent_story_id=is.null&updated_at=lt.${lateSince}&created_at=gt.${lateFrom}&kick_attempts=lt.${MAX_ATTEMPTS + LATE_ATTEMPTS}&order=updated_at.asc&limit=10`,
+);
+for (const s of late) stuck.push({ ...s, late: true });
 
 const lines = [`# kick-stuck · ${new Date().toISOString()} · застряли > ${STALE_MIN} мин: ${stuck.length}`, ""];
 const tokens = new Map();
 for (const s of stuck) {
   const tries = s.kick_attempts ?? 0;
   const label = LABEL[s.status] ?? s.status;
-  if (tries >= MAX_ATTEMPTS) {
-    const error = `Глава не собралась за ${MAX_ATTEMPTS} попытки (шаг «${label}»): ${await cause(s.id)}. Запись сохранена — нажмите «Перезапустить сборку».`;
+  if (tries >= MAX_ATTEMPTS && !s.late) {
+    const error = `${KICK_FAILED} ${tries} попыт${tries % 10 >= 2 && tries % 10 <= 4 && (tries < 10 || tries > 20) ? "ки" : "ок"} (шаг «${label}»): ${await cause(s.id)}. Запись сохранена — нажмите «Перезапустить сборку».`;
     if (!DRY)
       await rest(`stories?id=eq.${s.id}&status=eq.${s.status}`, {
         method: "PATCH",
@@ -58,7 +72,7 @@ for (const s of stuck) {
     continue;
   }
   if (DRY) {
-    lines.push(`- ${short(s.id)} ${s.status} → перезапуск ${tries + 1}/${MAX_ATTEMPTS} (dry run)`);
+    lines.push(`- ${short(s.id)} ${s.status} → ${s.late ? "поздняя попытка" : "перезапуск"} ${tries + 1}/${MAX_ATTEMPTS + (s.late ? LATE_ATTEMPTS : 0)} (dry run)`);
     continue;
   }
   // Сначала счётчик (с проверкой старого значения — без гонки с соседним запуском)
@@ -99,7 +113,7 @@ for (const s of stuck) {
     }
     if (!r.next || r.queued || r.running || r.status === "failed") break;
   }
-  lines.push(`- ${short(s.id)} ${s.status} → перезапуск ${tries + 1}/${MAX_ATTEMPTS}: ${trail.join(", ")}`);
+  lines.push(`- ${short(s.id)} ${s.status} → ${s.late ? "поздняя попытка" : "перезапуск"} ${tries + 1}/${MAX_ATTEMPTS + (s.late ? LATE_ATTEMPTS : 0)}: ${trail.join(", ")}`);
 }
 
 const out = lines.join("\n");

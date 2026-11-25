@@ -16,7 +16,10 @@ import { AiUnavailableError } from "@/lib/ai/types";
 import { getQuestionBank, type QuestionBank } from "@/lib/interview/bank";
 import type { Story, StoryStatus } from "@/lib/types";
 import type { PipelinePatch, PipelineRepo } from "./repo";
-import { PIPELINE_STEPS, StepError, type PipelineStep, type StepFn } from "./steps/context";
+import { checkDeferred, needsDeferredCheck } from "./deferred";
+import { entitiesFromChapter } from "./entities";
+import { attachChildren, represented } from "./sources";
+import { PIPELINE_STEPS, StepError, StepSkip, type PipelineStep, type StepFn } from "./steps/context";
 import { edit } from "./steps/edit";
 import { transcribe } from "./steps/transcribe";
 import { translate } from "./steps/translate";
@@ -81,6 +84,8 @@ export interface StepResult {
   done: boolean;
   queued: boolean;
   retryInMinutes?: number;
+  /** #98: запись-уточнение пришла после сборки главы — основную пересобираем с edit (её id; дальше её ведёт сервер) */
+  rebuildParent?: string;
   error: string | null;
   message: string;
 }
@@ -112,6 +117,12 @@ export const STEP_LEASE_MS = 65_000;
  * исчерпаны 3 уточнения или вопрос отложен. Разговор бросили на середине — через 20 мин собираем как есть.
  */
 export const INTERVIEW_HOLD_MS = 20 * 60_000;
+/**
+ * #98: запись-уточнение расшифровалась, когда глава уже собрана (интервью не дождалось расшифровки и пошло дальше).
+ * Свежую главу (≤ 30 мин) пересобираем с её ответом; старше — только приклеиваем ответ к уточнениям: семья могла
+ * уже поправить черновик, его не перетираем (ответ войдёт при следующей пересборке).
+ */
+export const LATE_CHILD_REBUILD_MS = 30 * 60_000;
 
 export function createPipeline(deps: PipelineDeps) {
   const { ai, repo } = deps;
@@ -157,6 +168,22 @@ export function createPipeline(deps: PipelineDeps) {
   async function runStep(storyId: string, opts: { step?: PipelineStep; token?: string; restart?: boolean } = {}): Promise<StepResult> {
     let story = await load(storyId, opts.token);
     if (story.status === "skipped") return result(story, null); // ответ-отказ: не глава, ничего не делаем
+    // #140: ответ засчитали до расшифровки (#107) — теперь расшифровка есть: проверить полноту отдельным вызовом
+    // (свои 48 с), глава следующим. Сбой проверки — как до #140: просто собираем главу.
+    if (needsDeferredCheck(story)) {
+      let deferred = null;
+      try {
+        deferred = await checkDeferred(story, { ai, bank, deadline: now() + STEP_BUDGET_MS, now });
+      } catch (e) {
+        console.warn(`[pipeline] полнота ${story.id.slice(0, 8)}:`, (e as Error).message);
+      }
+      try {
+        story = await save(story, { deferred_followup: deferred });
+        return result(story, null);
+      } catch (e) {
+        console.warn(`[pipeline] deferred_followup ${story.id.slice(0, 8)}:`, (e as Error).message);
+      }
+    }
     const step = nextStep(story);
     if (opts.step && opts.step !== step) {
       if (step === null || PIPELINE_STEPS.indexOf(opts.step) < PIPELINE_STEPS.indexOf(step)) {
@@ -202,10 +229,24 @@ export function createPipeline(deps: PipelineDeps) {
       const after = { ...story, ...patch } as Story;
       const next = nextStep(after);
       story = await save(story, { ...patch, status: next ? STEP_STATUS[next] : "ready", error: null, step_started_at: null });
-      return result(story, step);
+      // #102: глава собрана — люди, места и слова корё мар в словарь семьи (подсказки следующим главам).
+      // Словарь — помощник: его сбой главу не роняет.
+      if (step === "edit" && repo.saveEntities) {
+        try {
+          await repo.saveEntities(story, entitiesFromChapter(story));
+        } catch (e) {
+          console.warn(`[pipeline] словарь семьи ${story.id.slice(0, 8)}:`, (e as Error).message);
+        }
+      }
+      const rebuildParent = step === "transcribe" && story.parent_story_id ? await lateChild(story) : null;
+      return result(story, step, rebuildParent ? { rebuildParent } : {});
     } catch (e) {
       const newer = await superseded();
       if (newer) return result(newer, null, { running: Boolean(newer.step_started_at) });
+      if (e instanceof StepSkip) {
+        story = await save(story, { ...e.patch, status: "skipped", error: e.message, step_started_at: null });
+        return result(story, step);
+      }
       if (e instanceof AiUnavailableError) {
         // Работа не теряется: статус остаётся на шаге, повторный вызов (экран главы или kick-stuck) продолжит с него.
         story = await save(story, { step_started_at: null });
@@ -215,6 +256,26 @@ export function createPipeline(deps: PipelineDeps) {
       story = await save(story, { status: "failed", error: `Шаг «${STEP_LABEL[step]}»: ${reason}`, step_started_at: null });
       return result(story, step);
     }
+  }
+
+  /**
+   * #98: расшифрована запись-уточнение. Если основная глава уже собрана без неё и интервью её не приклеило —
+   * приклеить ответ и (для свежей главы) сбросить главу на edit. Возвращает id основной, если её надо вести дальше.
+   */
+  async function lateChild(child: Story): Promise<string | null> {
+    const parent = await repo.getStory(child.parent_story_id!);
+    if (!parent || parent.status === "skipped" || !parent.text_ru) return null; // глава ещё не собрана — edit приклеит сам
+    if (represented(parent.followups ?? [], child)) return null;
+    if (repo.interviewHold && (await repo.interviewHold(parent))) return null; // интервью ещё на вопросе — приклеит само
+    const { followups } = attachChildren(parent.followups ?? [], [child]);
+    if (now() - new Date(parent.created_at).getTime() > LATE_CHILD_REBUILD_MS) {
+      await repo.updateStory(parent.id, { followups });
+      return null;
+    }
+    const patch: PipelinePatch = { followups, status: STEP_STATUS.edit, error: null, step_started_at: null };
+    for (const s of PIPELINE_STEPS.slice(PIPELINE_STEPS.indexOf("edit"))) Object.assign(patch, STEP_FIELDS[s]);
+    await repo.updateStory(parent.id, patch);
+    return parent.id;
   }
 
   /** Пересобрать с шага `from` (и все следующие): например, после новых ответов на уточнения — from: "edit". */
@@ -236,7 +297,7 @@ export function createPipeline(deps: PipelineDeps) {
   /** Прогнать все шаги подряд (тесты, симулятор, скрипты). В HTTP — по одному шагу на вызов. */
   async function processStory(storyId: string, opts: { token?: string; maxSteps?: number } = {}): Promise<StepResult> {
     let last: StepResult | null = null;
-    for (let i = 0; i < (opts.maxSteps ?? PIPELINE_STEPS.length + 1); i++) {
+    for (let i = 0; i < (opts.maxSteps ?? PIPELINE_STEPS.length + 2); i++) {
       last = await runStep(storyId, { token: opts.token });
       if (last.done || last.queued || last.running || last.waiting || last.status === "failed" || last.next === null) break;
     }

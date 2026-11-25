@@ -5,7 +5,7 @@ import { expect, test } from "@playwright/test";
 import editFixture from "@/fixtures/ai/edit.json";
 import taleFixture from "@/fixtures/ai/tale.json";
 import translateFixture from "@/fixtures/ai/translate.json";
-import { DEMO_FAMILY, DEMO_STORY_SEEDS, DEMO_TALE } from "@/fixtures/demo/family";
+import { DEMO_ENTITIES, DEMO_FAMILY, DEMO_STORY_SEEDS, DEMO_TALE } from "@/fixtures/demo/family";
 import { audioFile, reloadUntil } from "./support";
 
 const T = DEMO_FAMILY.access_token;
@@ -99,6 +99,15 @@ test("демо: правка черновика → глава с новым з�
   await page.getByRole("button", { name: "Да, сохранить" }).click();
   await page.waitForURL(/\/chapter\//, { timeout: 30_000 });
   await reloadUntil(page, () => expect(page.getByRole("heading", { name: title })).toBeVisible({ timeout: 2000 }));
+});
+
+test("демо: словарь имён заполнен (seed-demo, #125)", async ({ page }) => {
+  await page.goto(`/f/${T}/names`);
+  await expect(page.getByRole("heading", { name: /Словарь имён/ })).toBeVisible();
+  for (const e of DEMO_ENTITIES.filter((x) => x.kind !== "word").slice(0, 3)) {
+    await expect(page.getByText(new RegExp(`^${e.name_ru}`)).first()).toBeVisible();
+  }
+  await expect(page.getByText("우슈토베").first()).toBeVisible();
 });
 
 test("демо: книга PDF — открыть, скачать, пересобрать", async ({ page }) => {

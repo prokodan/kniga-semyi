@@ -308,3 +308,163 @@ describe("интервью-агент: пропуск, позже, блоки, �
     expect(r.type).toBe("nextQuestion");
   });
 });
+
+describe("#107: долгая расшифровка — ответ, а не пропуск", () => {
+  const recording = (repo: MemoryInterviewRepo, sessionId: string, opts: { transcript?: string | null; question_id?: string | null; family_id?: string } = {}) =>
+    repo.createStory({
+      family_id: opts.family_id ?? "fam-1",
+      storyteller_id: "st-1",
+      session_id: sessionId,
+      question_id: opts.question_id ?? null,
+      block: null,
+      transcript: opts.transcript ?? null,
+    });
+
+  it("основной ответ ещё расшифровывается → вопрос засчитан, запись привязана, без уточнений и без сборки сейчас", async () => {
+    const { interview, repo, count } = setup();
+    const s = await start(interview);
+    const rec = await recording(repo, s.sessionId);
+    const r = await interview.skip(s.sessionId, "skip", { token: "tok-1", storyId: rec.id });
+    expect(count("completeness")).toBe(0);
+    expect(r.type === "nextQuestion" || r.type === "blockDone").toBe(true);
+    expect(r.storyId).toBeNull(); // главу запустит конвейер после расшифровки
+    if (r.type === "nextQuestion") expect(r.bridge).toContain("рассказ сохранён");
+    const state = repo.sessions.get(s.sessionId)!.state as SessionState;
+    expect(state.answered_question_ids).toContain(s.question.id);
+    expect(state.skipped_question_ids ?? []).not.toContain(s.question.id);
+    const saved = repo.stories.get(rec.id)!;
+    expect(saved.question_id).toBe(s.question.id);
+    expect(saved.block).toBe(s.question.block);
+    expect(saved.parent_story_id).toBeNull();
+    expect(r.progress.questionsDone).toBe(1);
+  });
+
+  it("расшифровка успела к моменту «не ждать» → storyId для сборки главы", async () => {
+    const { interview, repo } = setup();
+    const s = await start(interview);
+    const rec = await recording(repo, s.sessionId, { transcript: LONG(), question_id: s.question.id });
+    const r = await interview.skip(s.sessionId, "skip", { storyId: rec.id });
+    expect(r.storyId).toBe(rec.id);
+  });
+
+  it("ответ на уточнение ещё расшифровывается → приклеен к основному рассказу, вопрос засчитан", async () => {
+    const { interview, repo } = setup();
+    const s = await start(interview);
+    const f = await interview.submitAnswer(s.sessionId, { text: "Да." });
+    expect(f.type).toBe("followup");
+    const mainId = f.storyId!;
+    const rec = await recording(repo, s.sessionId, { question_id: s.question.id });
+    const r = await interview.skip(s.sessionId, "skip", { storyId: rec.id });
+    expect(r.storyId).toBe(mainId);
+    expect(repo.stories.get(rec.id)!.parent_story_id).toBe(mainId);
+    const state = repo.sessions.get(s.sessionId)!.state as SessionState;
+    expect(state.answered_question_ids).toContain(s.question.id);
+  });
+
+  it("чужая запись → not_found, состояние не меняется", async () => {
+    const { interview, repo } = setup();
+    repo.addFamily("fam-2", "tok-2", ["st-2"]);
+    const s = await start(interview);
+    const rec = await recording(repo, s.sessionId, { family_id: "fam-2" });
+    await expect(interview.skip(s.sessionId, "skip", { storyId: rec.id })).rejects.toMatchObject({ code: "not_found" });
+    const state = repo.sessions.get(s.sessionId)!.state as SessionState;
+    expect(state.current_question_id).toBe(s.question.id);
+  });
+});
+
+describe("#108: новая сессия продолжает с первого неотвеченного вопроса", () => {
+  it("прошлые ответы засчитаны, первый вопрос — следующий открытый; отказ (skipped) и уточнения не в счёт", async () => {
+    const { interview, repo } = setup();
+    const bank = createQuestionBank();
+    const order = bank.all().map((q) => q.id);
+    const s1 = await start(interview);
+    expect(s1.question.id).toBe(order[0]);
+    expect(s1.greeting).toMatch(/^Здравствуйте! Мы будем/);
+
+    // В прошлых сессиях: ответ на 1-й вопрос, отказ на 2-й, запись-уточнение к 3-му.
+    const story = (question_id: string) => repo.createStory({ family_id: "fam-1", storyteller_id: "st-1", session_id: s1.sessionId, question_id, block: null, transcript: LONG() });
+    await story(order[0]!);
+    const refused = await story(order[1]!);
+    await repo.updateStory(refused.id, { status: "skipped" });
+    const child = await story(order[2]!);
+    await repo.updateStory(child.id, { parent_story_id: refused.id });
+
+    const s2 = await start(interview); // другое устройство / очищен localStorage
+    expect(s2.question.id).toBe(order[1]);
+    expect(s2.greeting).toContain("Продолжим");
+    expect(s2.progress.questionsDone).toBe(1);
+    const state = repo.sessions.get(s2.sessionId)!.state as SessionState;
+    expect(state.answered_question_ids).toEqual([order[0]]);
+    expect(state.current_question_id).toBe(order[1]);
+  });
+
+  it("весь первый раздел рассказан → начинаем со второго раздела по фазам", async () => {
+    const { interview, repo } = setup();
+    const bank = createQuestionBank();
+    const s1 = await start(interview);
+    const firstBlock = s1.question.block;
+    for (const q of bank.inBlock(firstBlock)) {
+      await repo.createStory({ family_id: "fam-1", storyteller_id: "st-1", session_id: s1.sessionId, question_id: q.id, block: q.block, transcript: LONG() });
+    }
+    const s2 = await start(interview);
+    expect(s2.question.block).not.toBe(firstBlock);
+    expect(s2.question.id).toBe(bank.all().find((q) => q.block !== firstBlock)!.id);
+    expect(s2.progress.doneBlocks).toContain(firstBlock);
+  });
+
+  it("всё уже рассказано → начинаем с первого вопроса (можно дополнить)", async () => {
+    const { interview, repo } = setup();
+    const bank = createQuestionBank();
+    const s1 = await start(interview);
+    for (const q of bank.all()) {
+      await repo.createStory({ family_id: "fam-1", storyteller_id: "st-1", session_id: s1.sessionId, question_id: q.id, block: q.block, transcript: "ответ" });
+    }
+    const s2 = await start(interview);
+    expect(s2.question.id).toBe(bank.first().id);
+  });
+});
+
+describe("#128: ответ после offtopic-уточнения — своя глава", () => {
+  it("голосовой ответ с parentStoryId перенесённой истории → основной рассказ вопроса без parent_story_id", async () => {
+    let first = true;
+    const { interview, repo } = setup({
+      override: {
+        completeness: (i) => {
+          if (first) {
+            first = false;
+            return { covered: [], missing: i.minimum, followup: null, done: false, offTopicBlock: "traditions" };
+          }
+          return done(i.minimum);
+        },
+      },
+    });
+    const s = await start(interview);
+    const r1 = await interview.submitAnswer(s.sessionId, { text: "А вот мама кукси на Новый год делала, тесто сама раскатывала…" });
+    expect(r1.type).toBe("followup");
+    const moved = r1.storyId!;
+    // телефон записал ответ на «А если вернуться к вопросу…» как уточнение к перенесённой истории
+    const rec = await repo.createStory({ family_id: "fam-1", storyteller_id: "st-1", session_id: s.sessionId, question_id: s.question.id, block: s.question.block, transcript: LONG() });
+    await repo.updateStory(rec.id, { parent_story_id: moved });
+
+    const r2 = await interview.submitAnswer(s.sessionId, { storyId: rec.id });
+    expect(r2.type).not.toBe("followup");
+    expect(r2.storyId).toBe(rec.id); // глава собирается из этой записи
+    const saved = repo.stories.get(rec.id)!;
+    expect(saved.parent_story_id).toBeNull();
+    expect(saved.question_id).toBe(s.question.id);
+    expect(repo.stories.get(moved)!.question_id).toBeNull();
+    expect((repo.sessions.get(s.sessionId)!.state as SessionState).answered_question_ids).toContain(s.question.id);
+  });
+
+  it("голосовой ответ на уточнение → в followups основной истории со story_id записи", async () => {
+    const { interview, repo } = setup();
+    const s = await start(interview);
+    const f = await interview.submitAnswer(s.sessionId, { text: "Да." });
+    expect(f.type).toBe("followup");
+    const rec = await repo.createStory({ family_id: "fam-1", storyteller_id: "st-1", session_id: s.sessionId, question_id: s.question.id, block: s.question.block, transcript: "В Уштобе, в сорок первом." });
+    await interview.submitAnswer(s.sessionId, { storyId: rec.id });
+    const main = repo.stories.get(f.storyId!)!;
+    expect(main.followups.filter((x) => x.story_id === rec.id)).toHaveLength(1);
+    expect(repo.stories.get(rec.id)!.parent_story_id).toBe(main.id);
+  });
+});
