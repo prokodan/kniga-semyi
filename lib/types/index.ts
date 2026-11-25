@@ -89,6 +89,19 @@ export interface FollowUp {
   story_id?: Uuid;
 }
 
+/**
+ * #140: ответ засчитан до расшифровки (#107) — полноту проверяет конвейер после расшифровки.
+ * pending — ждёт проверки; ask — минимума не хватает, интервью задаст `text` в конце раздела или в следующей сессии.
+ * Проверено и хватает / уточнение задано — null.
+ */
+export interface DeferredFollowup {
+  status: "pending" | "ask";
+  question_id: string;
+  /** Готовый текст уточнения (только для ask) */
+  text?: string;
+  checked_at?: IsoDateTime;
+}
+
 export interface Story {
   id: Uuid;
   family_id: Uuid;
@@ -115,6 +128,8 @@ export interface Story {
   sort_order: number | null;
   /** Сколько раз kick-stuck перезапускал историю (после 3 → failed). Нет в старых строках — 0. */
   kick_attempts?: number;
+  /** #140: отложенная проверка полноты (stories.deferred_followup jsonb). Нет в старых строках / до миграции — null. */
+  deferred_followup?: DeferredFollowup | null;
   /** Шаг конвейера сейчас выполняется с этого момента (аренда 65 с); null — никто не работает. */
   step_started_at?: IsoDateTime | null;
   created_at: IsoDateTime;

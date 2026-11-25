@@ -34,6 +34,8 @@ export interface SessionState extends InterviewState {
   covered_question_ids?: string[];
   /** Все уточнения сессии — не повторять ни дословно, ни по смыслу (#99 п. 3) */
   asked_followups?: string[];
+  /** #140: рассказы, чьё отложенное уточнение (stories.deferred_followup) уже задано в этой сессии */
+  deferred_asked?: string[];
 }
 
 // ---------------- Фазы и порядок разделов (#99) ----------------

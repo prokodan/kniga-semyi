@@ -30,7 +30,7 @@ import {
   type SessionState,
 } from "./policy";
 import { applyName, findUncertain, resolveName } from "./names";
-import type { InterviewRepo } from "./repo";
+import type { DeferredAsk, InterviewRepo } from "./repo";
 
 export type InterviewErrorCode = "bad_request" | "forbidden" | "not_found" | "finished" | "not_ready";
 
@@ -116,6 +116,8 @@ const PHRASES = {
   later: "Хорошо, вернёмся к этому, когда захотите.",
   // #107: запись сохранена, расшифровка ещё идёт — ответ засчитан, идём дальше без уточнений
   saved: "Спасибо, рассказ сохранён. Давайте дальше.",
+  // #140: уточнение, отложенное после поздней расшифровки, — в конце раздела (этой или следующей сессии)
+  backTo: (question: string) => `Давайте ненадолго вернёмся к вопросу «${question}» — хочу кое-что уточнить.`,
   pause: "Спасибо, что поделились этим. Давайте немного передохнём — к этой теме можно вернуться позже, когда захотите.",
   blockDone: (title: string) => `Глава «${title}» собрана. Можно собрать её сейчас или продолжить разговор.`,
   finished: "Спасибо вам огромное! Все вопросы позади — теперь из ваших рассказов соберём книгу.",
@@ -190,6 +192,34 @@ export function createInterview(deps: InterviewDeps) {
       .slice(-KNOWN_ANSWERS);
   }
 
+  /** #140: первое отложенное конвейером уточнение, которое в этой сессии ещё не задавали. Ошибка / нет колонки — null. */
+  async function pickDeferred(storytellerId: string, state: SessionState): Promise<{ ask: DeferredAsk; question: Question } | null> {
+    if (!repo.deferredFollowups) return null;
+    try {
+      const asked = state.deferred_asked ?? [];
+      for (const ask of await repo.deferredFollowups(storytellerId)) {
+        const question = bank.get(ask.questionId);
+        if (question && !asked.includes(ask.storyId)) return { ask, question };
+      }
+    } catch (e) {
+      console.warn("[interview] отложенные уточнения:", (e as Error).message);
+    }
+    return null;
+  }
+
+  /** #140: сделать отложенное уточнение текущим: ответ на него допишется в followups своего рассказа (answeringFollowup). */
+  function askDeferred(state: SessionState, d: { ask: DeferredAsk; question: Question }): QuestionView {
+    state.current_question_id = d.question.id;
+    state.current_story_id = d.ask.storyId;
+    state.pending_followup = d.ask.text;
+    state.followups_asked = 1;
+    state.asked_followups = pushAsked(state, d.ask.text);
+    state.answered_question_ids = addUnique(state.answered_question_ids, d.question.id);
+    state.deferred_asked = addUnique(state.deferred_asked, d.ask.storyId);
+    // Экран показывает и озвучивает question.ru — подставляем текст уточнения; вопрос целиком — в мосте.
+    return { ...view(d.question), ru: d.ask.text };
+  }
+
   /** Переход к следующему вопросу (или blockDone / finished). Сбрасывает счётчики текущего вопроса. */
   async function advance(
     sessionId: string,
@@ -204,6 +234,15 @@ export function createInterview(deps: InterviewDeps) {
       wasBlockDone: boolean;
     },
   ): Promise<AnswerResult> {
+    // #140: уходим с отложенного уточнения (ответили, пропустили, «позже») — больше его не задаём.
+    const leaving = state.current_story_id;
+    if (leaving && (state.deferred_asked ?? []).includes(leaving)) {
+      try {
+        await repo.updateStory(leaving, { deferred_followup: null });
+      } catch (e) {
+        console.warn("[interview] снять отложенное уточнение:", (e as Error).message);
+      }
+    }
     state.followups_asked = 0;
     state.current_story_id = null;
     state.pending_followup = null;
@@ -255,7 +294,19 @@ export function createInterview(deps: InterviewDeps) {
     let bridge = opts.bridge ?? modelBridge;
     if (next && next.block !== prev.block) bridge = [opts.bridge, blockTransition(next.block)].filter(Boolean).join(" ");
 
-    if (!next) {
+    // #140: конец раздела (или всего интервью) — сначала уточнения, отложенные после поздней расшифровки (#107).
+    // После трудной темы не давим.
+    let nextView: QuestionView | null = next ? view(next) : null;
+    if ((!next || next.block !== prev.block) && !opts.pause) {
+      const d = await pickDeferred(opts.storytellerId, state);
+      if (d) {
+        nextView = askDeferred(state, d);
+        next = d.question;
+        bridge = [opts.bridge, PHRASES.backTo(d.question.ru)].filter(Boolean).join(" ");
+      }
+    }
+
+    if (!next || !nextView) {
       state.finished = true;
       delete state.current_question_id;
       await repo.saveState(sessionId, state, true);
@@ -263,6 +314,7 @@ export function createInterview(deps: InterviewDeps) {
     }
 
     state.current_question_id = next.id;
+    state.covered_blocks = coveredBlocks(bank, state);
     await repo.saveState(sessionId, state);
     if (blockJustDone) {
       const title = bank.blockTitle(prev.block);
@@ -272,13 +324,13 @@ export function createInterview(deps: InterviewDeps) {
         blockTitle: title,
         message: PHRASES.blockDone(title.ru),
         suggestChapter: true,
-        nextQuestion: view(next),
+        nextQuestion: nextView,
         bridge,
         storyId: opts.storyId,
         progress: progress(state),
       };
     }
-    return { type: "nextQuestion", question: view(next), bridge, pause: Boolean(opts.pause), storyId: opts.storyId, progress: progress(state) };
+    return { type: "nextQuestion", question: nextView, bridge, pause: Boolean(opts.pause), storyId: opts.storyId, progress: progress(state) };
   }
 
   /** Проверка полноты и решение: уточнение / уход в другую тему / ответ принят. */
@@ -384,6 +436,13 @@ export function createInterview(deps: InterviewDeps) {
     } else {
       const patch = { question_id: rec.question_id ?? question.id, block: rec.block ?? question.block, parent_story_id: null };
       await repo.updateStory(rec.id, patch);
+      // #140: полноту проверит конвейер, когда будет расшифровка. Отдельной записью: колонки может ещё не быть
+      // (до migrate) — тогда всё как в #107, без уточнения.
+      try {
+        await repo.updateStory(rec.id, { deferred_followup: { status: "pending", question_id: patch.question_id } });
+      } catch (e) {
+        console.warn("[interview] отложить проверку полноты:", (e as Error).message);
+      }
       // ещё расшифровывается — главу запустит сам конвейер; уже расшифрована — собрать сейчас
       release = rec.transcript?.trim() ? rec.id : null;
     }
@@ -440,6 +499,8 @@ export function createInterview(deps: InterviewDeps) {
         recent_answers: [],
       };
       // Всё уже рассказано — начинаем сначала: можно дополнить любой ответ.
+      // #140: отложенные уточнения прошлых сессий здесь не задаём — телефон и киоск при старте сами пролистывают
+      // уже отвеченные вопросы («skip»); их задаст advance() в конце первого же раздела.
       const first = candidateQuestions(bank, state)[0] ?? bank.first();
       state.current_question_id = first.id;
       state.covered_blocks = coveredBlocks(bank, state);
