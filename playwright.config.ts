@@ -53,8 +53,10 @@ export default defineConfig({
     },
     // 3. Киоск АКНЦ — планшет в альбомной ориентации.
     { name: "ipad", use: { ...devices["iPad (gen 7) landscape"] }, testMatch: /kiosk\.spec\.ts/, dependencies: ["setup"] },
+    // #200: киоск на телефоне и планшете — скриншоты шагов (e2e-screens/) и проверка «без горизонтальной прокрутки».
+    { name: "screens", use: { browserName: "webkit" }, testMatch: /kiosk-screens\.spec\.ts/, dependencies: ["setup"] },
     // 4. «Сбросить демо» и /admin/ai — последними: сброс пересоздаёт демо, на котором идут тесты выше.
-    { name: "admin", use: { ...devices["iPhone 13"] }, testMatch: /admin\.spec\.ts/, dependencies: ["iphone", "ipad"] },
+    { name: "admin", use: { ...devices["iPhone 13"] }, testMatch: /admin\.spec\.ts/, dependencies: ["iphone", "ipad", "screens"] },
   ],
   webServer: {
     // В CI сайт уже собран шагом «Сборка»; локально — npm run build заранее (или E2E_SERVER="npm run dev").

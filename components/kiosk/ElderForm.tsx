@@ -127,7 +127,7 @@ export function ElderForm({ volunteers, currentVolunteerId }: { volunteers: { id
             <div className="flex flex-col gap-3">
               <input name="volunteerName" required minLength={2} maxLength={80} className={kField} placeholder="Ваше имя" autoComplete="off" />
               {volunteers.length > 0 && (
-                <button type="button" onClick={() => setNewVolunteer(false)} className="self-start text-ink-soft underline underline-offset-4">
+                <button type="button" onClick={() => setNewVolunteer(false)} className="min-h-12 self-start text-ink-soft underline underline-offset-4">
                   Выбрать из списка
                 </button>
               )}
@@ -137,7 +137,7 @@ export function ElderForm({ volunteers, currentVolunteerId }: { volunteers: { id
       </div>
 
       <div className="flex flex-col gap-4">
-        <div className="flex aspect-square w-full items-center justify-center overflow-hidden rounded-card border border-dashed border-line bg-paper-deep">
+        <div className="mx-auto flex aspect-square w-full max-w-60 items-center lg:max-w-none justify-center overflow-hidden rounded-card border border-dashed border-line bg-paper-deep">
           {photo ? (
             // eslint-disable-next-line @next/next/no-img-element -- локальное превью blob:, next/image не нужен
             <img src={photo.preview} alt="Фото старейшины" className="size-full object-cover" />
