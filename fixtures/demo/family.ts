@@ -226,7 +226,7 @@ export const followupStoryId = (storyIndex: number, followupIndex: number) => id
 /**
  * Запасной результат для блока, которого нет среди глав демо (если на сцене запишут новый ответ «Трудные
  * времена»): тёплая история о помощи соседей. В базу не пишется — только режим сцены.
- * ⚠ Корейский написан для I12 — проверить носителем (kr-check его не видит).
+ * Корейский вычитан ИИ по норме и docs/glossary.md (#122, 25.11); носитель не проверял.
  */
 export const DEMO_STAGE_RESERVE: Pick<DemoStorySeed, "question_id" | "block" | "transcript" | "edit" | "translate"> = {
   question_id: "hardship-01",
@@ -244,7 +244,7 @@ export const DEMO_STAGE_RESERVE: Pick<DemoStorySeed, "question_id" | "block" | "
     title_ko: "온 동네가 지어 준 집",
     quote_ko: "은혜는 따뜻할 때 바로 갚아야 한다.",
     text_ko:
-      "1950년에 우리 집이 불에 탔다. 온 동네 사람들이 도우러 왔다. 누구는 흙벽돌을 이기고, 누구는 통나무를 실어 왔다. 한 달 뒤에 우리는 벌써 새집에서 살았다.\n어머니는 나중에 이웃집마다 찰떡을 한 접시씩 갖다주셨다. \"은혜는 따뜻할 때 바로 갚아야 한다.\" 어머니는 그렇게 말씀하셨다.",
+      "1950년에 우리 집이 불에 탔다. 온 동네 사람들이 도우러 왔다. 누구는 흙을 이기고, 누구는 통나무를 실어 왔다. 한 달 뒤에 우리는 벌써 새집에서 살았다.\n어머니는 나중에 이웃집마다 찰떡을 한 접시씩 갖다주셨다. \"은혜는 따뜻할 때 바로 갚아야 한다.\" 어머니는 그렇게 말씀하셨다.",
   },
 };
 
@@ -277,7 +277,7 @@ export const DEMO_KIOSK_STORYTELLER = {
 
 export const DEMO_KIOSK_SESSION_ID = id(0x1021);
 
-/** ⚠ Корейский написан для I12 — проверить носителем. */
+/** Корейский вычитан ИИ по норме и docs/glossary.md (#122, 25.11); носитель не проверял. */
 export const DEMO_KIOSK_STORY: DemoStorySeed = {
   id: id(0x1101),
   key: "kiosk",
