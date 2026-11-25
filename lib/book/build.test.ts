@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 vi.mock("server-only", () => ({})); // в тестах нет сборки Next с условием react-server
 import type { Story } from "@/lib/types";
 import { getFamilyStore, MemoryFamilyStore } from "@/lib/db/access";
-import { BookBusyError, bookPdf, buildBook, getBookView } from "./build";
+import { BookBusyError, bookPdf, buildBook, getBookView, markBookOutdated } from "./build";
 import { DEMO_STORIES } from "./pdf/demo";
 
 async function demoFamily(chapters = DEMO_STORIES.length) {
@@ -58,6 +58,11 @@ describe("buildBook (память, без Supabase)", () => {
     expect(view).toEqual(expect.objectContaining({ status: "ready", has_pdf: true, page_count: r.page_count, title: "Книга семьи Ким" }));
     const file = await bookPdf(family.id);
     expect(file && "pdf" in file && file.pdf.subarray(0, 5).toString()).toBe("%PDF-");
+
+    // #104: правка словаря имён → книга устарела, PDF остаётся доступен
+    expect(view.outdated).toBe(false);
+    await markBookOutdated(family.id);
+    expect(await getBookView(family.id)).toEqual(expect.objectContaining({ status: "draft", has_pdf: true, outdated: true }));
   });
 
   it("без готовых глав — failed с понятной ошибкой", async () => {

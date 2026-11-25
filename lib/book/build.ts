@@ -22,6 +22,8 @@ export type BookView = Pick<Book, "status" | "page_count" | "built_at" | "error"
   /** Сколько глав готово для книги сейчас */
   chapters_ready: number;
   updated_at: string | null;
+  /** PDF есть, но главы поменялись после сборки (словарь имён #104) — книгу нужно пересобрать */
+  outdated: boolean;
 };
 
 export interface BuildResult {
@@ -157,7 +159,17 @@ export async function getBookView(familyId: string): Promise<BookView> {
     has_pdf: Boolean(book?.pdf_url),
     chapters_ready: src ? src.stories.filter(isBookChapter).length : 0,
     updated_at: book?.updated_at ?? null,
+    outdated: !stale && book?.status === "draft" && Boolean(book?.pdf_url),
   };
+}
+
+/**
+ * Главы поменялись после сборки (правка словаря имён #104): готовая книга → draft. PDF и дата сборки
+ * остаются — их можно открыть, а экран книги просит пересобрать. Нет книги или она не готова — ничего.
+ */
+export async function markBookOutdated(familyId: string): Promise<void> {
+  const book = await latestBook(familyId);
+  if (book?.status === "ready") await saveBook(familyId, book, { status: "draft" });
 }
 
 function bookTitle(familyName: string): string {
