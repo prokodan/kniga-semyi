@@ -8,7 +8,7 @@ export const dynamic = "force-dynamic";
 export default async function KioskPinPage() {
   if (await isKiosk()) redirect("/kiosk/queue");
   return (
-    <main className="mx-auto flex min-h-dvh max-w-3xl flex-col items-center justify-center gap-8 px-8 text-center">
+    <main className="mx-auto flex min-h-dvh max-w-3xl flex-col items-center justify-center gap-8 px-5 text-center sm:px-8">
       <div className="flex flex-col gap-2">
         <p className="tracking-widest text-muted uppercase">АКНЦ · 알마티 고려인 센터</p>
         <h1 className="font-serif text-5xl">Книга семьи</h1>

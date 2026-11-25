@@ -1,5 +1,6 @@
 "use client";
-// Сессия киоска на ландшафтном планшете, без прокрутки: голосовое согласие (+ галочка «в архив АКНЦ») →
+// Сессия киоска: на ландшафтном планшете (lg) — две колонки без прокрутки, на телефоне и планшете стоя — одна
+// колонка с прокруткой (#200): голосовое согласие (+ галочка «в архив АКНЦ») →
 // вопросы крупно с озвучкой → запись → следующий вопрос. Запись и загрузка — общие компоненты I1
 // (components/recorder) и те же ручки семьи (/api/upload-url, /api/consent, /api/stories) по токену семьи,
 // который сервер отдаёт только вошедшему по PIN планшету. Интервью-агент I10 — /api/sessions с mode = 'kiosk'
@@ -347,10 +348,10 @@ export function KioskSession(props: KioskSessionProps) {
   }
 
   return (
-    <main className="mx-auto flex h-dvh max-w-7xl flex-col gap-5 overflow-hidden px-8 py-5">
-      <header className="flex shrink-0 items-center gap-6">
-        <div className="min-w-0 flex-1">
-          <p className="truncate font-serif text-3xl">{storyteller.name}</p>
+    <main className="mx-auto flex min-h-dvh max-w-7xl flex-col gap-5 px-5 py-4 sm:px-8 lg:h-dvh lg:overflow-hidden lg:py-5">
+      <header className="flex shrink-0 flex-wrap items-center gap-4 sm:gap-6">
+        <div className="min-w-0 flex-1 basis-52">
+          <p className="font-serif text-2xl break-words sm:text-3xl lg:truncate">{storyteller.name}</p>
           <p className="text-muted">{phase === "consent" ? "Шаг 1 · согласие" : `Записано рассказов сегодня: ${count}`}</p>
         </div>
         {phase !== "finished" ? (
@@ -376,11 +377,11 @@ export function KioskSession(props: KioskSessionProps) {
       )}
 
       {phase === "consent" && (
-        <div className="grid min-h-0 flex-1 grid-cols-[1.15fr_1fr] gap-8">
+        <div className="grid min-h-0 flex-1 grid-cols-1 gap-6 lg:grid-cols-[1.15fr_1fr] lg:gap-8">
           <section className="flex min-h-0 flex-col gap-4">
-            <h1 className="font-serif text-4xl leading-tight">Согласие на запись</h1>
+            <h1 className="font-serif text-3xl leading-tight sm:text-4xl">Согласие на запись</h1>
             <p className="text-elder text-ink-soft">Попросите прочитать вслух или повторить за вами:</p>
-            <blockquote className="rounded-card border-l-4 border-seal bg-paper-deep p-6 text-kiosk text-ink">{props.consentText}</blockquote>
+            <blockquote className="rounded-card border-l-4 border-seal bg-paper-deep p-5 text-kiosk text-ink sm:p-6 lg:min-h-0 lg:overflow-y-auto">{props.consentText}</blockquote>
           </section>
           <section className="flex min-h-0 flex-col justify-center gap-6">
             <div className={kRecorderWrap}>
@@ -411,14 +412,14 @@ export function KioskSession(props: KioskSessionProps) {
       )}
 
       {phase === "ask" && current && (
-        <div className="grid min-h-0 flex-1 grid-cols-[1.25fr_1fr] gap-8">
-          <section className="flex min-h-0 flex-col gap-4">
+        <div className="grid min-h-0 flex-1 grid-cols-1 gap-6 lg:grid-cols-[1.25fr_1fr] lg:grid-rows-[1fr_auto] lg:gap-x-8 lg:gap-y-4">
+          <section className="flex min-h-0 flex-col gap-4 lg:col-start-1 lg:row-start-1">
             <p className="text-elder text-muted">
               {current.question.blockTitle.ru}
               {current.question.blockTitle.ko && <span lang="ko"> · {current.question.blockTitle.ko}</span>}
             </p>
             {(message || current.bridge) && <p className="text-elder text-ink-soft italic">{message ?? current.bridge}</p>}
-            <h1 className="font-serif text-kiosk leading-snug lg:text-4xl lg:leading-snug">{current.prompt}</h1>
+            <h1 className="font-serif text-kiosk leading-snug break-words lg:text-4xl lg:leading-snug">{current.prompt}</h1>
             {current.kind === "question" && (
               <p className="text-elder text-ink-soft" lang="ko">
                 {current.question.ko}
@@ -426,41 +427,41 @@ export function KioskSession(props: KioskSessionProps) {
             )}
             {current.pause && <p className="text-elder text-jade">Можно передохнуть. Тема тяжёлая — нажмите «Вернуться позже».</p>}
             {error && <p className="text-elder text-danger">{error}</p>}
-            <div className="mt-auto grid grid-cols-3 gap-3">
-              {canSpeak() && (
-                <button
-                  type="button"
-                  onClick={listen}
-                  disabled={recording}
-                  className={`${speechBlocked ? kPrimary : kGhost} disabled:opacity-50`}
-                >
-                  {speechBlocked ? "▶ Прослушать" : "🔊 Озвучить"}
-                </button>
-              )}
-              <button type="button" onClick={() => void skip("skip")} className={kGhost}>
-                Пропустить
-              </button>
-              <button type="button" onClick={() => void skip("later")} className={kGhost}>
-                Вернуться позже
-              </button>
-            </div>
           </section>
-          <section className={`flex min-h-0 flex-col justify-center ${kRecorderWrap}`}>
+          <section className={`flex min-h-0 flex-col justify-center lg:col-start-2 lg:row-span-2 lg:row-start-1 ${kRecorderWrap}`}>
             <Recorder key={take} onSend={onSend} sendLabel="Сохранить рассказ" allowFile={false} />
           </section>
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-3 lg:col-start-1 lg:row-start-2">
+            {canSpeak() && (
+              <button
+                type="button"
+                onClick={listen}
+                disabled={recording}
+                className={`${speechBlocked ? kPrimary : kGhost} disabled:opacity-50`}
+              >
+                {speechBlocked ? "▶ Прослушать" : "🔊 Озвучить"}
+              </button>
+            )}
+            <button type="button" onClick={() => void skip("skip")} className={kGhost}>
+              Пропустить
+            </button>
+            <button type="button" onClick={() => void skip("later")} className={kGhost}>
+              Вернуться позже
+            </button>
+          </div>
         </div>
       )}
 
       {phase === "finished" && (
-        <div className="grid min-h-0 flex-1 grid-cols-[1fr_auto] items-center gap-10">
+        <div className="grid min-h-0 flex-1 grid-cols-1 items-center gap-8 lg:grid-cols-[1fr_auto] lg:gap-10">
           <section className="flex flex-col gap-5">
-            <h1 className="font-serif text-5xl leading-tight">Спасибо, {storyteller.name}!</h1>
+            <h1 className="font-serif text-4xl leading-tight break-words sm:text-5xl">Спасибо, {storyteller.name}!</h1>
             {message && <p className="text-kiosk text-ink-soft">{message}</p>}
             <p className="text-elder text-ink-soft">
               Главы появятся в книге через несколько минут. Пусть родные наведут камеру телефона на код — откроется книга семьи, туда можно
               дописывать рассказы из дома.
             </p>
-            <div className="flex gap-4">
+            <div className="flex flex-col gap-4 sm:flex-row">
               <Link href="/kiosk/new" className={kPrimary}>
                 Следующий старейшина
               </Link>
@@ -480,7 +481,7 @@ export function KioskSession(props: KioskSessionProps) {
             href={props.familyUrl}
             target="_blank"
             rel="noreferrer"
-            className="block w-72 rounded-card bg-paper p-2 text-ink shadow-card [&_svg]:block [&_svg]:h-auto [&_svg]:w-full"
+            className="mx-auto block w-full max-w-72 rounded-card bg-paper p-2 text-ink shadow-card [&_svg]:block [&_svg]:h-auto [&_svg]:w-full"
             aria-label="Ссылка на книгу семьи"
             dangerouslySetInnerHTML={{ __html: props.familyQrSvg }}
           />

@@ -1,5 +1,5 @@
-// Классы киоска: крупно, кнопки ≥ 64 px (min-h-16), только токены из app/globals.css.
-export const kBtn = "inline-flex min-h-16 items-center justify-center gap-3 rounded-button px-8 text-elder font-semibold disabled:opacity-60";
+// Классы киоска: крупно, кнопки ≥ 64 px (min-h-16), только токены из app/globals.css. Телефон — уже поля (#200).
+export const kBtn = "inline-flex min-h-16 items-center justify-center gap-3 rounded-button px-5 py-2 text-center text-elder leading-snug font-semibold disabled:opacity-60 sm:px-8";
 export const kPrimary = `${kBtn} bg-seal text-paper active:bg-seal-dark`;
 export const kDark = `${kBtn} bg-ink text-paper`;
 export const kGhost = `${kBtn} border border-line bg-paper text-ink-soft active:bg-paper-deep`;

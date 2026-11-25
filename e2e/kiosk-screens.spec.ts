@@ -1,7 +1,9 @@
 // #200: киоск на телефоне и планшете — скриншоты всех шагов (для PR) и проверка «без горизонтальной прокрутки».
 // Три экрана: iPhone 15 Pro Max 430×932, iPhone 390×844, iPad 820×1180 (портрет). Снимки — e2e-screens/<экран>/*.jpg
-// (CI выкладывает их артефактом kiosk-screens). Горизонтальная прокрутка на любом шаге = тест красный.
+// (CI выкладывает их артефактом kiosk-screens). Горизонтальная прокрутка, кнопка за краем экрана или ниже 48 px
+// на любом шаге = тест красный. Плюс «Архив» и «▶ Показ»: без ссылок с токеном семьи и без голоса.
 import { expect, test, type Page } from "@playwright/test";
+import { DEMO_KIOSK_FAMILY } from "@/fixtures/demo/family";
 import { E2E_ENV, fakeMicrophone, recordWithMic } from "./support";
 
 const SCREENS = [
@@ -21,6 +23,20 @@ for (const vp of SCREENS) {
       await page.screenshot({ path: `e2e-screens/${vp.name}/${String(n).padStart(2, "0")}-${name}.jpg`, type: "jpeg", quality: 55, fullPage: true });
       const { scroll, width } = await page.evaluate(() => ({ scroll: document.documentElement.scrollWidth, width: window.innerWidth }));
       expect.soft(scroll, `${vp.name} · ${name}: горизонтальная прокрутка (${scroll} > ${width})`).toBeLessThanOrEqual(width);
+      const bad = await page.evaluate(() =>
+        [...document.querySelectorAll("button")]
+          .map((b) => ({ t: (b.textContent ?? "").trim().slice(0, 30), r: b.getBoundingClientRect() }))
+          .filter(({ r }) => r.width > 0 && r.height > 0 && (r.right > window.innerWidth + 1 || r.left < -1 || r.height < 47.5))
+          .map(({ t, r }) => `«${t}» ${Math.round(r.left)}…${Math.round(r.right)} × ${Math.round(r.height)} px`),
+      );
+      expect.soft(bad, `${vp.name} · ${name}: кнопки за краем экрана или ниже 48 px`).toEqual([]);
+    }
+
+    async function login(page: Page) {
+      await page.goto("/kiosk");
+      await page.getByLabel("PIN волонтёра").fill(E2E_ENV.KIOSK_PIN);
+      await page.getByRole("button", { name: "Войти" }).click();
+      await expect(page.getByRole("heading", { name: "Очередь дня" })).toBeVisible();
     }
 
     test("шаги киоска", async ({ page }) => {
@@ -30,9 +46,7 @@ for (const vp of SCREENS) {
 
       await page.goto("/kiosk");
       await shot(page, "pin");
-      await page.getByLabel("PIN волонтёра").fill(E2E_ENV.KIOSK_PIN);
-      await page.getByRole("button", { name: "Войти" }).click();
-      await expect(page.getByRole("heading", { name: "Очередь дня" })).toBeVisible();
+      await login(page);
       await shot(page, "queue");
 
       await page.getByRole("link", { name: "+ Новый старейшина" }).click();
@@ -70,6 +84,36 @@ for (const vp of SCREENS) {
       await page.getByRole("link", { name: "Очередь дня" }).click();
       await expect(page.getByRole("listitem").filter({ hasText: elder })).toBeVisible();
       await shot(page, "queue-row");
+    });
+
+    test("архив и ▶ Показ", async ({ page }) => {
+      n = 20;
+      await login(page);
+      await page.getByRole("link", { name: "Архив", exact: true }).click();
+      await expect(page.getByRole("heading", { name: "Архив", exact: true })).toBeVisible();
+      await expect(page.getByText(/Ли Нина/).first()).toBeVisible();
+      // публичный экран: ни токена семьи, ни ссылок на книгу / черновик / главу с токеном, ни голоса
+      const leaks = page.locator('a[href*="/f/"], a[href*="/book/"], a[href*="/draft"], a[href*="token="], a[href*="/listen/"], audio');
+      await expect(leaks).toHaveCount(0);
+      expect(await page.content()).not.toContain(DEMO_KIOSK_FAMILY.access_token);
+      await shot(page, "archive");
+
+      await page.getByRole("link", { name: "▶ Показ" }).click();
+      await page.waitForURL(/\/kiosk\/archive\/show/);
+      await expect(page.getByText(/^1 из \d+$/)).toBeVisible();
+      await expect(leaks).toHaveCount(0);
+      const html = await page.content();
+      expect(html).not.toContain(DEMO_KIOSK_FAMILY.access_token);
+      expect(html).not.toMatch(/access_token/);
+      await shot(page, "show");
+      const total = Number((await page.getByText(/^1 из \d+$/).textContent())?.split(" из ")[1] ?? 1);
+      if (total > 1) {
+        await page.getByRole("button", { name: "Следующая глава" }).click();
+        await expect(page.getByText(new RegExp(`^2 из ${total}$`))).toBeVisible();
+        await shot(page, "show-next");
+      }
+      await page.getByRole("link", { name: "✕ Выйти" }).click();
+      await expect(page.getByRole("heading", { name: "Архив", exact: true })).toBeVisible();
     });
   });
 }
