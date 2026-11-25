@@ -1,5 +1,6 @@
 // Проверка корейского (V2): демо-главы книги и банк вопросов.
-//   1) правила без ИИ — глоссарий docs/glossary.md (корё мар, реалии, топонимы, фамилии), годы,
+//   1) правила без ИИ — глоссарий docs/glossary.md (корё мар, реалии, топонимы, фамилии, «не:» варианты), годы,
+//      пояснения в скобках, которых нет в оригинале,
 //      стиль речи (한다체 в повествовании, 해요체 + почтительное -시- в вопросах), кириллица, цитата;
 //   2) обратный перевод KR→RU ДРУГИМ провайдером, чем переводил (translate идёт на Gemini → проверяет OpenAI;
 //      нет ключа OpenAI — Gemini Flash, т. е. другая модель), сверка с RU, флажки (промпт eval/back_translate.md).
@@ -15,6 +16,10 @@ export interface GlossaryEntry {
   ko: string[];
   note: string;
   confirmed: boolean;
+  /** «не: 아버님 / 아빠» в колонке «Пояснение» — варианты, которых в главе быть не должно */
+  avoid: string[];
+  /** Допустимые пояснения в скобках: 한식(寒食), 콜호스(집단농장) — из колонок «한국어» и «Пояснение» */
+  glosses: string[];
 }
 
 export interface KrItem {
@@ -73,9 +78,21 @@ export function parseGlossary(md: string): GlossaryEntry[] {
       .map((c) => c.trim());
     if (cells.length < 2 || cells[0] === "RU" || /^-+$/.test(cells[0]!)) continue;
     const ru = splitVariants(cells[0]!);
-    const ko = splitVariants(cells[1]!).map((v) => v.replace(/\(.*?\)/g, "").trim()).filter(Boolean);
+    const koRaw = splitVariants(cells[1]!);
+    const ko = koRaw.map((v) => v.replace(/\(.*?\)/g, "").trim()).filter(Boolean);
     if (!ru.length || !ko.length) continue;
-    out.push({ section, ru, ko, note: cells[2] ?? "", confirmed: (cells[3] ?? "").includes("✓") });
+    const note = cells[2] ?? "";
+    const avoid = /не:\s*([^;]+)/.exec(note)?.[1];
+    const glosses = [...koRaw, note].flatMap((t) => [...t.matchAll(/[가-힣]+\([^)]+\)/g)].map((m) => m[0]));
+    out.push({
+      section,
+      ru,
+      ko,
+      note,
+      confirmed: (cells[3] ?? "").includes("✓"),
+      avoid: avoid ? splitVariants(avoid).filter((v) => /[가-힣]/.test(v)) : [],
+      glosses,
+    });
   }
   return out;
 }
@@ -103,6 +120,18 @@ function glossaryFlags(item: KrItem, glossary: GlossaryEntry[]): KrFlag[] {
     const cs = e.section === "place" || e.section === "surname";
     const hit = e.ru.map((v) => variantRegex(v, cs).exec(ru)).find(Boolean);
     if (!hit) continue;
+    const bad = e.avoid.find((a) => ko.includes(compact(a)));
+    if (bad) {
+      flags.push({
+        id: item.id,
+        source: "rule",
+        rule: "glossary:variant",
+        ko: bad,
+        ru: hit[0],
+        issue: `«${hit[0]}» → ${e.ko.join(" / ")}, не ${bad} (глоссарий)`,
+        severity: "minor",
+      });
+    }
     if (!e.ko.some((k) => ko.includes(compact(k)))) {
       flags.push({
         id: item.id,
@@ -134,6 +163,30 @@ function glossaryFlags(item: KrItem, glossary: GlossaryEntry[]): KrFlag[] {
     }
   }
   return flags;
+}
+
+// ── Пояснения в скобках ─────────────────────────────────────────────────────
+
+/** Скобки в корейском, которых нет в оригинале: 아파디 우리(아버지의 집), 아지바이(아버지).
+ *  Допустимо: пояснение из глоссария (콜호스(집단농장)), ханча (한식(寒食)) и столько скобок, сколько их в русском. */
+export function parenFlags(item: KrItem, glossary: GlossaryEntry[]): KrFlag[] {
+  const allowed = new Set(glossary.flatMap((g) => g.glosses.map(compact)));
+  const ruParens = (item.text_ru.match(/\([^)]*\)/g) ?? []).length;
+  const extra: string[] = [];
+  for (const m of item.text_ko.matchAll(/([가-힣A-Za-z0-9]*)\s*\(([^)]*)\)/g)) {
+    const word = compact(`${m[1]}(${m[2]})`);
+    if (/^[\u4e00-\u9fff]+$/.test(m[2]!.trim())) continue; // ханча после слова — 한식(寒食), не пояснение
+    if ([...allowed].some((a) => word.endsWith(a))) continue;
+    extra.push(m[0].trim());
+  }
+  return extra.slice(ruParens).map((ko) => ({
+    id: item.id,
+    source: "rule" as const,
+    rule: "paren",
+    ko,
+    issue: "пояснение в скобках, которого нет в оригинале — убрать (перевод не объясняет, а передаёт)",
+    severity: "major" as const,
+  }));
 }
 
 // ── Годы ─────────────────────────────────────────────────────────────────────
@@ -215,16 +268,21 @@ export function isHapsyo(e: string): boolean {
 }
 const end = (s: string) => s.replace(/["'”»)\s.!?…]+$/, "");
 
+/** Абзацы корейского текста: пустая строка или перевод строки. */
+export const paragraphs = (text: string) => text.split(/\n+/).map((p) => p.trim()).filter((p) => /[가-힣]/.test(p));
+
 function styleFlagsChapter(item: KrItem): KrFlag[] {
   const flags: KrFlag[] = [];
-  const narrative = sentences(withoutQuotes(item.text_ko));
-  const yoS: string[] = [];
-  let daCount = 0;
-  for (const s of narrative) {
+  // Смешение 해요체 и 한다체 — внутри одного абзаца (прямая речь в кавычках не считается)
+  paragraphs(withoutQuotes(item.text_ko)).forEach((p, i) => {
+    const ends = sentences(p).map(end);
+    const yo = sentences(p).filter((_, k) => /요$/.test(ends[k]!));
+    if (yo.length && ends.some((e) => /다$/.test(e) && !isHapsyo(e)))
+      flags.push({ id: item.id, source: "rule", rule: "style:mixed", ko: yo[0]!.slice(-30), issue: `смешение 해요체 и 한다체 в абзаце ${i + 1} — один стиль повествования`, severity: "minor" });
+  });
+  for (const s of sentences(withoutQuotes(item.text_ko))) {
     const e = end(s);
     if (isHapsyo(e)) flags.push({ id: item.id, source: "rule", rule: "style:hapsyo", ko: s.slice(-30), issue: "습니다체 в повествовании — нужен 한다체 (했다, 살았다)", severity: "minor" });
-    else if (/요$/.test(e)) yoS.push(s);
-    else if (/다$/.test(e)) daCount++;
     const m = ELDER.exec(s);
     if (m && !HONORIFIC.test(s.slice(m.index + m[0].length))) {
       flags.push({ id: item.id, source: "rule", rule: "style:honorific", ko: s.slice(m.index, m.index + 40), issue: `о старшем (${m[1]}) без почтительного -시- — проверить сказуемое`, severity: "minor" });
@@ -232,8 +290,32 @@ function styleFlagsChapter(item: KrItem): KrFlag[] {
     if (/그녀/.test(s))
       flags.push({ id: item.id, source: "rule", rule: "style:geunyeo", ko: s.slice(Math.max(0, s.indexOf("그녀") - 10), s.indexOf("그녀") + 20), issue: "그녀 — книжно для рассказа о близком; лучше по роли (할머니, 그 사람)", severity: "minor" });
   }
-  if (yoS.length && daCount)
-    flags.push({ id: item.id, source: "rule", rule: "style:mixed", ko: yoS[0]!.slice(-30), issue: "смешение 해요체 и 한다체 в повествовании", severity: "minor" });
+  return flags;
+}
+
+/** ㄷ-неправильные: ㄹ из ㄷ перед 으 — норма (들으셨다 ← 듣다, 물으셨다 ← 묻다, 걸으셨다 ← 걷다, 실으셨다 ← 싣다, 깨달으셨다). */
+const RIEUL_OK = /^(들|물|걸|실|깨달|일컬|알아들|엿들|되물|캐물|불)$/;
+
+/** ㄹ-глагол + 으셨 / 으시: ㄹ выпадает перед ㅅ — 썰다 → 써셨다, 만들다 → 만드셨다 (решение команды 25.11, #103). */
+export function rieulFlags(item: KrItem): KrFlag[] {
+  const flags: KrFlag[] = [];
+  for (const m of item.text_ko.matchAll(/([가-힣]*)([가-힣])으(셨|시)/g)) {
+    const c = m[2]!.charCodeAt(0) - 0xac00;
+    if (c % 28 !== 8) continue; // последний слог основы не на ㄹ
+    if (RIEUL_OK.test(m[1]! + m[2]!)) continue;
+    const fixed = String.fromCharCode(0xac00 + c - 8) + m[3];
+    flags.push({ id: item.id, source: "rule", rule: "style:rieul", ko: m[0], issue: `ㄹ-глагол с -시-: ㄹ выпадает — ${m[1]}${fixed}… (썰다 → 써셨다, 만들다 → 만드셨다)`, severity: "minor" });
+  }
+  return flags;
+}
+
+/** О своих родителях в повествовании — 아버지 / 어머니; 아버님 / 어머님 — о чужих, свёкре, тесте (решение команды 25.11, #103). */
+export function parentsFlags(item: KrItem): KrFlag[] {
+  const flags: KrFlag[] = [];
+  for (const m of withoutQuotes(item.text_ko).matchAll(/(아버님|어머님)/g)) {
+    const plain = m[1] === "아버님" ? "아버지" : "어머니";
+    flags.push({ id: item.id, source: "rule", rule: "style:parents", ko: m[1]!, issue: `${m[1]} в повествовании — о своих родителях ${plain}; ${m[1]} только о чужих родителях, свёкре / тесте — проверить`, severity: "minor" });
+  }
   return flags;
 }
 
@@ -262,6 +344,8 @@ export function checkItem(item: KrItem, glossary: GlossaryEntry[]): KrFlag[] {
   if (item.quote_ko && !compact(item.text_ko).includes(compact(item.quote_ko)))
     flags.push({ id: item.id, source: "rule", rule: "quote", ko: item.quote_ko.slice(0, 40), issue: "цитата quote_ko не совпадает с фразой в тексте", severity: "major" });
   flags.push(...glossaryFlags(item, glossary), ...yearFlags(item));
+  if (item.kind === "chapter") flags.push(...parenFlags(item, glossary), ...parentsFlags(item));
+  flags.push(...rieulFlags(item));
   flags.push(...(item.kind === "chapter" ? styleFlagsChapter(item) : styleFlagsQuestion(item)));
   return flags;
 }

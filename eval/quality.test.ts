@@ -16,6 +16,8 @@ import {
   summarize,
   VOICE_TARGET,
 } from "./quality";
+import { readFileSync } from "node:fs";
+import { parseGlossary } from "./kr-check";
 import { deriveEvalSteps, evalRoute } from "./store";
 import { loadPersona } from "./sim/persona";
 import { runSimulation } from "./sim/run";
@@ -103,6 +105,32 @@ describe("evaluateRun", () => {
     expect(md).toContain("год рождения искажён");
     expect(md).toContain("той же моделью");
     expect(md).not.toContain(MOCK_NOTE);
+  });
+
+  it("#103: правила корейского без ИИ — скобки, глоссарий, стиль — в метриках, отчёте и «до / после»", async () => {
+    const glossary = parseGlossary(readFileSync("docs/glossary.md", "utf8"));
+    const bad = "우리는 아파디 우리(아버지의 집)에서 살았다. 손주들아, 들어 봐요.";
+    const router = fakeRouter({ translate: () => ({ text_ko: bad, title_ko: "집", quote_ko: "" }) });
+    const { inst, sim } = await simulate(router);
+    const m = await evaluateRun({ sim, ai: inst.ai, models: inst.models, mock: true, glossary });
+    const chapters = m.chapterQuality.length;
+    expect(chapters).toBeGreaterThan(0);
+    expect(m.krRules?.paren).toBe(chapters);
+    expect(m.krRules?.style).toBe(chapters);
+    const after = summarize([m], { mode: "mock", label: "PR" });
+    expect(after.totals.krParen).toBe(chapters);
+
+    // «до» без правил (старый отчёт) — «—», а не 0
+    const before = summarize([{ ...m, krRules: undefined }], { mode: "mock", label: "main" });
+    expect(before.totals.krParen).toBeNull();
+    const c = renderPrComment(after, before);
+    expect(c).toMatch(/KR без ИИ: пояснения в скобках, которых нет в оригинале \| — \| \d+ \| — \|/);
+    expect(c).toContain("우리(아버지의 집)");
+    expect(renderEvalReport(after)).toContain("## Корейский: правила без ИИ");
+
+    // без глоссария правила не считаются
+    const m0 = await evaluateRun({ sim, ai: inst.ai, models: inst.models, mock: true });
+    expect(m0.krRules).toBeNull();
   });
 
   it("судья недоступен — прогон не падает, ошибка в отчёте", async () => {

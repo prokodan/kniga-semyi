@@ -13,6 +13,7 @@ import { BEHAVIORS, listPersonas, loadPersona, resolveBehavior } from "@/eval/si
 import { REPORTS_DIR } from "@/eval/sim/report";
 import { runSimulation } from "@/eval/sim/run";
 import { EvalStore } from "@/eval/store";
+import { parseGlossary } from "@/eval/kr-check";
 import { evaluateRun, instrument, QUALITY_CALLS, renderEvalReport, renderPrComment, summarize, type EvalSummary, type RunMetrics } from "@/eval/quality";
 import { promptPath } from "@/lib/ai/prompts";
 import { createRouter } from "@/lib/ai/router";
@@ -113,6 +114,9 @@ async function main() {
   console.log(`Режим ИИ: ${mode}${real ? `, до ${maxCalls} запросов на прогон, ${runsCount} прогонов` : " (бесплатно, оценка не показательна)"}`);
   if (store.cachedAtStart) console.log(`Кэш ответов: ${store.cachedAtStart} записей`);
 
+  // Правила корейского без ИИ (#103): скобки, глоссарий, стиль. Нет файла — метрики «—».
+  const glossary = existsSync("docs/glossary.md") ? parseGlossary(readFileSync("docs/glossary.md", "utf8")) : undefined;
+
   const runs: RunMetrics[] = [];
   for (const key of personas) {
     const persona = loadPersona(key);
@@ -127,7 +131,7 @@ async function main() {
         ai: inst.ai,
         mode,
       });
-      const m = await evaluateRun({ sim, ai: inst.ai, models: inst.models, mock: !real, wallMs: 0 });
+      const m = await evaluateRun({ sim, ai: inst.ai, models: inst.models, mock: !real, wallMs: 0, glossary });
       m.wallMs = performance.now() - t0;
       runs.push(m);
       console.log(
