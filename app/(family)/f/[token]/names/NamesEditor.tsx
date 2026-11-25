@@ -149,7 +149,11 @@ function EntityCard({
             <span className="text-sm text-muted">Кто это или что это</span>
             <input value={form.description} onChange={set("description")} maxLength={200} className={field} autoComplete="off" disabled={busy} placeholder="например: сосед, друг детства" />
           </label>
-          <p className="text-sm text-muted">Новое написание заменит старое во всех главах книги.</p>
+          <p className="text-sm text-muted">
+            {entity.kind === "word"
+              ? "Русское написание заменится во всех главах. Корейское слово общее (например, 아버지) — в готовых главах оно не меняется, его возьмёт перевод новых глав."
+              : "Новое написание заменит старое во всех главах книги."}
+          </p>
           <div className="flex flex-wrap gap-3">
             <button type="button" onClick={() => void save()} disabled={busy || !form.name_ru.trim()} className={primary}>
               {busy ? "Сохраняем…" : "Сохранить"}
