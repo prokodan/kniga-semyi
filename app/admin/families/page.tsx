@@ -45,7 +45,7 @@ function href(view: SourceView, hideDemo: boolean): string {
 function FamilyRow({ f }: { f: AdminFamily }) {
   const b = BOOK[f.book.status];
   return (
-    <li className="flex flex-col gap-2 rounded-card border border-line bg-paper p-3" data-family={f.shortId}>
+    <li className="flex flex-col gap-2 rounded-card border border-line bg-paper p-3" data-family={f.id}>
       <div className="flex flex-wrap items-center gap-2">
         <p className="min-w-0 flex-1 truncate font-medium">{f.name}</p>
         <Badge tone={b.tone}>

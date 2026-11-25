@@ -25,12 +25,12 @@ test("/admin/families: все семьи, главы, книга, цена, сс
   await page.getByRole("link", { name: "Семьи: главы, книги, цена →" }).click();
   await page.waitForURL(/\/admin\/families/);
   await expect(page.getByRole("heading", { name: "Семьи", exact: true })).toBeVisible();
-  const kim = page.locator(`[data-family="${DEMO_FAMILY.id.slice(0, 8)}"]`);
+  const kim = page.locator(`[data-family="${DEMO_FAMILY.id}"]`);
   await expect(kim).toContainText(DEMO_FAMILY.name);
   await expect(kim).toContainText(`главы: ${DEMO_STORY_SEEDS.length} готово`);
   await expect(kim).toContainText("Цена книги:");
   await expect(kim.getByRole("link", { name: "Словарь имён" })).toHaveAttribute("href", /^\/f\/[^/]+\/names$/);
-  await expect(page.locator(`[data-family="${DEMO_KIOSK_FAMILY.id.slice(0, 8)}"]`)).toContainText("киоск АКНЦ");
+  await expect(page.locator(`[data-family="${DEMO_KIOSK_FAMILY.id}"]`)).toContainText("киоск АКНЦ");
   await page.getByRole("link", { name: "Киоск АКНЦ" }).click();
   await expect(kim).toHaveCount(0);
 });
