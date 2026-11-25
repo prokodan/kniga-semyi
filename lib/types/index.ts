@@ -85,6 +85,8 @@ export interface StoryFact {
 export interface FollowUp {
   question: string;
   answer: string;
+  /** #98: запись-уточнение (stories.id с parent_story_id), из которой пришёл ответ, — чтобы не приклеить её дважды */
+  story_id?: Uuid;
 }
 
 export interface Story {

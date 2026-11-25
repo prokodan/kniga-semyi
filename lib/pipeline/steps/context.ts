@@ -26,3 +26,17 @@ export class StepError extends Error {
     this.name = "StepError";
   }
 }
+
+/**
+ * #98: главу собирать не нужно (весь ответ — повтор более ранней главы). Движок ставит skipped с причиной;
+ * `patch` (например, приклеенные уточнения) сохраняется.
+ */
+export class StepSkip extends Error {
+  constructor(
+    message: string,
+    readonly patch: PipelinePatch = {},
+  ) {
+    super(message);
+    this.name = "StepSkip";
+  }
+}
