@@ -26,6 +26,17 @@ export async function GET() {
     }
   }
 
+  // #171: таймер подстраховки (Supabase pg_cron → /api/cron/kick) — есть ли задание, секреты в Vault, последний ответ
+  let cronKick: unknown = null;
+  if (db && dbStatus === "ok") {
+    try {
+      const { data, error } = await db.rpc("cron_kick_status");
+      cronKick = error ? { error: error.code ?? "rpc" } : data;
+    } catch {
+      cronKick = { error: "fetch_failed" };
+    }
+  }
+
   const ok = dbStatus !== "error";
   return NextResponse.json(
     {
@@ -40,7 +51,9 @@ export async function GET() {
         kiosk_pin: Boolean(env.kioskPin()),
         openai_key: Boolean(env.openaiApiKey()),
         listen_secret: Boolean(env.listenSecret()),
+        cron_secret: Boolean(env.cronSecret()),
       },
+      cron_kick: cronKick,
       commit: process.env.VERCEL_GIT_COMMIT_SHA?.slice(0, 7) ?? "local",
       region: process.env.VERCEL_REGION ?? "local",
       latency_ms: Date.now() - started,

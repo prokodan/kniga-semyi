@@ -232,7 +232,7 @@ describe("evalRoute", () => {
   const prod = [
     { provider: "gemini" as const, model: "gemini-3-flash-lite", daily_limit: 500, threshold: 0.9 },
     { provider: "gemini" as const, model: "gemini-3-flash", daily_limit: 20, threshold: 0.9 },
-    { provider: "openai" as const, model: "gpt-5-mini" },
+    { provider: "openai" as const, model: "gpt-5.4-mini" },
   ];
   it("обычные шаги — только Flash-Lite, без порогов", () => {
     expect(evalRoute("translate", prod).providers).toEqual([{ provider: "gemini", model: "gemini-3-flash-lite" }]);
@@ -240,13 +240,13 @@ describe("evalRoute", () => {
   });
   it("back_translate — другая модель первой (Flash), Flash-Lite только запасной", () => {
     const r = evalRoute("back_translate", [prod[1]!, prod[2]!, prod[0]!], "gemini-x");
-    expect(r.providers.map((p) => p.model)).toEqual(["gemini-3-flash", "gpt-5-mini", "gemini-3-flash-lite"]);
+    expect(r.providers.map((p) => p.model)).toEqual(["gemini-3-flash", "gpt-5.4-mini", "gemini-3-flash-lite"]);
     expect(evalRoute("back_translate", null).providers[0]!.model).toMatch(/flash(?!-lite)/);
   });
   it("нет строк judge / back_translate в проде — модели берутся из translate прода", () => {
     const d = deriveEvalSteps({ translate: prod });
     expect(d.judge).toEqual(prod);
-    expect(d.back_translate!.map((p) => p.model)).toEqual(["gemini-3-flash", "gpt-5-mini", "gemini-3-flash-lite"]);
+    expect(d.back_translate!.map((p) => p.model)).toEqual(["gemini-3-flash", "gpt-5.4-mini", "gemini-3-flash-lite"]);
     const own = [{ provider: "gemini" as const, model: "own" }];
     expect(deriveEvalSteps({ translate: prod, judge: own }).judge).toEqual(own);
     expect(deriveEvalSteps({})).toEqual({});
