@@ -13,6 +13,7 @@ import {
   addUnique,
   blockTransition,
   candidateQuestions,
+  cleanBridge,
   coveredBlocks,
   decideAfterCompleteness,
   detectSignal,
@@ -216,7 +217,7 @@ export function createInterview(deps: InterviewDeps) {
         const chosen = rest.find((q) => q.id === pick.questionId);
         if (chosen) {
           next = chosen;
-          modelBridge = pick.bridge;
+          modelBridge = cleanBridge(pick.bridge);
         } else if (rest.length > 0) {
           next = rest[0]!; // id не из кандидатов — модель ошиблась, берём первый
         } else {

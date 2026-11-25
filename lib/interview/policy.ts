@@ -62,6 +62,16 @@ const BLOCK_ABOUT: Record<LifeBlock, string> = {
   legacy: "том, что вы хотели бы сказать внукам",
 };
 
+/**
+ * Связка модели без висящего «А…» в конце: вопрос сам начинается с «А …» или с глагола, и получалось
+ * «…про Уштобе. А А каким был ваш папа?» (sim 25.11). Оставляем законченную фразу с точкой.
+ */
+export function cleanBridge(bridge: string): string {
+  let b = bridge.trim().replace(/[\s,—-]*(?:^|\s)[АаИи][.…]*$/u, "").trim();
+  if (b && !/[.!…]$/.test(b)) b += ".";
+  return b;
+}
+
 /** Мост при смене раздела. Похвала прошлой теме здесь не уместна (#99 п. 4). */
 export function blockTransition(block: LifeBlock): string {
   return `Спасибо! Теперь давайте поговорим о ${BLOCK_ABOUT[block]}.`;
