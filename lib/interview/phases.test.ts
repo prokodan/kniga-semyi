@@ -248,3 +248,29 @@ describe("связка модели без висящего «А…» (sim 25.11
     expect(cleanBridge(input)).toBe(expected);
   });
 });
+
+describe("#101: прогресс для полосы разделов", () => {
+  it("вопрос N из M в разделе, уточнение K из 3, пройденные разделы", async () => {
+    const { interview, start } = setup({
+      completeness: (i) =>
+        i.followupsAsked === 0
+          ? { covered: [], missing: ["кто"], followup: "А кто был рядом?", done: false, offTopicBlock: null }
+          : { covered: [], missing: [], followup: null, done: true, offTopicBlock: null },
+    });
+    const s = await start();
+    const total = bank.inBlock("roots").length;
+    expect(s.progress.block).toEqual({ id: "roots", position: 1, total });
+    expect(s.progress.followups).toEqual({ asked: 0, max: MAX_FOLLOWUPS });
+    const f = await interview.submitAnswer(s.sessionId, { text: "Да, было так." });
+    expect(f.progress.followups.asked).toBe(1);
+    expect(f.progress.block?.position).toBe(1);
+    const n = await interview.submitAnswer(s.sessionId, { text: LONG });
+    expect(n.progress.block).toEqual({ id: "roots", position: 2, total });
+    expect(n.progress.followups.asked).toBe(0);
+    let r: AnswerResult = n;
+    let guard = 0;
+    while ((r.type === "followup" || nextOf(r)?.block === "roots") && guard++ < 20) r = await interview.submitAnswer(s.sessionId, { text: LONG });
+    expect(r.progress.doneBlocks).toContain("roots");
+    expect(r.progress.block).toMatchObject({ id: "childhood", position: 1 });
+  });
+});

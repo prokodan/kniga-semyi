@@ -57,6 +57,12 @@ export interface Progress {
   blocksTotal: number;
   questionsDone: number;
   questionsTotal: number;
+  /** #101: разделы, пройденные целиком (✓ в полосе разделов) */
+  doneBlocks: LifeBlock[];
+  /** #101: «Вопрос 2 из 5 в разделе» — место текущего вопроса в его разделе; null — интервью завершено */
+  block: { id: LifeBlock; position: number; total: number } | null;
+  /** #101: «уточнение 1 из 3» — сколько уточнений по текущему вопросу уже задано и сколько можно всего */
+  followups: { asked: number; max: number };
 }
 
 export type AnswerResult =
@@ -120,11 +126,22 @@ export function createInterview(deps: InterviewDeps) {
   function progress(state: SessionState): Progress {
     const all = bank.all();
     const blocks = new Set(all.map((q) => q.block));
+    const doneBlocks = coveredBlocks(bank, state);
+    const current = state.current_question_id ? bank.get(state.current_question_id) : undefined;
+    let block: Progress["block"] = null;
+    if (current && !state.finished) {
+      const inBlock = bank.inBlock(current.block);
+      const closed = inBlock.filter((q) => q.id !== current.id && isClosed(state, q.id)).length;
+      block = { id: current.block, position: Math.min(closed + 1, inBlock.length), total: inBlock.length };
+    }
     return {
-      blocksDone: coveredBlocks(bank, state).length,
+      blocksDone: doneBlocks.length,
       blocksTotal: blocks.size,
       questionsDone: all.filter((q) => isClosed(state, q.id)).length,
       questionsTotal: all.length,
+      doneBlocks,
+      block,
+      followups: { asked: state.followups_asked ?? 0, max: MAX_FOLLOWUPS },
     };
   }
 

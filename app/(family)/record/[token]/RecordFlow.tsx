@@ -9,7 +9,8 @@ import { QUESTIONS } from "@/content/questions/bank";
 import { BLOCKS } from "@/content/questions/blocks";
 import { postJson, Recorder, UploadError, uploadAudio, type Take } from "@/components/recorder";
 import type { LifeBlock } from "@/lib/types";
-import { BlockProgress } from "../../_ui/BlockProgress";
+import { InterviewProgress } from "../../_ui/InterviewProgress";
+import { localProgress, type InterviewProgressView } from "../../_ui/progress-line";
 import { canSpeak, speak, stopSpeaking, useSpeechBlocked } from "../../_ui/speak";
 
 interface QuestionView {
@@ -20,11 +21,12 @@ interface QuestionView {
   ko: string;
 }
 
+type P = { progress?: InterviewProgressView };
 type AnswerResult =
-  | { type: "followup"; questionId: string; text: string; storyId: string | null }
-  | { type: "nextQuestion"; question: QuestionView; bridge: string; pause: boolean }
-  | { type: "blockDone"; message: string; nextQuestion: QuestionView | null; bridge: string }
-  | { type: "finished"; message: string };
+  | ({ type: "followup"; questionId: string; text: string; storyId: string | null } & P)
+  | ({ type: "nextQuestion"; question: QuestionView; bridge: string; pause: boolean } & P)
+  | ({ type: "blockDone"; message: string; nextQuestion: QuestionView | null; bridge: string } & P)
+  | ({ type: "finished"; message: string } & P);
 
 interface Current {
   question: QuestionView;
@@ -35,6 +37,8 @@ interface Current {
   pause?: boolean;
   /** Для уточнения: основная история вопроса — ответ пишется с parent_story_id */
   mainStoryId?: string | null;
+  /** #101: прогресс от движка (вопрос N из M в разделе, уточнения) */
+  progress?: InterviewProgressView;
 }
 
 interface StepResult {
@@ -65,6 +69,7 @@ export function RecordFlow(props: {
   token: string;
   familyId: string;
   storyteller: { id: string; name: string };
+  /** Раньше — для полосы «глав начато»; после #101 полосу ведёт прогресс движка. Оставлено для совместимости страницы. */
   initialCovered: LifeBlock[];
   answeredQuestionIds: string[];
 }) {
@@ -76,7 +81,6 @@ export function RecordFlow(props: {
   const [message, setMessage] = useState<string | null>(null);
   const [saved, setSaved] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [covered, setCovered] = useState<LifeBlock[]>(props.initialCovered);
   const [take, setTake] = useState(0); // ключ Recorder — новый вопрос = чистая запись
   const [autoSpeak, setAutoSpeak] = useState(false);
   const recording = useSpeechBlocked(); // #100: идёт запись — «Прослушать вопрос» недоступна
@@ -120,7 +124,7 @@ export function RecordFlow(props: {
       const { done, later } = local.current;
       const q = QUESTIONS.find((x) => !done.has(x.id) && !later.includes(x.id)) ?? QUESTIONS.find((x) => later.includes(x.id) && !done.has(x.id));
       if (q) local.current.later = later.filter((id) => id !== q.id);
-      show(q ? asQuestion(bankView(q)) : null, msg ?? (q ? null : "Все вопросы позади — спасибо вам огромное!"));
+      show(q ? asQuestion(bankView(q), { progress: localProgress(QUESTIONS, done, q) }) : null, msg ?? (q ? null : "Все вопросы позади — спасибо вам огромное!"));
     },
     [show],
   );
@@ -129,11 +133,17 @@ export function RecordFlow(props: {
     (r: AnswerResult, prev: Current) => {
       switch (r.type) {
         case "followup":
-          return show({ question: prev.question, prompt: r.text, kind: "followup", mainStoryId: r.storyId ?? prev.mainStoryId ?? null });
+          return show({
+            question: prev.question,
+            prompt: r.text,
+            kind: "followup",
+            mainStoryId: r.storyId ?? prev.mainStoryId ?? null,
+            progress: r.progress ?? prev.progress,
+          });
         case "nextQuestion":
-          return show(asQuestion(r.question, { bridge: r.bridge, pause: r.pause }));
+          return show(asQuestion(r.question, { bridge: r.bridge, pause: r.pause, progress: r.progress }));
         case "blockDone":
-          return show(r.nextQuestion ? asQuestion(r.nextQuestion, { bridge: r.bridge }) : null, r.message);
+          return show(r.nextQuestion ? asQuestion(r.nextQuestion, { bridge: r.bridge, progress: r.progress }) : null, r.message);
         case "finished":
           return show(null, r.message);
       }
@@ -166,14 +176,14 @@ export function RecordFlow(props: {
       /* битое значение — начнём заново */
     }
     try {
-      const res = await postJson<{ sessionId: string; question: QuestionView }>("/api/sessions", token, { familyId, storytellerId: storyteller.id, mode: "family" });
+      const res = await postJson<{ sessionId: string; question: QuestionView } & P>("/api/sessions", token, { familyId, storytellerId: storyteller.id, mode: "family" });
       session.current = res.sessionId;
-      let c = asQuestion(res.question);
+      let c = asQuestion(res.question, { progress: res.progress });
       // Новая сессия начинает с первого вопроса — пролистываем те, на которые уже есть рассказы.
       for (let i = 0; i < QUESTIONS.length && local.current.done.has(c.question.id); i++) {
         const r = await sessionCall("skip", { action: "skip" });
-        if (r.type === "nextQuestion") c = asQuestion(r.question);
-        else if (r.type === "blockDone" && r.nextQuestion) c = asQuestion(r.nextQuestion);
+        if (r.type === "nextQuestion") c = asQuestion(r.question, { progress: r.progress });
+        else if (r.type === "blockDone" && r.nextQuestion) c = asQuestion(r.nextQuestion, { progress: r.progress });
         else return apply(r, c);
       }
       show(c);
@@ -266,7 +276,6 @@ export function RecordFlow(props: {
       sessionId: session.current,
       parentStoryId: prev.kind === "followup" ? (prev.mainStoryId ?? null) : null,
     });
-    setCovered((c) => (c.includes(prev.question.block) ? c : [...c, prev.question.block]));
     setSaved(prev.kind === "followup" ? "Спасибо! Дополнение сохранено." : "Спасибо! Рассказ сохранён.");
     setPhase("waiting");
     void advanceAfter(storyId, prev);
@@ -310,7 +319,11 @@ export function RecordFlow(props: {
         <Link href={`/f/${token}`} className="text-ink-soft underline-offset-4 hover:underline">
           ← К книге
         </Link>
-        <BlockProgress covered={covered} compact />
+        <InterviewProgress
+          current={current && phase === "ask" ? { block: current.question.block, title: current.question.blockTitle.ru } : null}
+          progress={current?.progress}
+          kind={current?.kind ?? "question"}
+        />
       </header>
 
       {saved && phase !== "loading" && <p className="rounded-card border border-success/40 bg-paper p-3 text-success">{saved}</p>}
@@ -349,7 +362,6 @@ export function RecordFlow(props: {
             <p className="text-sm text-muted">
               {current.question.blockTitle.ru}
               {current.question.blockTitle.ko && <span lang="ko"> · {current.question.blockTitle.ko}</span>}
-              {current.kind === "followup" && " · уточнение"}
             </p>
             {current.bridge && <p className="text-ink-soft italic">{current.bridge}</p>}
             {current.pause && (
