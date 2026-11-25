@@ -27,6 +27,14 @@ export const env = {
   supabaseServiceRoleKey: () => read("SUPABASE_SERVICE_ROLE_KEY"),
   geminiApiKey: () => read("GEMINI_API_KEY"),
   openaiApiKey: () => read("OPENAI_API_KEY"),
+  /**
+   * #94: качество картинок сказки (low | medium | high). По умолчанию low: ~10–20 с вместо ~40 с при лимите
+   * шага 45 с — на сцене не уходим в таймаут и готовые акварели. После питча можно вернуть medium в Vercel Env.
+   */
+  openaiImageQuality: (): "low" | "medium" | "high" => {
+    const v = read("OPENAI_IMAGE_QUALITY")?.toLowerCase();
+    return v === "medium" || v === "high" ? v : "low";
+  },
   adminPin: () => read("ADMIN_PIN"),
   kioskPin: () => read("KIOSK_PIN"),
   telegramBotToken: () => read("TELEGRAM_BOT_TOKEN"),

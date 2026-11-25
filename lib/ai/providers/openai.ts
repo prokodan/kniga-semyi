@@ -48,7 +48,7 @@ export const openaiProvider: AiProvider = {
       const json = (await fetchJson("openai", `${BASE}/images/generations`, {
         method: "POST",
         headers: { authorization: auth(), "content-type": "application/json" },
-        body: JSON.stringify({ model: req.model, prompt: `${input.style}\n\n${input.prompt}`, size: "1024x1024", quality: "medium", n: 1 }),
+        body: JSON.stringify({ model: req.model, prompt: `${input.style}\n\n${input.prompt}`, size: "1024x1024", quality: env.openaiImageQuality(), n: 1 }),
         signal: req.signal,
       })) as { data?: { b64_json?: string }[] };
       const b64 = json.data?.[0]?.b64_json;
