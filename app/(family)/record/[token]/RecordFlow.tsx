@@ -244,8 +244,8 @@ export function RecordFlow(props: {
           await sleep(POLL_MS);
         }
       }
-      // Расшифровки пока нет (I2) — рассказ сохранён, просто идём дальше без уточнений.
-      apply(await sessionCall("skip", { action: "skip" }), prev);
+      // Расшифровки пока нет (I2) — рассказ сохранён: засчитываем его ответом (#107) и идём дальше без уточнений.
+      apply(await sessionCall("skip", { action: "skip", storyId }), prev);
     } catch (e) {
       if (isGone(e)) {
         persist(null);

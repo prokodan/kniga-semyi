@@ -277,7 +277,7 @@ export function KioskSession(props: KioskSessionProps) {
           await sleep(POLL_MS);
         }
       }
-      apply(await sessionCall("skip", { action: "skip" }), prev); // расшифровки нет — рассказ сохранён, идём дальше
+      apply(await sessionCall("skip", { action: "skip", storyId }), prev); // расшифровки нет — рассказ засчитан ответом (#107), идём дальше
     } catch (e) {
       if (isGone(e)) return restart(prev);
       console.warn("[kiosk] агент не ответил, идём по банку:", e instanceof Error ? e.message : e);
