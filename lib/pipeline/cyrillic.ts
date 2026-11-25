@@ -125,8 +125,10 @@ const ABBR: Record<string, string> = {
   ЗИЛ: "질",
   ...Object.fromEntries(REPUBLICS.flatMap((r) => r.short.map((s) => [`${s}ССР`.toUpperCase(), `${r.ko} ${SSR_KO}`]))),
 };
+/** Частица сразу после кириллицы (без пробела) — её согласуем с новым словом, см. fitParticle. */
+const PARTICLE = "(으로|로|을|를|은|는|가|이|과|와)?";
 /** «Казахская ССР», «Узбекской ССР» — прилагательное с аббревиатурой одной фразой. */
-const REPUBLIC_PHRASE = new RegExp(`(?<![А-Яа-яЁё])(${REPUBLICS.map((r) => r.stem).join("|")})[а-яё]*\\s+ССР(?![А-Яа-яЁё])`, "giu");
+const REPUBLIC_PHRASE = new RegExp(`(?<![А-Яа-яЁё])(${REPUBLICS.map((r) => r.stem).join("|")})[а-яё]*\\s+ССР(?![А-Яа-яЁё])${PARTICLE}`, "giu");
 
 const LAT: Record<string, string> = {
   а: "A", б: "B", в: "V", г: "G", д: "D", е: "E", ё: "YO", ж: "ZH", з: "Z", и: "I", й: "Y", к: "K", л: "L", м: "M", н: "N",
@@ -145,8 +147,37 @@ export function abbrKo(word: string): string | null {
   return isAbbr(word) ? latinizeAbbr(word) : null;
 }
 
-/** Кириллическое слово (возможно, через дефис: Иссык-Куль, Ким-Ли). */
-const CYR_WORD = /[А-Яа-яЁё]+(?:-[А-Яа-яЁё]+)*/g;
+/** Кириллическое слово (возможно, через дефис: Иссык-Куль, Ким-Ли) и частица сразу после него. */
+const CYR_WORD = /([А-Яа-яЁё]+(?:-[А-Яа-яЁё]+)*)(으로|로|을|를|은|는|가|이|과|와)?/g;
+
+/**
+ * Частица под новое слово: модель ставила её под своё «чтение» кириллицы («СССР를»), а 소련 оканчивается на согласную →
+ * 소련을. Только для хангыля в конце (KGB, GAI не трогаем); 이 после гласной не меняем — это может быть связка (이었다).
+ */
+export function fitParticle(word: string, particle: string | undefined): string {
+  if (!particle) return "";
+  const code = word.charCodeAt(word.length - 1) - 0xac00;
+  if (code < 0 || code >= 11172) return particle;
+  const t = code % 28;
+  switch (particle) {
+    case "을":
+    case "를":
+      return t ? "을" : "를";
+    case "은":
+    case "는":
+      return t ? "은" : "는";
+    case "과":
+    case "와":
+      return t ? "과" : "와";
+    case "가":
+      return t ? "이" : "가";
+    case "로":
+    case "으로":
+      return t && t !== 8 ? "으로" : "로"; // ㄹ в конце — 로 (서울로)
+    default:
+      return particle;
+  }
+}
 
 export interface CyrillicFix {
   from: string;
@@ -163,27 +194,20 @@ const note = (fixes: CyrillicFix[], fix: CyrillicFix) => {
 export function replaceCyrillic(text: string, dict: NamePair[], fixes: CyrillicFix[]): string {
   if (!text || !/[А-Яа-яЁё]/.test(text)) return text;
   // #197: сначала фразы «Казахская ССР» — иначе прилагательное ушло бы в транслитерацию (카자흐스카야)
-  const phrased = text.replace(REPUBLIC_PHRASE, (phrase, stem: string) => {
+  const phrased = text.replace(REPUBLIC_PHRASE, (phrase: string, stem: string, particle?: string) => {
     const r = REPUBLICS.find((x) => x.stem === stem.toLowerCase())!;
     const to = `${r.ko} ${SSR_KO}`;
-    note(fixes, { from: phrase, to, how: "abbr" });
-    return to;
+    const from = particle ? phrase.slice(0, -particle.length) : phrase;
+    note(fixes, { from, to, how: "abbr" });
+    return to + fitParticle(to, particle);
   });
-  return phrased.replace(CYR_WORD, (word) => {
+  return phrased.replace(CYR_WORD, (all: string, word: string, particle?: string) => {
     const hit = dict.find((p) => sameEntity(p.ru, word));
-    if (hit) {
-      note(fixes, { from: word, to: hit.ko, how: "dict" });
-      return hit.ko;
-    }
-    const abbr = word.includes("-") ? null : abbrKo(word);
-    if (abbr) {
-      note(fixes, { from: word, to: abbr, how: "abbr" });
-      return abbr;
-    }
-    const to = word.split("-").map(hangulizeRu).join("");
-    if (!to) return word;
-    note(fixes, { from: word, to, how: "translit" });
-    return to;
+    const abbr = hit || word.includes("-") ? null : abbrKo(word);
+    const to = hit ? hit.ko : (abbr ?? word.split("-").map(hangulizeRu).join(""));
+    if (!to) return all;
+    note(fixes, { from: word, to, how: hit ? "dict" : abbr ? "abbr" : "translit" });
+    return to + fitParticle(to, particle);
   });
 }
 
