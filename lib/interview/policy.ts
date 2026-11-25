@@ -30,6 +30,51 @@ export interface SessionState extends InterviewState {
   name_check?: { storyId: string; heard: string; guess: string } | null;
   /** Истории, по которым уже переспрашивали (один раз на историю) */
   name_checked?: string[];
+  /** Вопросы, на которые рассказчик уже ответил раньше в других рассказах (#99 п. 2) — не задаём */
+  covered_question_ids?: string[];
+  /** Все уточнения сессии — не повторять ни дословно, ни по смыслу (#99 п. 3) */
+  asked_followups?: string[];
+}
+
+// ---------------- Фазы и порядок разделов (#99) ----------------
+
+/**
+ * Фазы интервью: разделы идут строго по порядку, текущий доводим до конца (или «позже» по всем вопросам).
+ * Фаза 1 — Корни → Детство → Юность и учёба; фаза 2 — Работа и дело → Любовь и семья → Трудные времена;
+ * фаза 3 — Традиции и кухня → Слова внукам. Совпадает с порядком карты жизни (LIFE_BLOCKS) — проверяет тест.
+ */
+export const BLOCK_PHASES: readonly (readonly LifeBlock[])[] = [
+  ["roots", "childhood", "youth"],
+  ["work", "love", "hardship"],
+  ["traditions", "legacy"],
+];
+export const BLOCK_ORDER: readonly LifeBlock[] = BLOCK_PHASES.flat();
+
+/** «Теперь давайте поговорим о …» — предложный падеж названия раздела. */
+const BLOCK_ABOUT: Record<LifeBlock, string> = {
+  roots: "корнях вашей семьи",
+  childhood: "вашем детстве",
+  youth: "юности и учёбе",
+  work: "работе и деле",
+  love: "любви и семье",
+  hardship: "трудных временах",
+  traditions: "традициях и кухне",
+  legacy: "том, что вы хотели бы сказать внукам",
+};
+
+/**
+ * Связка модели без висящего «А…» в конце: вопрос сам начинается с «А …» или с глагола, и получалось
+ * «…про Уштобе. А А каким был ваш папа?» (sim 25.11). Оставляем законченную фразу с точкой.
+ */
+export function cleanBridge(bridge: string): string {
+  let b = bridge.trim().replace(/[\s,—-]*(?:^|\s)[АаИи][.…]*$/u, "").trim();
+  if (b && !/[.!…]$/.test(b)) b += ".";
+  return b;
+}
+
+/** Мост при смене раздела. Похвала прошлой теме здесь не уместна (#99 п. 4). */
+export function blockTransition(block: LifeBlock): string {
+  return `Спасибо! Теперь давайте поговорим о ${BLOCK_ABOUT[block]}.`;
 }
 
 // ---------------- Сигналы в ответе (без ИИ, бесплатно) ----------------
@@ -96,6 +141,56 @@ export function fallbackFollowup(question: Question, covered: string[]): string 
   return "А что вам особенно запомнилось — может, какая-то мелочь?";
 }
 
+/** Запасные уточнения без ИИ: сначала по пробелам минимума, потом общие. Для выбора неповторяющегося. */
+export function fallbackFollowups(question: Question, covered: string[]): string[] {
+  const missing = question.minimum.filter((m) => !covered.includes(m));
+  const out = [...missing, ...question.minimum].map((m) => fallbackFollowup({ ...question, minimum: [m] }, []));
+  out.push(
+    "А что вам особенно запомнилось — может, какая-то мелочь?",
+    "А кто был рядом с вами тогда?",
+    "А что вы тогда чувствовали?",
+  );
+  return [...new Set(out)];
+}
+
+// Слова, которые не несут смысла уточнения: «А помните ли вы какую-нибудь…» ≈ «А какая у него была…».
+const STOP_STEMS = new Set([
+  "помни", "какой", "какая", "какую", "какие", "каким", "какое", "нибуд", "может", "тогда", "было", "была",
+  "были", "него", "неё", "нее", "этот", "этого", "этом", "этой", "этим", "расск", "вспом", "запом", "особе",
+  "очень", "сейча", "прост", "скажи", "помнит", "вашей", "ваших", "вашем", "ваша", "ваше", "ваши", "вашим",
+  "вспоминаете", "много", "чтобы", "котор",
+].map((w) => w.slice(0, 5)));
+
+function stems(text: string): Set<string> {
+  const words = text.toLowerCase().replace(/ё/g, "е").match(/[а-яa-z]+/g) ?? [];
+  return new Set(words.filter((w) => w.length >= 4).map((w) => w.slice(0, 5)).filter((w) => !STOP_STEMS.has(w)));
+}
+
+const norm = (t: string) => t.toLowerCase().replace(/ё/g, "е").replace(/[^а-яa-z0-9]+/g, " ").trim();
+
+/**
+ * Уточнение уже звучало — дословно или по смыслу (те же значимые слова). Грубо, но бесплатно и без ИИ:
+ * «А помните ли вы какую-нибудь его привычку?» и «А какая у него была привычка?» — повтор.
+ */
+export function isRepeatFollowup(text: string, asked: readonly string[]): boolean {
+  const n = norm(text);
+  const a = stems(text);
+  return asked.some((prev) => {
+    if (norm(prev) === n) return true;
+    const b = stems(prev);
+    if (a.size === 0 || b.size === 0) return false;
+    let common = 0;
+    for (const w of a) if (b.has(w)) common += 1;
+    return common / Math.min(a.size, b.size) >= 0.6;
+  });
+}
+
+/** Первое уточнение, которого ещё не было: от модели, иначе запасные. null — все варианты уже звучали. */
+export function freshFollowup(proposed: string | null | undefined, question: Question, covered: string[], asked: readonly string[]): string | null {
+  const options = [proposed?.trim() ?? "", ...fallbackFollowups(question, covered)].filter(Boolean);
+  return options.find((t) => !isRepeatFollowup(t, asked)) ?? null;
+}
+
 export function decideAfterCompleteness(
   res: AiOutput<"completeness">,
   ctx: { question: Question; state: SessionState; answeringFollowup: boolean; bank: QuestionBank; answer?: string },
@@ -112,21 +207,34 @@ export function decideAfterCompleteness(
       returnText: canAsk ? `Какая история! Я сохраню её в главу «${title}». А если вернуться к вопросу: ${ctx.question.ru}` : null,
     };
   }
-  // Совсем короткий первый ответ — хотя бы одно уточнение, даже если модель решила, что хватит.
+  const already = ctx.state.asked_followups ?? [];
+  // Совсем короткий первый ответ — хотя бы одно уточнение, даже если модель решила, что хватит или ИИ недоступен.
   if (canAsk && asked === 0 && !ctx.answeringFollowup && ctx.answer !== undefined && wordCount(ctx.answer) < SHORT_ANSWER_WORDS) {
-    return { kind: "followup", text: res.followup?.trim() || fallbackFollowup(ctx.question, res.covered) };
+    const text = freshFollowup(res.followup, ctx.question, res.covered, already);
+    if (text) return { kind: "followup", text };
   }
   // Минимум собран (или модель решила не давить) — не перебиваем.
   if (res.done || res.missing.length === 0) return { kind: "accept" };
-  if (canAsk && res.followup && res.followup.trim()) return { kind: "followup", text: res.followup.trim() };
+  if (canAsk && res.followup && res.followup.trim()) {
+    // Модель повторила уже заданное уточнение — берём другое по пробелу, а если всё уже звучало — не давим.
+    const text = isRepeatFollowup(res.followup, already) ? freshFollowup(null, ctx.question, res.covered, already) : res.followup.trim();
+    if (text) return { kind: "followup", text };
+  }
   return { kind: "accept" };
 }
 
 // ---------------- Блоки и следующий вопрос ----------------
 
-/** Вопрос считается «пройденным», если на него ответили или его пропустили. «Позже» — нет. */
+/**
+ * Вопрос считается «пройденным», если на него ответили, его пропустили или ответ уже прозвучал раньше
+ * в других рассказах (covered_question_ids). «Позже» — нет.
+ */
 export function isClosed(state: SessionState, id: string): boolean {
-  return (state.answered_question_ids ?? []).includes(id) || (state.skipped_question_ids ?? []).includes(id);
+  return (
+    (state.answered_question_ids ?? []).includes(id) ||
+    (state.skipped_question_ids ?? []).includes(id) ||
+    (state.covered_question_ids ?? []).includes(id)
+  );
 }
 
 /** Блок закрыт, когда пройдены все его вопросы. */
@@ -141,16 +249,32 @@ export function coveredBlocks(bank: QuestionBank, state: SessionState): LifeBloc
 }
 
 /**
- * Кандидаты для next_question: первый непройденный вопрос каждого блока (порядок внутри блока
- * = порядок показа из банка). Если всё пройдено — возвращаемся к отложенным «позже».
+ * Кандидаты для next_question — только вопросы ОДНОГО раздела (#99): текущего, пока в нём есть открытые
+ * вопросы, иначе следующего по порядку фаз. Порядок внутри — как в банке (от лёгкого к личному).
+ * Когда всё пройдено — отложенные «позже», тоже по разделам.
  */
-export function candidateQuestions(bank: QuestionBank, state: SessionState, excludeId?: string): Question[] {
+export function candidateQuestions(bank: QuestionBank, state: SessionState, excludeId?: string, currentBlock?: LifeBlock): Question[] {
   const later = new Set(state.later_question_ids ?? []);
   const open = bank.all().filter((q) => q.id !== excludeId && !isClosed(state, q.id) && !later.has(q.id));
-  const firstPerBlock = new Map<LifeBlock, Question>();
-  for (const q of open) if (!firstPerBlock.has(q.block)) firstPerBlock.set(q.block, q);
-  if (firstPerBlock.size > 0) return [...firstPerBlock.values()];
-  return bank.all().filter((q) => later.has(q.id) && q.id !== excludeId && !isClosed(state, q.id));
+  const pool = open.length > 0 ? open : bank.all().filter((q) => later.has(q.id) && q.id !== excludeId && !isClosed(state, q.id));
+  if (pool.length === 0) return [];
+  const rank = (b: LifeBlock) => {
+    const i = BLOCK_ORDER.indexOf(b);
+    return i < 0 ? BLOCK_ORDER.length : i;
+  };
+  const block =
+    currentBlock && pool.some((q) => q.block === currentBlock)
+      ? currentBlock
+      : [...pool].sort((a, b) => rank(a.block) - rank(b.block))[0]!.block;
+  return pool.filter((q) => q.block === block);
+}
+
+/** Ответы прошлых рассказов (обрезанные) для проверки «уже отвечено» и уточнений без повторов. */
+export const KNOWN_ANSWERS = 30;
+export const KNOWN_ANSWER_CHARS = 300;
+
+export function pushAsked(state: SessionState, text: string): string[] {
+  return [...(state.asked_followups ?? []), text.trim()].slice(-30);
 }
 
 export function pushRecent(state: SessionState, answer: string): string[] {

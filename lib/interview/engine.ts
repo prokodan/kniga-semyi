@@ -11,13 +11,18 @@ import type { LifeBlock, Question, SessionMode, Story } from "@/lib/types";
 import { getQuestionBank, type QuestionBank } from "./bank";
 import {
   addUnique,
+  blockTransition,
   candidateQuestions,
+  cleanBridge,
   coveredBlocks,
   decideAfterCompleteness,
   detectSignal,
   isBlockDone,
   isClosed,
+  KNOWN_ANSWER_CHARS,
+  KNOWN_ANSWERS,
   MAX_FOLLOWUPS,
+  pushAsked,
   pushRecent,
   REFUSE_STORY_WORDS,
   removeValue,
@@ -115,11 +120,10 @@ export function createInterview(deps: InterviewDeps) {
   function progress(state: SessionState): Progress {
     const all = bank.all();
     const blocks = new Set(all.map((q) => q.block));
-    const done = new Set([...(state.answered_question_ids ?? []), ...(state.skipped_question_ids ?? [])]);
     return {
       blocksDone: coveredBlocks(bank, state).length,
       blocksTotal: blocks.size,
-      questionsDone: all.filter((q) => done.has(q.id)).length,
+      questionsDone: all.filter((q) => isClosed(state, q.id)).length,
       questionsTotal: all.length,
     };
   }
@@ -148,12 +152,36 @@ export function createInterview(deps: InterviewDeps) {
     return parts.filter((p) => p.trim()).join("\n\n") || fallback;
   }
 
+  /** Прошлые ответы рассказчика (все сессии семьи, если хранилище умеет; иначе последние в сессии). */
+  async function knownAnswers(storytellerId: string, state: SessionState): Promise<string[]> {
+    let list: string[] = [];
+    if (repo.earlierAnswers) {
+      try {
+        list = await repo.earlierAnswers(storytellerId);
+      } catch {
+        list = [];
+      }
+    }
+    if (list.length === 0) list = state.recent_answers ?? [];
+    return list
+      .map((a) => a.trim().slice(0, KNOWN_ANSWER_CHARS))
+      .filter(Boolean)
+      .slice(-KNOWN_ANSWERS);
+  }
+
   /** Переход к следующему вопросу (или blockDone / finished). Сбрасывает счётчики текущего вопроса. */
   async function advance(
     sessionId: string,
     state: SessionState,
     prev: Question,
-    opts: { storyteller: string; bridge?: string; pause?: boolean; storyId: string | null; wasBlockDone: boolean },
+    opts: {
+      storyteller: string;
+      storytellerId: string;
+      bridge?: string;
+      pause?: boolean;
+      storyId: string | null;
+      wasBlockDone: boolean;
+    },
   ): Promise<AnswerResult> {
     state.followups_asked = 0;
     state.current_story_id = null;
@@ -162,27 +190,49 @@ export function createInterview(deps: InterviewDeps) {
     state.covered_blocks = coveredBlocks(bank, state);
     const blockJustDone = !opts.wasBlockDone && isBlockDone(bank, state, prev.block);
 
-    let candidates = candidateQuestions(bank, state, prev.id);
+    // #99: только вопросы текущего раздела; раздел закрыт — следующий по порядку фаз.
+    let candidates = candidateQuestions(bank, state, prev.id, prev.block);
     // Остался только отложенный «позже» текущий вопрос — предлагаем его снова (кроме трудной темы).
     if (candidates.length === 0 && !opts.pause && !isClosed(state, prev.id)) candidates = [prev];
     let next: Question | null = null;
-    let bridge = opts.bridge ?? "";
+    let modelBridge = "";
     if (candidates.length > 0) {
       next = candidates[0]!;
       try {
+        const known = await knownAnswers(opts.storytellerId, state);
         const pick = await ai.run("next_question", {
           storytellerName: opts.storyteller,
           coveredBlocks: state.covered_blocks,
           recentAnswers: state.recent_answers ?? [],
           candidateQuestions: candidates.map((q) => ({ id: q.id, block: q.block, text: q.ru })),
+          sameBlock: true,
+          ...(known.length > 0 ? { knownAnswers: known } : {}),
         });
-        const chosen = candidates.find((q) => q.id === pick.questionId);
-        if (chosen) next = chosen; // id не из кандидатов — модель ошиблась, берём первый
-        if (!opts.bridge && chosen) bridge = pick.bridge;
+        // #99 п. 2: уже отвеченное в прошлых рассказах не спрашиваем (не больше 2 за раз — страховка от ошибки модели).
+        const answeredBefore = (pick.alreadyAnswered ?? [])
+          .filter((id) => candidates.some((q) => q.id === id) && id !== prev.id)
+          .slice(0, 2);
+        for (const id of answeredBefore) state.covered_question_ids = addUnique(state.covered_question_ids, id);
+        const rest = candidates.filter((q) => !answeredBefore.includes(q.id));
+        const chosen = rest.find((q) => q.id === pick.questionId);
+        if (chosen) {
+          next = chosen;
+          modelBridge = cleanBridge(pick.bridge);
+        } else if (rest.length > 0) {
+          next = rest[0]!; // id не из кандидатов — модель ошиблась, берём первый
+        } else {
+          // Весь остаток раздела уже рассказан — следующий раздел по порядку, без второго вызова ИИ.
+          const after = candidateQuestions(bank, state, prev.id, prev.block);
+          next = after[0] ?? null;
+        }
       } catch (e) {
         if (!(e instanceof AiUnavailableError)) throw e; // ИИ недоступен — просто идём по порядку банка
       }
     }
+    state.covered_blocks = coveredBlocks(bank, state);
+    // #99 п. 4: при смене раздела — мост-переход движка; похвала прошлой теме — только внутри раздела.
+    let bridge = opts.bridge ?? modelBridge;
+    if (next && next.block !== prev.block) bridge = [opts.bridge, blockTransition(next.block)].filter(Boolean).join(" ");
 
     if (!next) {
       state.finished = true;
@@ -217,11 +267,12 @@ export function createInterview(deps: InterviewDeps) {
     question: Question,
     main: Story,
     answer: string,
-    ctx: { name: string; wasBlockDone: boolean; answeringFollowup: boolean },
+    ctx: { name: string; storytellerId: string; wasBlockDone: boolean; answeringFollowup: boolean },
   ): Promise<AnswerResult> {
-    const { name, wasBlockDone, answeringFollowup } = ctx;
+    const { name, storytellerId, wasBlockDone, answeringFollowup } = ctx;
     let res: AiOutput<"completeness">;
-    let aiDown = false;
+    // Прошлые ответы (без текущего) — чтобы уточнение не спрашивало уже рассказанное.
+    const earlier = (state.recent_answers ?? []).slice(0, -1).map((a) => a.slice(0, KNOWN_ANSWER_CHARS));
     try {
       res = await ai.run(
         "completeness",
@@ -232,20 +283,23 @@ export function createInterview(deps: InterviewDeps) {
           answer: answer,
           followupsAsked: state.followups_asked ?? 0,
           maxFollowups: MAX_FOLLOWUPS,
+          ...((state.asked_followups ?? []).length > 0 ? { askedFollowups: state.asked_followups } : {}),
+          ...(earlier.length > 0 ? { earlierAnswers: earlier } : {}),
         },
         { storyId: main.id },
       );
     } catch (e) {
       if (!(e instanceof AiUnavailableError)) throw e;
       // ИИ недоступен — принимаем ответ как есть, разговор не останавливаем.
+      // #99 п. 5: короткий ответ всё равно получает одно уточнение — запасное, без ИИ.
       res = { covered: [], missing: [], followup: null, done: true, offTopicBlock: null };
-      aiDown = true;
     }
 
-    const decision = decideAfterCompleteness(res, { question, state, answeringFollowup, bank, answer: aiDown ? undefined : answer });
+    const decision = decideAfterCompleteness(res, { question, state, answeringFollowup, bank, answer });
 
     if (decision.kind === "followup") {
       state.pending_followup = decision.text;
+      state.asked_followups = pushAsked(state, decision.text);
       state.followups_asked = (state.followups_asked ?? 0) + 1;
       state.emotional_pause = false;
       await repo.saveState(sessionId, state);
@@ -278,12 +332,12 @@ export function createInterview(deps: InterviewDeps) {
         };
       }
       state.later_question_ids = addUnique(state.later_question_ids, question.id);
-      return advance(sessionId, state, question, { storyteller: name, storyId: main.id, wasBlockDone });
+      return advance(sessionId, state, question, { storyteller: name, storytellerId, storyId: main.id, wasBlockDone });
     }
 
     state.answered_question_ids = addUnique(state.answered_question_ids, question.id);
     state.later_question_ids = removeValue(state.later_question_ids, question.id);
-    return advance(sessionId, state, question, { storyteller: name, storyId: main.id, wasBlockDone });
+    return advance(sessionId, state, question, { storyteller: name, storytellerId, storyId: main.id, wasBlockDone });
   }
 
   async function storytellerName(session: { storyteller_id: string }) {
@@ -367,6 +421,7 @@ export function createInterview(deps: InterviewDeps) {
         state.pending_followup = null;
         return checkCompleteness(sessionId, state, question, main, combinedAnswer(main, text), {
           name,
+          storytellerId: session.storyteller_id,
           wasBlockDone,
           answeringFollowup: followups.length > 0,
         });
@@ -393,7 +448,7 @@ export function createInterview(deps: InterviewDeps) {
           storyId = null;
         }
         state.later_question_ids = removeValue(state.later_question_ids, question.id);
-        return advance(sessionId, state, question, { storyteller: name, bridge: PHRASES.refused, storyId, wasBlockDone });
+        return advance(sessionId, state, question, { storyteller: name, storytellerId: session.storyteller_id, bridge: PHRASES.refused, storyId, wasBlockDone });
       }
 
       // Сохраняем сказанное до вызова ИИ: если модель упадёт, рассказ не потеряется.
@@ -431,14 +486,14 @@ export function createInterview(deps: InterviewDeps) {
       // Трудная тема: тёплая пауза, предложение вернуться позже, никаких уточнений подряд.
       if (signal === "emotional") {
         state.later_question_ids = addUnique(state.later_question_ids, question.id);
-        return advance(sessionId, state, question, { storyteller: name, bridge: PHRASES.pause, pause: true, storyId: main.id, wasBlockDone });
+        return advance(sessionId, state, question, { storyteller: name, storytellerId: session.storyteller_id, bridge: PHRASES.pause, pause: true, storyId: main.id, wasBlockDone });
       }
 
       if (signal === "refuses") {
         // Длинный рассказ, отказ — про часть: глава есть, уточнений нет.
         state.answered_question_ids = addUnique(state.answered_question_ids, question.id);
         state.later_question_ids = removeValue(state.later_question_ids, question.id);
-        return advance(sessionId, state, question, { storyteller: name, bridge: PHRASES.refused, storyId: main.id, wasBlockDone });
+        return advance(sessionId, state, question, { storyteller: name, storytellerId: session.storyteller_id, bridge: PHRASES.refused, storyId: main.id, wasBlockDone });
       }
 
       // Имя или место распознано неуверенно («У штабе» ≈ Уштобе) — один раз переспросить.
@@ -461,7 +516,12 @@ export function createInterview(deps: InterviewDeps) {
         }
       }
 
-      return checkCompleteness(sessionId, state, question, main, combinedAnswer(main, text), { name, wasBlockDone, answeringFollowup });
+      return checkCompleteness(sessionId, state, question, main, combinedAnswer(main, text), {
+        name,
+        storytellerId: session.storyteller_id,
+        wasBlockDone,
+        answeringFollowup,
+      });
     },
 
     /**
@@ -484,6 +544,7 @@ export function createInterview(deps: InterviewDeps) {
       }
       return advance(sessionId, state, question, {
         storyteller: name,
+        storytellerId: session.storyteller_id,
         bridge: action === "later" ? PHRASES.later : PHRASES.skip,
         storyId,
         wasBlockDone,

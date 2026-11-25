@@ -237,7 +237,7 @@ describe("интервью-агент: пропуск, позже, блоки, �
     expect(next?.id).toBe(createQuestionBank().all().find((x) => x.id !== s.question.id)!.id);
   });
 
-  it("ИИ недоступен → ответ принят, разговор идёт по порядку банка", async () => {
+  it("ИИ недоступен → короткий ответ: запасное уточнение без ИИ (#99 п. 5), затем ответ принят по порядку банка", async () => {
     const unavailable = () => {
       throw new AiUnavailableError("completeness", []);
     };
@@ -250,6 +250,8 @@ describe("интервью-агент: пропуск, позже, блоки, �
       },
     });
     const s = await start(interview);
+    const f = await interview.submitAnswer(s.sessionId, { text: "Да." });
+    expect(f.type).toBe("followup");
     const r = await interview.submitAnswer(s.sessionId, { text: "Да." });
     expect(r.type === "nextQuestion" || r.type === "blockDone").toBe(true);
     expect(repo.stories.size).toBe(1);
