@@ -42,6 +42,8 @@ export const env = {
   prodUrl: () => read("PROD_URL"),
   /** Секрет подписи QR-ссылок /listen (I3). Необязателен: по умолчанию выводится из service-ключа. */
   listenSecret: () => read("LISTEN_SECRET"),
+  /** #171: секрет таймера Supabase pg_cron → /api/cron/kick (заголовок Authorization: Bearer …). Пусто = ручка закрыта. */
+  cronSecret: () => read("CRON_SECRET"),
   aiMode: getAiMode,
 };
 
