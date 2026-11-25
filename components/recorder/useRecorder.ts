@@ -6,6 +6,7 @@
 // - Wake Lock держит экран включённым во время записи (iOS 16.4+, Android Chrome).
 import { useCallback, useEffect, useRef, useState } from "react";
 import { blobType, browserMime, isAppleWebKit } from "./mime";
+import { setSpeechBlocked, silenceSpeech } from "./silence";
 
 export type RecorderState = "idle" | "requesting" | "recording" | "paused" | "stopped" | "error";
 
@@ -119,6 +120,9 @@ export function useRecorder({ maxSec = 300 }: { maxSec?: number } = {}) {
       return;
     }
     setState("requesting");
+    // #100: озвучка вопроса не должна попасть в запись — глушим и ждём фактической остановки.
+    setSpeechBlocked(true);
+    await silenceSpeech();
     let s: MediaStream;
     try {
       s = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true } });
@@ -219,6 +223,25 @@ export function useRecorder({ maxSec = 300 }: { maxSec?: number } = {}) {
     setNotice(null);
     setState("stopped");
   }, []);
+
+  // #100: пока микрофон включается / идёт запись / пауза — озвучка заблокирована; иначе снова можно.
+  const blockedByMe = useRef(false);
+  useEffect(() => {
+    const active = state === "requesting" || state === "recording" || state === "paused";
+    if (active) {
+      blockedByMe.current = true;
+      setSpeechBlocked(true);
+    } else if (blockedByMe.current) {
+      blockedByMe.current = false;
+      setSpeechBlocked(false);
+    }
+  }, [state]);
+  useEffect(
+    () => () => {
+      if (blockedByMe.current) setSpeechBlocked(false);
+    },
+    [],
+  );
 
   // Экран погас / вкладку свернули / уходим со страницы
   useEffect(() => {

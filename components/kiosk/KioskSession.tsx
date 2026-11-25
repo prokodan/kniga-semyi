@@ -11,7 +11,7 @@ import { BLOCKS } from "@/content/questions/blocks";
 import { postJson, Recorder, uploadAudio, type Take } from "@/components/recorder";
 import type { LifeBlock } from "@/lib/types";
 import { BlockProgress } from "@/app/(family)/_ui/BlockProgress";
-import { canSpeak, speak, stopSpeaking } from "@/app/(family)/_ui/speak";
+import { canSpeak, speak, stopSpeaking, useSpeechBlocked } from "@/app/(family)/_ui/speak";
 import { kDark, kGhost, kioskPost, kPrimary, kRecorderWrap } from "./ui";
 
 interface QuestionView {
@@ -77,6 +77,7 @@ export function KioskSession(props: KioskSessionProps) {
   const [covered, setCovered] = useState<LifeBlock[]>(props.initialCovered);
   const [take, setTake] = useState(0);
   const [autoSpeak, setAutoSpeak] = useState(false);
+  const recording = useSpeechBlocked(); // #100: идёт запись — «Озвучить» недоступна
   const [count, setCount] = useState(0);
 
   const session = useRef<string | null>(null);
@@ -323,7 +324,7 @@ export function KioskSession(props: KioskSessionProps) {
   }
 
   function listen() {
-    if (!current) return;
+    if (!current || recording) return;
     setAutoSpeak(true);
     speak([current.bridge, current.prompt].filter(Boolean).join(" "));
   }
@@ -413,7 +414,7 @@ export function KioskSession(props: KioskSessionProps) {
             {error && <p className="text-elder text-danger">{error}</p>}
             <div className="mt-auto grid grid-cols-3 gap-3">
               {canSpeak() && (
-                <button type="button" onClick={listen} className={kGhost}>
+                <button type="button" onClick={listen} disabled={recording} className={`${kGhost} disabled:opacity-50`}>
                   🔊 Озвучить
                 </button>
               )}
