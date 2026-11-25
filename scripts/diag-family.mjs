@@ -65,7 +65,7 @@ const totals = { chapters: 0, dups: 0, lostFollowups: 0, orphanParents: 0, answe
 
 for (const fam of families) {
   const stories = await rest(
-    `stories?select=id,storyteller_id,session_id,parent_story_id,question_id,block,status,error,transcript,text_ru,followups,created_at,updated_at&family_id=eq.${fam.id}&order=created_at.asc&limit=500`,
+    `stories?select=id,storyteller_id,session_id,parent_story_id,question_id,block,status,error,audio_url,duration_sec,transcript,text_ru,followups,created_at,updated_at&family_id=eq.${fam.id}&order=created_at.asc&limit=500`,
   );
   const sessions = await rest(`sessions?select=id,storyteller_id,mode,state,started_at,ended_at&family_id=eq.${fam.id}&order=started_at.asc&limit=200`);
   const byId = new Map(stories.map((s) => [s.id, s]));
@@ -165,6 +165,28 @@ for (const fam of families) {
       for (const x of mine) if (!own.has(x) && s3.get(other.id).has(x)) hit++;
       if (hit >= 4) leaks.push(`${short(ch.id)} (${ch.question_id}) ← ${short(other.id)} (${other.question_id}): ${hit} фрагм. не из своего ответа`);
     }
+  }
+  // Похожие главы — откуда сходство: какая часть источника A (основной ответ / уточнение k / запись-уточнение) есть в B
+  const parts = (s) => [["осн", s.transcript ?? ""], ...(s.followups ?? []).map((f, k) => [`ут${k + 1}`, f.answer ?? ""])];
+  const pairIds = [];
+  for (let i = 0; i < chapters.length; i++)
+    for (let j = i + 1; j < chapters.length; j++) {
+      const a = chapters[i], b = chapters[j];
+      if (Math.max(containment(c3.get(a.id), c3.get(b.id)), containment(c3.get(b.id), c3.get(a.id))) >= 0.15) pairIds.push([a, b]);
+    }
+  for (const [a, b] of pairIds) {
+    const desc = (x, y) => parts(x).map(([k, t]) => `${k}(${words(t).length} сл.)→${Math.round(containment(shingles(t, 3), s3.get(y.id)) * 100)}%`).join(" ");
+    log(`  - источник ${short(a.id)} в ${short(b.id)}: ${desc(a, b)} · обратно: ${desc(b, a)}`);
+  }
+  // одна и та же запись в двух историях
+  const byAudio = new Map();
+  for (const s of stories) if (s.audio_url) byAudio.set(s.audio_url, [...(byAudio.get(s.audio_url) ?? []), short(s.id)]);
+  const sameAudio = [...byAudio.values()].filter((v) => v.length > 1);
+  log(`**Одна запись в нескольких историях:** ${sameAudio.length ? sameAudio.map((v) => v.join(" = ")).join("; ") : "нет"}`);
+  // последние ошибки ИИ у failed
+  for (const f of stories.filter((s) => s.status === "failed")) {
+    const errs = await rest(`ai_usage?select=step,model,status,error&story_id=eq.${f.id}&status=neq.ok&status=neq.cache_hit&order=created_at.desc&limit=3`);
+    log(`- failed ${short(f.id)} (${f.question_id}): ${errs.map((e) => `${e.step}/${e.model}/${e.status}: ${String(e.error ?? "").replace(/\s+/g, " ").replace(/\|/g, "/").slice(0, 110)}`).join(" ‖ ") || "ошибок ИИ нет"}`);
   }
   log(`**Чужой текст в главе:** ${leaks.length ? "" : "нет"}`);
   for (const l of leaks) log(`- ${l}`);
