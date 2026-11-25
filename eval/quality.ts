@@ -123,8 +123,9 @@ export interface KrRules {
 
 export function krRuleKind(rule: string): KrRuleKind {
   if (rule === "paren") return "paren";
-  if (rule.startsWith("glossary:")) return "glossary";
-  if (rule === "style:mixed" || rule === "style:hapsyo") return "style";
+  // style:parents — 아버님 / 어머님 о своих родителях: решение по глоссарию (#103)
+  if (rule.startsWith("glossary:") || rule === "style:parents") return "glossary";
+  if (rule === "style:mixed" || rule === "style:hapsyo" || rule === "style:rieul") return "style";
   return "other";
 }
 
@@ -441,8 +442,8 @@ export const METRICS: MetricDef[] = [
   { name: "KR: флажки major", get: (s) => s.totals.krMajor, better: "down", fmt: (x) => String(x ?? "—") },
   { name: "KR: флажки minor", get: (s) => s.totals.krMinor, better: "down", fmt: (x) => String(x ?? "—") },
   { name: "KR без ИИ: пояснения в скобках, которых нет в оригинале", get: (s) => s.totals.krParen ?? null, better: "down", fmt: (x) => String(x ?? "—") },
-  { name: "KR без ИИ: отклонения от глоссария", get: (s) => s.totals.krGlossary ?? null, better: "down", fmt: (x) => String(x ?? "—") },
-  { name: "KR без ИИ: смешение 해요체 / 한다체 в абзаце, 습니다체", get: (s) => s.totals.krStyle ?? null, better: "down", fmt: (x) => String(x ?? "—") },
+  { name: "KR без ИИ: отклонения от глоссария (вкл. 아버님 / 어머님 о своих)", get: (s) => s.totals.krGlossary ?? null, better: "down", fmt: (x) => String(x ?? "—") },
+  { name: "KR без ИИ: смешение 해요체 / 한다체 в абзаце, 습니다체, ㄹ + -으셨", get: (s) => s.totals.krStyle ?? null, better: "down", fmt: (x) => String(x ?? "—") },
   { name: "Уточнения: флажки (длина, два вопроса, «ты», «подробнее», повтор)", get: (s) => s.totals.followupIssues ?? null, better: "down", fmt: (x) => String(x ?? "—") },
   { name: "Уточнения: давление после отказа / боли", get: (s) => s.totals.pressure ?? null, better: "down", fmt: (x) => String(x ?? "—") },
   { name: "Связки: флажки (длина, вопрос, лесть, повтор)", get: (s) => s.totals.bridgeIssues ?? null, better: "down", fmt: (x) => String(x ?? "—") },

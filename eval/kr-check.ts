@@ -293,6 +293,32 @@ function styleFlagsChapter(item: KrItem): KrFlag[] {
   return flags;
 }
 
+/** ㄷ-неправильные: ㄹ из ㄷ перед 으 — норма (들으셨다 ← 듣다, 물으셨다 ← 묻다, 걸으셨다 ← 걷다, 실으셨다 ← 싣다, 깨달으셨다). */
+const RIEUL_OK = /^(들|물|걸|실|깨달|일컬|알아들|엿들|되물|캐물|불)$/;
+
+/** ㄹ-глагол + 으셨 / 으시: ㄹ выпадает перед ㅅ — 썰다 → 써셨다, 만들다 → 만드셨다 (решение команды 25.11, #103). */
+export function rieulFlags(item: KrItem): KrFlag[] {
+  const flags: KrFlag[] = [];
+  for (const m of item.text_ko.matchAll(/([가-힣]*)([가-힣])으(셨|시)/g)) {
+    const c = m[2]!.charCodeAt(0) - 0xac00;
+    if (c % 28 !== 8) continue; // последний слог основы не на ㄹ
+    if (RIEUL_OK.test(m[1]! + m[2]!)) continue;
+    const fixed = String.fromCharCode(0xac00 + c - 8) + m[3];
+    flags.push({ id: item.id, source: "rule", rule: "style:rieul", ko: m[0], issue: `ㄹ-глагол с -시-: ㄹ выпадает — ${m[1]}${fixed}… (썰다 → 써셨다, 만들다 → 만드셨다)`, severity: "minor" });
+  }
+  return flags;
+}
+
+/** О своих родителях в повествовании — 아버지 / 어머니; 아버님 / 어머님 — о чужих, свёкре, тесте (решение команды 25.11, #103). */
+export function parentsFlags(item: KrItem): KrFlag[] {
+  const flags: KrFlag[] = [];
+  for (const m of withoutQuotes(item.text_ko).matchAll(/(아버님|어머님)/g)) {
+    const plain = m[1] === "아버님" ? "아버지" : "어머니";
+    flags.push({ id: item.id, source: "rule", rule: "style:parents", ko: m[1]!, issue: `${m[1]} в повествовании — о своих родителях ${plain}; ${m[1]} только о чужих родителях, свёкре / тесте — проверить`, severity: "minor" });
+  }
+  return flags;
+}
+
 /** Вопросы: одна строка text_ko = один вопрос (банк сгруппирован по блокам). */
 function styleFlagsQuestion(item: KrItem): KrFlag[] {
   const flags: KrFlag[] = [];
@@ -318,7 +344,8 @@ export function checkItem(item: KrItem, glossary: GlossaryEntry[]): KrFlag[] {
   if (item.quote_ko && !compact(item.text_ko).includes(compact(item.quote_ko)))
     flags.push({ id: item.id, source: "rule", rule: "quote", ko: item.quote_ko.slice(0, 40), issue: "цитата quote_ko не совпадает с фразой в тексте", severity: "major" });
   flags.push(...glossaryFlags(item, glossary), ...yearFlags(item));
-  if (item.kind === "chapter") flags.push(...parenFlags(item, glossary));
+  if (item.kind === "chapter") flags.push(...parenFlags(item, glossary), ...parentsFlags(item));
+  flags.push(...rieulFlags(item));
   flags.push(...(item.kind === "chapter" ? styleFlagsChapter(item) : styleFlagsQuestion(item)));
   return flags;
 }
