@@ -1,6 +1,6 @@
 import { writeFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
-import { DEMO_BOOK, DEMO_STORIES } from "./demo";
+import { DEMO_BOOK, DEMO_KIOSK_BOOK, DEMO_KIOSK_STORIES, DEMO_STORIES } from "./demo";
 import { missingKorean } from "./fonts";
 import { composeBook, guessElder, isBookChapter, orderChapters, paragraphs, type ChapterStory } from "./model";
 import { countPages, renderBook } from "./render";
@@ -56,6 +56,8 @@ describe("шрифты", () => {
   it("демо-тексты целиком покрыты корейским подмножеством", () => {
     const ko = DEMO_STORIES.map((s) => `${s.title_ko} ${s.quote_ko} ${s.text_ko}`).join(" ");
     expect(missingKorean(ko)).toEqual([]);
+    const kiosk = DEMO_KIOSK_STORIES.map((s) => `${s.title_ko} ${s.quote_ko} ${s.text_ko}`).join(" ");
+    expect(missingKorean(kiosk)).toEqual([]); // #202: книга киоска «Ли Нина»
     expect(missingKorean("똠방각하")).toEqual(["똠"]); // слог вне KS X 1001 — попадёт в лог сборки
   });
 });
@@ -74,6 +76,17 @@ describe("PDF", () => {
     expect(r.pdf.length).toBeLessThan(1_000_000);
     expect(r.missingKorean).toEqual([]);
     console.info(`[book] демо: ${r.pageCount} стр., ${Math.round(r.pdf.length / 1024)} КБ, ${r.ms} мс`);
+  }, 60_000);
+
+  it("#202: книга киоска «Ли Нина» — 14 глав, «Слова бабушки», корейский без пропусков", async () => {
+    const r = await renderBook({ ...DEMO_KIOSK_BOOK, voiceUrl });
+    if (process.env.BOOK_KIOSK_OUT) writeFileSync(process.env.BOOK_KIOSK_OUT, r.pdf);
+    expect(r.pdf.toString("latin1").startsWith("%PDF-")).toBe(true);
+    expect(r.chapters).toBe(DEMO_KIOSK_STORIES.length);
+    expect(r.pageCount).toBeGreaterThanOrEqual(1 + 1 + DEMO_KIOSK_STORIES.length * 2);
+    expect(r.missingKorean).toEqual([]);
+    expect(composeBook({ ...DEMO_KIOSK_BOOK, voiceUrl }).legacy.ru).toBe("Слова бабушки");
+    console.info(`[book] киоск: ${r.pageCount} стр., ${Math.round(r.pdf.length / 1024)} КБ, ${r.ms} мс`);
   }, 60_000);
 
   it("без готовых глав — понятная ошибка", async () => {
