@@ -31,6 +31,8 @@ export interface NameHintSource {
   familyName?: string | null;
   /** Факты прошлых глав этого рассказчика */
   facts?: Pick<StoryFact, "type" | "value">[];
+  /** #102: словарь семьи (family_entities, уже по важности) — самые надёжные подсказки, идут первыми */
+  entities?: string[];
 }
 
 const MAX_HINTS = 120;
@@ -46,14 +48,19 @@ export function familyHints(src: NameHintSource): string[] {
   };
   add(src.storytellerName);
   add(src.birthPlace);
+  for (const e of (src.entities ?? []).slice(0, 60)) add(e);
   for (const f of src.facts ?? []) if (f.type === "person" || f.type === "place") add(f.value);
   add(src.familyName?.replace(/^семья\s+/i, ""));
   return out;
 }
 
-/** Все подсказки: семья → топонимы → фамилии → корё мар, без повторов, не больше 120. */
+/**
+ * Все подсказки: семья (карточка → словарь семьи → прошлые главы) → корё мар → топонимы → фамилии, без повторов,
+ * не больше 120. #102: корё мар раньше топонимов — модели расшифровки берут только первые 45–60, и слова
+ * корё мар («пигоди», «кочжан») до них не доходили.
+ */
 export function nameHints(src: NameHintSource): string[] {
-  const all = [...familyHints(src), ...GLOSSARY_PLACES, ...GLOSSARY_SURNAMES, ...GLOSSARY_KORYO];
+  const all = [...familyHints(src), ...GLOSSARY_KORYO, ...GLOSSARY_PLACES, ...GLOSSARY_SURNAMES];
   return [...new Set(all)].slice(0, MAX_HINTS);
 }
 
@@ -154,4 +161,97 @@ export function applyName(text: string, heard: string, chosen: string): string {
   if (!heard || heard === chosen) return text;
   const re = new RegExp(heard.split(/\s+/).map((p) => p.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("\\s+"), "g");
   return text.replace(re, chosen);
+}
+
+// ---------------- Сверка расшифровки со словарём (#102) ----------------
+
+/**
+ * Звучание для сравнения: ё→е, безударные а/о и е/и/я неразличимы на слух, звонкие → глухие, «чж/дж» → «ч»,
+ * без ь/ъ и двойных букв. «опаса уле» и «апа Сауле» звучат одинаково.
+ */
+export function soundKey(s: string): string {
+  let t = yo(s).replace(/[^а-я]/g, "");
+  t = t.replace(/[чд]ж/g, "ч").replace(/тс|тьс|дс/g, "ц");
+  const map: Record<string, string> = { о: "а", я: "а", е: "и", э: "и", ы: "и", ю: "у", б: "п", в: "ф", г: "к", д: "т", ж: "ш", з: "с", щ: "ш", й: "и" };
+  t = [...t].map((c) => map[c] ?? c).join("").replace(/[ьъ]/g, "");
+  return t.replace(/(.)\1+/g, "$1");
+}
+
+/** Слова корё мар, похожие на обычные русские («морковча» ↔ «морковка») — по одному слову не исправляем. */
+const NO_FUZZY = new Set(["морковча", "пап", "хе", "чеса", "кимчи", "корё мар", "корё-сарам", "хан", "ан", "нам", "мун", "юн"]);
+/** Русские слова, звучащие как слово корё мар («кочан капусты» ≠ «кочжан»), — не трогаем. */
+const DECOYS = /^(кочан|кочна|кочне|кочну|морковк|папа|папу|папе)/;
+/** Основа без падежного окончания — «Караганде» и «Караганда» одно слово. */
+const stem = (s: string) => yo(s).replace(/(ами|ями|ом|ем|ой|ей|ую|юю|[аеиоуыяюй])$/u, "");
+
+export interface NameFix {
+  heard: string;
+  fixed: string;
+}
+
+/**
+ * Сверка после расшифровки: слово или два слова подряд, которые звучат как имя, место или слово корё мар из
+ * подсказок (словарь семьи, карточка, глоссарий), но записаны иначе, — заменить написанием из подсказок.
+ * «опаса уле» → «апа Сауле», «кончана» → «кочжана», «Уштабе» → «Уштобе». Окончание слова сохраняется.
+ * Только уверенные случаи: звучание совпадает (≤ 1 отличие для длинных), цель одна, имя с заглавной — только
+ * для слова с заглавной. Неуверенные остаются как есть — их переспрашивает интервью (#87, findUncertain).
+ */
+export function reconcileNames(text: string, hints: string[]): { text: string; fixes: NameFix[] } {
+  const targets = [...new Set(hints.map((h) => h.trim()).filter((h) => h.length >= 4 && !NO_FUZZY.has(yo(h))))]
+    .map((h) => ({ h, key: soundKey(h), cap: /^[А-ЯЁ]/.test(h), words: h.split(/\s+/).length }))
+    .filter((t) => t.key.length >= 4 && t.words <= 2);
+  const tokens = [...text.matchAll(/[А-Яа-яЁё][А-Яа-яЁё-]*/g)].map((m) => ({ w: m[0], i: m.index! }));
+  const fixes: (NameFix & { start: number; end: number })[] = [];
+  const exact = new Set(targets.map((t) => yo(t.h)));
+  const stems = new Set(targets.map((t) => stem(t.h)));
+  for (let k = 0; k < tokens.length; k++) {
+    if (fixes.some((f) => tokens[k]!.i < f.end)) continue; // уже занято предыдущей заменой
+    let done = false;
+    for (const n of [2, 1]) {
+      if (done || k + n > tokens.length) continue;
+      const span = tokens.slice(k, k + n);
+      // два слова — только через пробел (не через знаки препинания)
+      if (n === 2 && !/^\s+$/.test(text.slice(span[0]!.i + span[0]!.w.length, span[1]!.i))) continue;
+      const raw = span.map((s) => s.w).join(n === 2 ? " " : "");
+      if (exact.has(yo(raw)) || (n === 1 && (stems.has(stem(raw)) || DECOYS.test(yo(raw))))) continue;
+      const sentenceStart = k === 0 || /[.!?…]["»]?\s*$/.test(text.slice(0, span[0]!.i));
+      const cands: { t: (typeof targets)[number]; suffix: string; d: number }[] = [];
+      for (const t of targets) {
+        if (t.cap && !/^[А-ЯЁ]/.test(span[0]!.w)) continue; // имя — только если слово с заглавной
+        if (!t.cap && n === 1 && /^[А-ЯЁ]/.test(span[0]!.w) && !sentenceStart) continue; // слово корё мар не путаем с именем
+        if (t.words === 2 && n === 1) continue;
+        // окончание: «кончана» = «кочжан» + «а»
+        for (const sl of [0, 1, 2]) {
+          const last = span[n - 1]!.w;
+          if (sl >= last.length - 1) continue;
+          const suffix = sl ? last.slice(-sl) : "";
+          if (suffix && !/^[аеиоуыяюйм]+$/i.test(suffix)) continue;
+          const body = raw.slice(0, raw.length - sl);
+          const key = soundKey(body);
+          if (key[0] !== t.key[0]) continue;
+          const d = levenshtein(key, t.key);
+          // Строго, чтобы не портить обычные слова («бегали» ≠ «пигоди», «погоди» ≠ «пигоди»):
+          // два слова и слово корё мар — только полное совпадение звучания; имя с заглавной — ≤ 1 отличие
+          // для длинных (≥ 6 звуков) и та же первая буква.
+          if (n === 1 && (yo(raw)[0] !== yo(t.h)[0] || t.key.length < 5)) continue; // «Лина» ≠ «Лена»: короткие имена не трогаем
+          const max = n === 1 && t.cap && t.key.length >= 6 ? 1 : 0;
+          if (d <= max) cands.push({ t, suffix, d });
+        }
+      }
+      if (cands.length === 0) continue;
+      cands.sort((a, b) => a.d - b.d || a.suffix.length - b.suffix.length);
+      const best = cands[0]!;
+      if (cands.some((c) => c.t.h !== best.t.h && c.d === best.d)) continue; // две разные цели — не уверены
+      let fixed = best.t.h + best.suffix;
+      if (!best.t.cap && sentenceStart && /^[А-ЯЁ]/.test(span[0]!.w)) fixed = fixed[0]!.toUpperCase() + fixed.slice(1);
+      if (yo(fixed) === yo(raw)) continue;
+      const start = span[0]!.i;
+      const end = span[n - 1]!.i + span[n - 1]!.w.length;
+      fixes.push({ heard: text.slice(start, end), fixed, start, end });
+      done = true;
+    }
+  }
+  let out = text;
+  for (const f of [...fixes].sort((a, b) => b.start - a.start)) out = out.slice(0, f.start) + f.fixed + out.slice(f.end);
+  return { text: out, fixes: fixes.map(({ heard, fixed }) => ({ heard, fixed })) };
 }

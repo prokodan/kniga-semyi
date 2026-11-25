@@ -3,6 +3,7 @@
 // #98: сначала собираем источник главы — приклеиваем записи-уточнения, которые интервью не успело добавить,
 // и убираем предложения, уже рассказанные в более ранней главе (одна история — одна глава).
 import { LIFE_BLOCKS, type LifeBlock, type Story } from "@/lib/types";
+import { entitiesForEdit } from "../entities";
 import { attachChildren, dropRepeats, fullSource, joinParts } from "../sources";
 import type { StepFn } from "./context";
 import { StepError, StepSkip } from "./context";
@@ -32,6 +33,12 @@ export const edit: StepFn = async ({ story, ai, repo, bank, deadline }) => {
   const questionText = story.question_id ? (bank.get(story.question_id)?.ru ?? "") : "";
   const storytellerName = await repo.storytellerName(story.storyteller_id);
   const hints = repo.nameHints ? await repo.nameHints(story) : undefined;
-  const out = await ai.run("edit", { transcript, storytellerName, questionText, block, ...(hints?.length ? { hints } : {}) }, { storyId: story.id, deadline });
+  // #102: кто есть кто в прошлых главах (словарь семьи) — чтобы «армянского» снова стало «Олега»
+  const entities = repo.familyEntities ? entitiesForEdit(await repo.familyEntities(story)) : [];
+  const out = await ai.run(
+    "edit",
+    { transcript, storytellerName, questionText, block, ...(hints?.length ? { hints } : {}), ...(entities.length ? { entities } : {}) },
+    { storyId: story.id, deadline },
+  );
   return { ...keep, text_ru: out.text_ru, title: out.title, quote: out.quote, facts: out.facts };
 };
