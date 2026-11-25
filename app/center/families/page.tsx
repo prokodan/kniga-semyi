@@ -1,5 +1,6 @@
 // /center/families — семьи и истории: источник, рассказчики, число историй, статус книги.
 // Вкладка «Архив АКНЦ» — только семьи с archive_consent = true. Демо-семьи скрываются фильтром.
+// #201: в кабинете только семьи киоска; семьи /start — в нашей админке /admin/families.
 import type { Metadata } from "next";
 import Link from "next/link";
 import { Notice } from "@/components/admin/ui";
@@ -16,9 +17,7 @@ export const metadata: Metadata = { title: "Семьи · кабинет АКН�
 type Search = Promise<Record<string, string | string[] | undefined>>;
 
 const VIEWS: { view: FamilyView; label: string }[] = [
-  { view: "all", label: "Все" },
-  { view: "kiosk", label: "Киоск" },
-  { view: "family", label: "Семьи сами" },
+  { view: "all", label: "Все семьи киоска" },
   { view: "archive", label: "Архив АКНЦ" },
 ];
 
@@ -62,7 +61,7 @@ export default async function CenterFamiliesPage({ searchParams }: { searchParam
       {!data ? <Notice tone="err">Не удалось прочитать данные. Обновите страницу через минуту.</Notice> : null}
       {data && list.length === 0 ? (
         <p className="rounded-card bg-paper-deep p-5 text-center text-ink-soft">
-          {view === "archive" ? "Пока никто не дал согласия на архив." : "Семей пока нет."}
+          {view === "archive" ? "Пока никто не дал согласия на архив." : "Через киоск центра пока никто не записывался."}
         </p>
       ) : null}
       {list.length > 0 ? (

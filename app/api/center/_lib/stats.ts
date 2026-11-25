@@ -68,10 +68,13 @@ export interface CenterFilter {
 
 const minutes = (sec: number) => Math.round((sec / 60) * 10) / 10;
 
-/** Оставить строки только недемо-семей (если нужно). */
+/**
+ * #201: кабинет АКНЦ видит только семьи киоска (`source = 'kiosk'`). Семьи, пришедшие сами по ссылке /start
+ * (`source = 'family'`), в кабинет центра не попадают — они в нашей админке /admin/families.
+ * Плюс фильтр «скрыть демо» (`is_demo`).
+ */
 export function applyFilter(rows: CenterRows, filter: CenterFilter = {}): CenterRows {
-  if (!filter.hideDemo) return rows;
-  const keep = new Set(rows.families.filter((f) => !f.is_demo).map((f) => f.id));
+  const keep = new Set(rows.families.filter((f) => f.source === "kiosk" && !(filter.hideDemo && f.is_demo)).map((f) => f.id));
   const own = <T extends { family_id: string }>(xs: T[]) => xs.filter((x) => keep.has(x.family_id));
   return {
     families: rows.families.filter((f) => keep.has(f.id)),
@@ -161,12 +164,12 @@ export function buildFamilies(rows: CenterRows): CenterFamily[] {
     .sort((a, b) => b.lastAt.localeCompare(a.lastAt));
 }
 
-export type FamilyView = "all" | "kiosk" | "family" | "archive";
+/** #201: в кабинете только семьи киоска — вкладки «Все» и «Архив АКНЦ». */
+export type FamilyView = "all" | "archive";
 
 /** Раздел «Архив АКНЦ» — только семьи с archive_consent = true. */
 export function filterFamilies(list: CenterFamily[], view: FamilyView): CenterFamily[] {
   if (view === "archive") return list.filter((f) => f.archive);
-  if (view === "kiosk" || view === "family") return list.filter((f) => f.source === view);
   return list;
 }
 

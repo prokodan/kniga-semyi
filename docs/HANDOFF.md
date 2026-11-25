@@ -21,8 +21,9 @@
 | Семья | `/start` → `/f/<токен>` (страница семьи) → `/consent`, `/record`, `/chapter/<id>`, `/draft/<id>`, `/book/<токен>`, `/checkout/<токен>`, `/extras/<токен>`, `/extras/<токен>/tale` | ссылка с токеном |
 | Голос по QR | `/listen/<id>` — играет всю главу (основной ответ + уточнения) | публично |
 | Киоск АКНЦ | `/kiosk` → `/kiosk/new`, `/kiosk/session/<id>`, `/kiosk/queue` | `KIOSK_PIN` |
-| Кабинет АКНЦ | `/center`, `/center/families`, `/center/volunteers`, `/center/archive` (`?show=1` — режим показа) | `ADMIN_PIN` |
+| Кабинет АКНЦ | `/center`, `/center/families`, `/center/volunteers`, `/center/archive` — только семьи киоска (#201) | `ADMIN_PIN` |
 | Пульт питча | `/admin` — ссылки демо, загрузка голосов демо, «Сбросить демо» | `ADMIN_PIN` |
+| Админка «Семьи» | `/admin/families` — все семьи: источник, главы, книга, цена, ссылки с токеном (#201) | `ADMIN_PIN` |
 | Админка ИИ | `/admin/ai` — расход, квоты, модели, переключатели | `ADMIN_PIN` |
 | Здоровье | `/api/health` — `ok`, режим ИИ, `stage_mode` | публично |
 

@@ -12,7 +12,7 @@ function rows(): CenterRows {
     families: [
       { id: "f1", name: "Ким", source: "kiosk", archive_consent: true, is_demo: false, created_at: NOW },
       { id: "f2", name: "Пак", source: "family", archive_consent: false, is_demo: false, created_at: OLD },
-      { id: "f3", name: "Демо", source: "family", archive_consent: true, is_demo: true, created_at: OLD },
+      { id: "f3", name: "Демо", source: "kiosk", archive_consent: true, is_demo: true, created_at: OLD },
     ],
     storytellers: [
       { id: "s1", family_id: "f1", name: "Ким Анна", birth_year: 1940, consent_at: NOW, created_at: NOW },
@@ -47,7 +47,7 @@ describe("счётчики кабинета АКНЦ", () => {
   it("всего / сегодня; минуты — все записи, истории — без уточнений; книга — последняя", () => {
     const c = buildCounters(rows(), since);
     expect(c.families).toEqual({ total: 3, today: 1 });
-    expect(c.kioskFamilies).toEqual({ total: 1, today: 1 });
+    expect(c.kioskFamilies).toEqual({ total: 2, today: 1 });
     expect(c.elders).toEqual({ total: 3, today: 1 });
     expect(c.consented).toBe(2);
     expect(c.stories).toEqual({ total: 4, today: 2 });
@@ -58,10 +58,21 @@ describe("счётчики кабинета АКНЦ", () => {
     expect(c.archive).toBe(2);
   });
 
+  it("#201: кабинет центра — только семьи киоска; семьи /start (source=family) не видны нигде", () => {
+    const r = applyFilter(rows());
+    expect(r.families.map((f) => f.id)).toEqual(["f1", "f3"]);
+    for (const xs of [r.storytellers, r.stories, r.books, r.sessions]) expect(xs.some((x) => x.family_id === "f2")).toBe(false);
+    const c = buildCounters(r, since);
+    expect(c.families.total).toBe(2);
+    expect(c.elders.total).toBe(2);
+    expect(c.minutes.total).toBe(14); // (120+30+90+600)/60, без 60 с семьи Пак
+    expect(buildFamilies(r).map((f) => f.id)).toEqual(["f1", "f3"]);
+  });
+
   it("фильтр скрывает демо-семьи из всех счётчиков", () => {
     const c = buildCounters(applyFilter(rows(), { hideDemo: true }), since);
-    expect(c.families.total).toBe(2);
-    expect(c.minutes.total).toBe(5);
+    expect(c.families.total).toBe(1);
+    expect(c.minutes.total).toBe(4);
     expect(c.archive).toBe(1);
     expect(c.books.draft).toBe(0);
   });
@@ -87,11 +98,10 @@ describe("список семей и волонтёры", () => {
     expect(list[1]!.book).toBe("none");
   });
 
-  it("«Архив АКНЦ» — только archive_consent = true; источник фильтруется", () => {
-    const list = buildFamilies(rows());
+  it("«Архив АКНЦ» — только archive_consent = true", () => {
+    const list = buildFamilies(applyFilter(rows()));
     expect(filterFamilies(list, "archive").map((f) => f.id)).toEqual(["f1", "f3"]);
-    expect(filterFamilies(list, "kiosk").map((f) => f.id)).toEqual(["f1"]);
-    expect(filterFamilies(list, "family").map((f) => f.id)).toEqual(["f2", "f3"]);
+    expect(filterFamilies(list, "all").map((f) => f.id)).toEqual(["f1", "f3"]);
     expect(filterFamilies(buildFamilies(applyFilter(rows(), { hideDemo: true })), "archive").map((f) => f.id)).toEqual(["f1"]);
   });
 

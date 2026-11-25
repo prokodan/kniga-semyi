@@ -1,4 +1,5 @@
 // /admin — пульт питча (I12): сброс демо-семьи одной кнопкой, режим сцены, ссылки демо, голоса демо.
+// Вкладка «Семьи» (#201) — /admin/families: все семьи, главы, книга, цена.
 // Вход по ADMIN_PIN — та же cookie, что у /admin/ai и /center.
 import type { Metadata } from "next";
 import Link from "next/link";
@@ -281,6 +282,9 @@ export default async function AdminPage({ searchParams }: { searchParams: Search
         </form>
       </Section>
 
+      <Link href="/admin/families" className="flex min-h-12 items-center justify-center rounded-button border border-line bg-paper px-4">
+        Семьи: главы, книги, цена →
+      </Link>
       <Link href="/admin/ai" className="flex min-h-12 items-center justify-center rounded-button border border-line bg-paper px-4">
         ИИ: расход и провайдеры →
       </Link>
