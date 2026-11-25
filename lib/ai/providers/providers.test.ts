@@ -67,7 +67,7 @@ describe("openai provider", () => {
       choices: [{ message: { content: '{"text_ko":"가","title_ko":"나","quote_ko":"다"}' } }],
       usage: { prompt_tokens: 20, completion_tokens: 7 },
     });
-    const res = await call(openaiProvider, "gpt-5-mini");
+    const res = await call(openaiProvider, "gpt-5.4-mini");
     expect(res.usage).toEqual({ inputTokens: 20, outputTokens: 7 });
   });
 
@@ -95,7 +95,7 @@ describe("openai provider", () => {
   it("500 → error", async () => {
     vi.stubEnv("OPENAI_API_KEY", "test");
     stubFetch(500, { error: "boom" });
-    await expect(call(openaiProvider, "gpt-5-mini")).rejects.toMatchObject({ kind: "error" });
+    await expect(call(openaiProvider, "gpt-5.4-mini")).rejects.toMatchObject({ kind: "error" });
   });
 });
 

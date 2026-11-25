@@ -90,7 +90,7 @@ describe("ai router", () => {
       throw new ProviderError("429", "rate_limited", "gemini");
     });
     const { router, store, openai } = setup({ gemini });
-    await store.recordUsage({ step: "edit", provider: "openai", model: "gpt-5-mini", status: "ok", cost_usd: 2.5 });
+    await store.recordUsage({ step: "edit", provider: "openai", model: "gpt-5.4-mini", status: "ok", cost_usd: 2.5 });
     await expect(router.run("translate", translateInput)).rejects.toBeInstanceOf(AiUnavailableError);
     expect(openai.call).not.toHaveBeenCalled();
   });

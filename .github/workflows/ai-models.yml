@@ -2,7 +2,7 @@ name: ai-models
 
 # Подбор актуальных моделей ИИ (запуск вручную): models.list Gemini → новейшие Gemini 3.x Flash-Lite и Flash
 # (без TTS/Image/Live/preview) + Transcribe, если есть → тестовый запрос к каждой → порядок в ai_routes.
-# gpt-5-mini проверяется, если в Secrets есть OPENAI_API_KEY. Таблица результатов — в summary запуска.
+# gpt-5.4-mini (резерв, #105) проверяется, если в Secrets есть OPENAI_API_KEY. Таблица результатов — в summary запуска.
 # Роутер читает ai_routes на каждом вызове, поэтому новые модели работают сразу, без деплоя.
 on:
   workflow_dispatch:

@@ -33,7 +33,8 @@ export const DEFAULT_THRESHOLD = 0.9;
 
 const FLASH_LITE: RouteEntry = { provider: "gemini", model: "gemini-2.5-flash-lite", daily_limit: 500, threshold: 0.9 };
 const FLASH: RouteEntry = { provider: "gemini", model: "gemini-2.5-flash", daily_limit: 20, threshold: 0.9 };
-const OPENAI_TEXT: RouteEntry = { provider: "openai", model: "gpt-5-mini" };
+// #105: gpt-5-mini OpenAI помечает устаревающим → резерв gpt-5.4-mini (быстрее, дороже: $0.75 / $4.50 за 1M)
+const OPENAI_TEXT: RouteEntry = { provider: "openai", model: "gpt-5.4-mini" };
 
 const route = (step: AiStep, providers: RouteEntry[], timeout_ms: number): Route => ({
   step,
@@ -47,8 +48,9 @@ export const DEFAULT_ROUTES: Record<AiStep, Route> = {
   transcribe: route("transcribe", [FLASH_LITE, FLASH, { provider: "openai", model: "gpt-4o-transcribe" }], 45_000),
   edit: route("edit", [FLASH_LITE, FLASH, OPENAI_TEXT], 30_000),
   translate: route("translate", [FLASH_LITE, FLASH, OPENAI_TEXT], 30_000),
-  completeness: route("completeness", [FLASH_LITE, OPENAI_TEXT], 12_000),
-  next_question: route("next_question", [FLASH_LITE, OPENAI_TEXT], 12_000),
+  // #178: ответ интервью ждёт эти два шага — второй моделью Flash (1–2 с), не gpt (медиана 8 с); таймаут 7 с вместо 12
+  completeness: route("completeness", [FLASH_LITE, FLASH, OPENAI_TEXT], 7_000),
+  next_question: route("next_question", [FLASH_LITE, FLASH, OPENAI_TEXT], 7_000),
   tale: route("tale", [FLASH_LITE, FLASH, OPENAI_TEXT], 40_000),
   // gpt-image-1 OpenAI снял («The model 'gpt-image-1' does not exist», seed-demo 23.11) → gpt-image-2, резерв gpt-image-1.5.
   // 45 с < лимита функции 60 с: если художник не успел, сказка успевает поставить картинку из набора.
@@ -70,6 +72,7 @@ export const DEFAULT_PROVIDERS: Record<AiProviderName, ProviderSettings> = {
  * Сверить с прайсами провайдеров перед включением платного режима.
  */
 export const PRICING: Record<string, { inPerM?: number; outPerM?: number; perAudioMin?: number; perImage?: number }> = {
+  "gpt-5.4-mini": { inPerM: 0.75, outPerM: 4.5 },
   "gpt-5-mini": { inPerM: 0.25, outPerM: 2 },
   "gpt-4o-mini": { inPerM: 0.15, outPerM: 0.6 },
   "gpt-4o-transcribe": { perAudioMin: 0.006 },

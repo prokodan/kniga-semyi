@@ -30,7 +30,7 @@
 пересоздаётся Actions → seed-demo или «Сбросить демо» в `/admin`.
 
 ИИ: роутер `ai.run(step)`; порядок моделей в таблице `ai_routes` (подбирает Actions → ai-models):
-Gemini 3.5 Flash-Lite (бесплатно) → Gemini 3.6 Flash (бесплатно) → OpenAI `gpt-5-mini` (платный резерв);
+Gemini 3.5 Flash-Lite (бесплатно) → Gemini 3.6 Flash (бесплатно) → OpenAI `gpt-5.4-mini` (платный резерв, #105);
 картинки сказки — `gpt-image-2` / `gpt-image-1.5`, при недоступности — готовые акварели.
 Сборкой глав управляет сервер (не открытый экран); застрявшее раз в 10 минут перезапускает workflow kick-stuck.
 
