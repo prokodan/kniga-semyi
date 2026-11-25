@@ -71,6 +71,27 @@ describe("openai provider", () => {
     expect(res.usage).toEqual({ inputTokens: 20, outputTokens: 7 });
   });
 
+  it("картинки сказки (#94): quality low по умолчанию, OPENAI_IMAGE_QUALITY меняет", async () => {
+    vi.stubEnv("OPENAI_API_KEY", "test");
+    const draw = () =>
+      openaiProvider.call({ step: "illustrate", input: { prompt: "дом", style: "акварель" }, model: "gpt-image-2", systemPrompt: "", signal: new AbortController().signal });
+    const bodyOf = (f: ReturnType<typeof stubFetch>) => JSON.parse(String(((f.mock.calls[0] as unknown[])[1] as RequestInit).body));
+    let f = stubFetch(200, { data: [{ b64_json: "aGk=" }] });
+    const res = await draw();
+    expect(res.output).toEqual({ imageBase64: "aGk=", mimeType: "image/png" });
+    expect(bodyOf(f)).toMatchObject({ model: "gpt-image-2", quality: "low", size: "1024x1024" });
+
+    vi.stubEnv("OPENAI_IMAGE_QUALITY", "medium");
+    f = stubFetch(200, { data: [{ b64_json: "aGk=" }] });
+    await draw();
+    expect(bodyOf(f).quality).toBe("medium");
+
+    vi.stubEnv("OPENAI_IMAGE_QUALITY", "ultra"); // опечатка → безопасное low
+    f = stubFetch(200, { data: [{ b64_json: "aGk=" }] });
+    await draw();
+    expect(bodyOf(f).quality).toBe("low");
+  });
+
   it("500 → error", async () => {
     vi.stubEnv("OPENAI_API_KEY", "test");
     stubFetch(500, { error: "boom" });
