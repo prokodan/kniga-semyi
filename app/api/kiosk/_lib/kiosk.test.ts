@@ -96,7 +96,21 @@ describe("карточка и очередь киоска (память)", () =>
     const q = await kiosk.queue(new Date(Date.now() - 60_000));
     expect(q).toHaveLength(1);
     expect(q[0]).toMatchObject({ familyId: family.id, name: "Ким Мария", consent: true, archive: false, volunteer: "Анна" });
-    expect(q[0]!.stories).toEqual({ total: 1, ready: 1, working: 0, failed: 0 });
+    expect(q[0]!.stories).toEqual({ total: 1, ready: 1, working: 0, failed: 0, skipped: 0 });
+
+    // #92: отказ от вопроса (skipped) — не «в работе» и не в total
+    const refused = await families.createStory(family.id, {
+      storyteller_id: storyteller.id,
+      audio_path: "p2",
+      question_id: "roots-02",
+      block: "roots",
+      duration_sec: 3,
+      session_id: null,
+      parent_story_id: null,
+    });
+    families.stories.get(refused.id)!.status = "skipped";
+    const q2 = await kiosk.queue(new Date(Date.now() - 60_000));
+    expect(q2[0]!.stories).toEqual({ total: 1, ready: 1, working: 0, failed: 0, skipped: 1 });
     expect(await kiosk.queue(new Date(Date.now() + 60_000))).toHaveLength(0); // вчерашних не показываем
   });
 });
@@ -110,7 +124,7 @@ describe("сводка очереди", () => {
         { family_id: "f", status: "failed", parent_story_id: null },
         { family_id: "f", status: "ready", parent_story_id: "x" },
       ]),
-    ).toEqual({ total: 3, ready: 1, working: 1, failed: 1 });
+    ).toEqual({ total: 3, ready: 1, working: 1, failed: 1, skipped: 0 });
   });
 
   it("свежая сессия поднимает старейшину наверх", () => {

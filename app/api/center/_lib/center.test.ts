@@ -23,6 +23,7 @@ function rows(): CenterRows {
       { family_id: "f1", status: "ready", parent_story_id: null, duration_sec: 120, created_at: NOW },
       { family_id: "f1", status: "ready", parent_story_id: "x", duration_sec: 30, created_at: NOW }, // уточнение
       { family_id: "f1", status: "editing", parent_story_id: null, duration_sec: 90, created_at: NOW },
+      { family_id: "f1", status: "skipped", parent_story_id: null, duration_sec: 0, created_at: NOW }, // #92: отказ — не история
       { family_id: "f2", status: "failed", parent_story_id: null, duration_sec: 60, created_at: OLD },
       { family_id: "f3", status: "ready", parent_story_id: null, duration_sec: 600, created_at: OLD },
     ],
@@ -80,7 +81,7 @@ describe("список семей и волонтёры", () => {
     const kim = list[0]!;
     expect(kim.source).toBe("kiosk");
     expect(kim.book).toBe("ready");
-    expect(kim.stories).toEqual({ total: 2, ready: 1, working: 1, failed: 0 });
+    expect(kim.stories).toEqual({ total: 2, ready: 1, working: 1, failed: 0, skipped: 1 });
     expect(kim.minutes).toBe(4);
     expect(kim.storytellers).toEqual([{ name: "Ким Анна", birthYear: 1940, consent: true }]);
     expect(list[1]!.book).toBe("none");
