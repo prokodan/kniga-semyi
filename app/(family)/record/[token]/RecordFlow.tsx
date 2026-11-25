@@ -10,7 +10,7 @@ import { BLOCKS } from "@/content/questions/blocks";
 import { postJson, Recorder, UploadError, uploadAudio, type Take } from "@/components/recorder";
 import type { LifeBlock } from "@/lib/types";
 import { BlockProgress } from "../../_ui/BlockProgress";
-import { canSpeak, speak, stopSpeaking } from "../../_ui/speak";
+import { canSpeak, speak, stopSpeaking, useSpeechBlocked } from "../../_ui/speak";
 
 interface QuestionView {
   id: string;
@@ -79,6 +79,7 @@ export function RecordFlow(props: {
   const [covered, setCovered] = useState<LifeBlock[]>(props.initialCovered);
   const [take, setTake] = useState(0); // ключ Recorder — новый вопрос = чистая запись
   const [autoSpeak, setAutoSpeak] = useState(false);
+  const recording = useSpeechBlocked(); // #100: идёт запись — «Прослушать вопрос» недоступна
 
   const session = useRef<string | null>(null); // null — идём по банку сами
   const local = useRef<{ done: Set<string>; later: string[] }>({ done: new Set(props.answeredQuestionIds), later: [] });
@@ -298,7 +299,7 @@ export function RecordFlow(props: {
   }
 
   function listen() {
-    if (!current) return;
+    if (!current || recording) return;
     setAutoSpeak(true);
     speak([current.bridge, current.prompt].filter(Boolean).join(" "));
   }
@@ -363,7 +364,13 @@ export function RecordFlow(props: {
               </p>
             )}
             {canSpeak() && (
-              <button type="button" onClick={listen} className="self-start rounded-button border border-line bg-paper px-5 py-3">
+              <button
+                type="button"
+                onClick={listen}
+                disabled={recording}
+                title={recording ? "Во время записи вопрос не озвучивается" : undefined}
+                className="self-start rounded-button border border-line bg-paper px-5 py-3 disabled:opacity-50"
+              >
                 🔊 Прослушать вопрос
               </button>
             )}
