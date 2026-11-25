@@ -275,15 +275,27 @@ const GRANDKIDS = /(손주|손자|손녀|얘들아)/;
 /** Абзацы корейского текста: пустая строка или перевод строки. */
 export const paragraphs = (text: string) => text.split(/\n+/).map((p) => p.trim()).filter((p) => /[가-힣]/.test(p));
 
+/** #154 / #183: абзацы (номера с 1), где к внукам обращаются на 해요체 — та же проверка, что флажок style:grandkids.
+ *  Прямая речь в кавычках не считается. Пустой массив — глава уже по правилу (해라체). */
+export function grandkidsHaeyo(textKo: string | null | undefined): { paragraph: number; ko: string }[] {
+  const hits: { paragraph: number; ko: string }[] = [];
+  paragraphs(withoutQuotes(textKo ?? "")).forEach((p, i) => {
+    const yo = sentences(p).filter((s) => /요$/.test(end(s)));
+    if (yo.length && GRANDKIDS.test(p)) hits.push({ paragraph: i + 1, ko: yo[0]!.slice(-30) });
+  });
+  return hits;
+}
+
 function styleFlagsChapter(item: KrItem): KrFlag[] {
   const flags: KrFlag[] = [];
   // Смешение 해요체 и 한다체 — внутри одного абзаца (прямая речь в кавычках не считается)
   paragraphs(withoutQuotes(item.text_ko)).forEach((p, i) => {
     const ends = sentences(p).map(end);
     const yo = sentences(p).filter((_, k) => /요$/.test(ends[k]!));
-    // #154: прямое обращение к внукам — 해라체 (들어라, 잊지 마라), не 해요체
-    if (yo.length && GRANDKIDS.test(p)) {
-      flags.push({ id: item.id, source: "rule", rule: "style:grandkids", ko: yo[0]!.slice(-30), issue: `к внукам — 해라체 (들어라, 잊지 마라), не 해요체 (абзац ${i + 1})`, severity: "minor" });
+    // #154: прямое обращение к внукам — 해라체 (들어라, 잊지 마라), не 해요체 (то же — grandkidsHaeyo, repair-chapters #183)
+    const gk = grandkidsHaeyo(p)[0];
+    if (gk) {
+      flags.push({ id: item.id, source: "rule", rule: "style:grandkids", ko: gk.ko, issue: `к внукам — 해라체 (들어라, 잊지 마라), не 해요체 (абзац ${i + 1})`, severity: "minor" });
       return; // тот же случай не считаем ещё и смешением
     }
     if (yo.length && ends.some((e) => /다$/.test(e) && !isHapsyo(e)))
