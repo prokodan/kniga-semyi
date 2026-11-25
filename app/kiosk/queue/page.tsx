@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { KioskTabs } from "@/components/kiosk/KioskTabs";
 import { LogoutButton } from "@/components/kiosk/LogoutButton";
 import { QueueAutoRefresh } from "@/components/kiosk/QueueAutoRefresh";
 import { kGhost, kPrimary } from "@/components/kiosk/ui";
@@ -32,17 +33,18 @@ export default async function KioskQueuePage() {
   const today = new Date().toLocaleDateString("ru-RU", { day: "numeric", month: "long", weekday: "long", timeZone: "Asia/Almaty" });
 
   return (
-    <main className="mx-auto flex max-w-6xl flex-col gap-6 px-8 py-6">
+    <main className="mx-auto flex max-w-6xl flex-col gap-6 px-5 py-6 sm:px-8">
       <QueueAutoRefresh />
-      <header className="flex flex-wrap items-center gap-4">
-        <div className="min-w-0 flex-1">
+      <header className="flex flex-wrap items-center gap-3 sm:gap-4">
+        <div className="min-w-0 flex-1 basis-full lg:basis-60">
           <h1 className="font-serif text-4xl">Очередь дня</h1>
           <p className="text-muted">
             {today}
             {volunteer ? ` · волонтёр: ${volunteer.name}` : ""}
           </p>
         </div>
-        <Link href="/kiosk/new" className={kPrimary}>
+        <KioskTabs current="/kiosk/queue" />
+        <Link href="/kiosk/new" className={`${kPrimary} w-full sm:w-auto`}>
           + Новый старейшина
         </Link>
         <LogoutButton />
@@ -55,17 +57,17 @@ export default async function KioskQueuePage() {
       ) : (
         <ul className="flex flex-col gap-3">
           {items.map((it) => (
-            <li key={it.familyId} className="flex items-center gap-5 rounded-card bg-paper-deep p-4 shadow-card">
+            <li key={it.familyId} className="flex flex-wrap items-center gap-4 rounded-card bg-paper-deep p-4 shadow-card sm:flex-nowrap sm:gap-5">
               {it.photoUrl ? (
                 // eslint-disable-next-line @next/next/no-img-element -- подписанная ссылка Storage на час
-                <img src={it.photoUrl} alt="" className="size-20 shrink-0 rounded-card object-cover" />
+                <img src={it.photoUrl} alt="" className="size-16 shrink-0 rounded-card object-cover sm:size-20" />
               ) : (
-                <div aria-hidden className="flex size-20 shrink-0 items-center justify-center rounded-card border border-dashed border-line text-4xl text-muted">
+                <div aria-hidden className="flex size-16 shrink-0 items-center sm:size-20 justify-center rounded-card border border-dashed border-line text-4xl text-muted">
                   ☺
                 </div>
               )}
               <div className="flex min-w-0 flex-1 flex-col gap-1">
-                <p className="truncate font-serif text-2xl">
+                <p className="font-serif text-2xl break-words sm:truncate">
                   {it.name}
                   {it.birthYear ? <span className="text-muted"> · {it.birthYear}</span> : null}
                 </p>
@@ -79,7 +81,7 @@ export default async function KioskQueuePage() {
                   <StoriesBadge s={it.stories} />
                 </div>
               </div>
-              <Link href={`/kiosk/session/${it.familyId}`} className={kGhost}>
+              <Link href={`/kiosk/session/${it.familyId}`} className={`${kGhost} w-full sm:w-auto`}>
                 {it.stories.total + it.stories.skipped > 0 ? "Продолжить" : "Начать"}
               </Link>
             </li>

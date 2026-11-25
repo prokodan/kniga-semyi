@@ -11,10 +11,10 @@ export default async function KioskNewPage() {
   await requireKiosk();
   const [volunteers, current] = await Promise.all([getKioskStore().listVolunteers(), currentVolunteerId()]);
   return (
-    <main className="mx-auto flex max-w-6xl flex-col gap-6 px-8 py-6">
-      <header className="flex items-center justify-between gap-6">
+    <main className="mx-auto flex max-w-6xl flex-col gap-6 px-5 py-6 sm:px-8">
+      <header className="flex flex-wrap items-center justify-between gap-4">
         <h1 className="font-serif text-4xl">Новый старейшина</h1>
-        <Link href="/kiosk/queue" className={kGhost}>
+        <Link href="/kiosk/queue" className={`${kGhost} w-full sm:w-auto`}>
           ← Очередь дня
         </Link>
       </header>
