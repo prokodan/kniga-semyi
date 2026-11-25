@@ -19,6 +19,10 @@ const LATE_ATTEMPTS = Number(process.env.KICK_LATE_ATTEMPTS ?? 6);
 const LATE_EVERY_MIN = Number(process.env.KICK_LATE_EVERY_MIN ?? 60);
 const LATE_WINDOW_H = Number(process.env.KICK_LATE_WINDOW_H ?? 72);
 const KICK_FAILED = "Глава не собралась за";
+// #176: у job 8 мин, а одна история — до 4 вызовов по 70 с. 25.11 при 13 застрявших главах job обрывался по
+// таймауту, не дойдя до половины (и не записав итог). Новые истории начинаем, только пока есть запас.
+const BUDGET_MS = Number(process.env.KICK_BUDGET_MS ?? 6 * 60_000);
+const T0 = Date.now();
 if (!SB || !KEY || !PROD) {
   console.error("Нужны NEXT_PUBLIC_SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY и PROD_URL");
   process.exit(1);
@@ -57,7 +61,12 @@ for (const s of late) stuck.push({ ...s, late: true });
 
 const lines = [`# kick-stuck · ${new Date().toISOString()} · застряли > ${STALE_MIN} мин: ${stuck.length}`, ""];
 const tokens = new Map();
+let skippedForTime = 0;
 for (const s of stuck) {
+  if (Date.now() - T0 > BUDGET_MS) {
+    skippedForTime++;
+    continue;
+  }
   const tries = s.kick_attempts ?? 0;
   const label = LABEL[s.status] ?? s.status;
   if (tries >= MAX_ATTEMPTS && !s.late) {
@@ -116,6 +125,7 @@ for (const s of stuck) {
   lines.push(`- ${short(s.id)} ${s.status} → ${s.late ? "поздняя попытка" : "перезапуск"} ${tries + 1}/${MAX_ATTEMPTS + (s.late ? LATE_ATTEMPTS : 0)}: ${trail.join(", ")}`);
 }
 
+if (skippedForTime) lines.push("", `Не успели за ${Math.round(BUDGET_MS / 60_000)} мин: ${skippedForTime} — возьмёт следующий запуск (самые старые — первыми).`);
 const out = lines.join("\n");
 console.log(out);
 if (process.env.GITHUB_STEP_SUMMARY) appendFileSync(process.env.GITHUB_STEP_SUMMARY, out + "\n");
