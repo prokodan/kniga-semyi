@@ -112,13 +112,15 @@ export interface KrRuleIssue {
   ko: string;
   issue: string;
 }
-export type KrRuleKind = "paren" | "glossary" | "style" | "names" | "other";
+export type KrRuleKind = "paren" | "glossary" | "style" | "names" | "cyrillic" | "other";
 export interface KrRules {
   paren: number;
   glossary: number;
   style: number;
   /** #121: имя словаря семьи в главе написано не так, как во всей книге */
   names?: number;
+  /** #157: кириллица внутри корейского текста (после #163 конвейер её убирает — должно быть 0) */
+  cyrillic?: number;
   other: number;
   issues: KrRuleIssue[];
 }
@@ -126,9 +128,10 @@ export interface KrRules {
 export function krRuleKind(rule: string): KrRuleKind {
   if (rule === "paren") return "paren";
   if (rule === "name:spelling") return "names";
+  if (rule === "cyrillic") return "cyrillic";
   // style:parents — 아버님 / 어머님 о своих родителях: решение по глоссарию (#103)
   if (rule.startsWith("glossary:") || rule === "style:parents") return "glossary";
-  if (rule === "style:mixed" || rule === "style:hapsyo" || rule === "style:rieul") return "style";
+  if (rule === "style:mixed" || rule === "style:hapsyo" || rule === "style:rieul" || rule === "style:grandkids") return "style";
   return "other";
 }
 
@@ -147,7 +150,7 @@ export function checkKrRules(
       issues.push({ chapter: title, kind: krRuleKind(f.rule), rule: f.rule, ko: f.ko, issue: f.issue });
   }
   const n = (k: KrRuleKind) => issues.filter((i) => i.kind === k).length;
-  return { paren: n("paren"), glossary: n("glossary"), style: n("style"), names: n("names"), other: n("other"), issues };
+  return { paren: n("paren"), glossary: n("glossary"), style: n("style"), names: n("names"), cyrillic: n("cyrillic"), other: n("other"), issues };
 }
 
 export interface ChapterQuality {
@@ -364,6 +367,7 @@ export interface EvalSummary {
     krGlossary?: number | null;
     krStyle?: number | null;
     krNames?: number | null;
+    krCyrillic?: number | null;
   };
 }
 
@@ -413,9 +417,9 @@ export function summarize(
 
 function krTotals(runs: RunMetrics[]) {
   const counted = runs.filter((r) => r.krRules);
-  if (!counted.length) return { krParen: null, krGlossary: null, krStyle: null, krNames: null };
-  const sum = (k: "paren" | "glossary" | "style" | "names") => counted.reduce((n, r) => n + (r.krRules![k] ?? 0), 0);
-  return { krParen: sum("paren"), krGlossary: sum("glossary"), krStyle: sum("style"), krNames: sum("names") };
+  if (!counted.length) return { krParen: null, krGlossary: null, krStyle: null, krNames: null, krCyrillic: null };
+  const sum = (k: "paren" | "glossary" | "style" | "names" | "cyrillic") => counted.reduce((n, r) => n + (r.krRules![k] ?? 0), 0);
+  return { krParen: sum("paren"), krGlossary: sum("glossary"), krStyle: sum("style"), krNames: sum("names"), krCyrillic: sum("cyrillic") };
 }
 
 // ---------------- Markdown ----------------
@@ -454,6 +458,7 @@ export const METRICS: MetricDef[] = [
   { name: "KR без ИИ: отклонения от глоссария (вкл. 아버님 / 어머님 о своих)", get: (s) => s.totals.krGlossary ?? null, better: "down", fmt: (x) => String(x ?? "—") },
   { name: "KR без ИИ: смешение 해요체 / 한다체 в абзаце, 습니다체, ㄹ + -으셨", get: (s) => s.totals.krStyle ?? null, better: "down", fmt: (x) => String(x ?? "—") },
   { name: "KR без ИИ: имя написано не как в словаре семьи (одно имя — одно написание)", get: (s) => s.totals.krNames ?? null, better: "down", fmt: (x) => String(x ?? "—") },
+  { name: "KR без ИИ: кириллица в корейском", get: (s) => s.totals.krCyrillic ?? null, better: "down", fmt: (x) => String(x ?? "—") },
   { name: "Уточнения: флажки (длина, два вопроса, «ты», «подробнее», повтор)", get: (s) => s.totals.followupIssues ?? null, better: "down", fmt: (x) => String(x ?? "—") },
   { name: "Уточнения: давление после отказа / боли", get: (s) => s.totals.pressure ?? null, better: "down", fmt: (x) => String(x ?? "—") },
   { name: "Связки: флажки (длина, вопрос, лесть, повтор)", get: (s) => s.totals.bridgeIssues ?? null, better: "down", fmt: (x) => String(x ?? "—") },

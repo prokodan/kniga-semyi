@@ -83,7 +83,7 @@ describe("правила без ИИ", () => {
 
   it("прямая речь в кавычках не считается смешением стилей", () => {
     expect(rules(chapter("Мама сказала: учись.", "\"공부해요.\" 어머니는 그렇게 말씀하셨다. 나는 공부했다."))).not.toContain("style:mixed");
-    expect(rules(chapter("Я жил. Внуки, слушайте.", "나는 살았다. 손주들아, 들어 봐요."))).toContain("style:mixed");
+    expect(rules(chapter("Я жил. Послушайте.", "나는 살았다. 여러분, 들어 봐요."))).toContain("style:mixed");
   });
 
   it("#103: пояснения в скобках, которых нет в оригинале — major; глоссарные — можно", () => {
@@ -133,10 +133,21 @@ describe("правила без ИИ", () => {
   });
 
   it("#103: смешение стилей — по абзацам; разные абзацы в разных стилях — не флажок", () => {
-    const f = checkItem(chapter("Жили. Внуки, слушайте. Работали.", "우리는 살았다. 손주들아, 들어 봐요. 열심히 일했다."), glossary);
+    const f = checkItem(chapter("Жили. Послушайте. Работали.", "우리는 살았다. 여러분, 들어 봐요. 열심히 일했다."), glossary);
     expect(f.filter((x) => x.rule === "style:mixed")).toHaveLength(1);
     expect(f.find((x) => x.rule === "style:mixed")!.issue).toContain("абзаце 1");
     expect(rules(chapter("Жили.\n\nВнуки, помните.", "우리는 살았다.\n\n손주들, 꼭 기억해요."))).not.toContain("style:mixed");
+  });
+
+  it("#154: к внукам — 해라체; 해요체 в обращении к внукам — флажок style:grandkids", () => {
+    const f = checkItem(chapter("Жили. Внуки, слушайте.", "우리는 살았다. 손주들아, 들어 봐요."), glossary);
+    expect(f.map((x) => x.rule)).toContain("style:grandkids");
+    expect(f.map((x) => x.rule)).not.toContain("style:mixed");
+    expect(rules(chapter("Внуки, помните.", "손주들, 꼭 기억해요."))).toContain("style:grandkids");
+    // 해라체 в том же абзаце, что 한다체, — норма
+    const ok = rules(chapter("Мы жили в Уштобе. Внуки, слушайте и не забывайте.", "우리는 우슈토베에서 살았다. 손주들아, 잘 들어라. 우리 뿌리를 잊지 마라."));
+    expect(ok).not.toContain("style:grandkids");
+    expect(ok).not.toContain("style:mixed");
   });
 
   it("вопросы: 해요체 и почтительное -시-", () => {

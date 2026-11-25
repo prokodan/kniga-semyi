@@ -1,0 +1,37 @@
+name: spellings-backfill
+
+# #155: одно написание имён в уже готовых главах — без ИИ (scripts/spellings-backfill.ts, lib/pipeline/spellings.ts).
+# Варианты имени в корейском (렌나 / 레나) → написание словаря семьи, иначе самое частое; пустой name_ko заполняется;
+# книга помечается «пересобрать». Демо-семью не трогает. В лог — только короткие id и числа.
+# Только вручную; по умолчанию dry run.
+on:
+  workflow_dispatch:
+    inputs:
+      families:
+        description: "Короткие id семей через запятую (из diag) или all"
+        required: true
+      apply:
+        description: "Записать (иначе только показать план)"
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  spellings:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
+      SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+      SPELLINGS_FAMILIES: ${{ inputs.families }}
+      SPELLINGS_APPLY: ${{ inputs.apply && '1' || '0' }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npx tsx scripts/spellings-backfill.ts
