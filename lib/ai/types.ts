@@ -62,12 +62,20 @@ export const inputSchemas = {
     answer: z.string(),
     followupsAsked: z.number().int().min(0),
     maxFollowups: z.number().int().min(0).default(3),
+    /** #99: уточнения, которые уже звучали в этой сессии, — не повторять ни дословно, ни по смыслу */
+    askedFollowups: z.array(z.string()).max(30).optional(),
+    /** #99: прошлые ответы рассказчика — не спрашивать то, что уже известно */
+    earlierAnswers: z.array(z.string()).max(30).optional(),
   }),
   next_question: z.object({
     storytellerName: z.string(),
     coveredBlocks: z.array(lifeBlock),
     recentAnswers: z.array(z.string()).max(5),
     candidateQuestions: z.array(z.object({ id: z.string(), block: lifeBlock, text: z.string() })).min(1),
+    /** #99: все кандидаты — из одного раздела; новый раздел — мост делает движок, а не модель */
+    sameBlock: z.boolean().optional(),
+    /** #99: прошлые ответы рассказчика (до 30, обрезаны) — по ним отметить уже отвеченные кандидаты */
+    knownAnswers: z.array(z.string()).max(30).optional(),
   }),
   tale: z.object({
     childName: z.string().optional(),
@@ -126,7 +134,12 @@ export const outputSchemas = {
     /** если рассказчик ушёл в другую тему — блок, куда засчитать ответ */
     offTopicBlock: lifeBlock.nullable().default(null),
   }),
-  next_question: z.object({ questionId: z.string(), bridge: z.string().default("") }),
+  next_question: z.object({
+    questionId: z.string(),
+    bridge: z.string().default(""),
+    /** #99: кандидаты, на которые рассказчик уже ответил в прошлых рассказах — движок их пропускает */
+    alreadyAnswered: z.array(z.string()).optional(),
+  }),
   tale: z.object({
     title: z.string(),
     pages: z.array(z.object({ text: z.string(), illustrationPrompt: z.string() })).min(1),

@@ -20,6 +20,12 @@ function placeholderSvg(prompt: string): string {
 export const SHORT_ANSWER_SEC = 3;
 export const SHORT_ANSWER = "Да, помню. Это было в Уштобе.";
 
+const MOCK_FOLLOWUPS = [
+  "А сколько вам тогда было лет и где это было?",
+  "А кто был рядом с вами в тот день?",
+  "А что вы тогда почувствовали?",
+];
+
 function wordCount(s: string): number {
   return s.trim().split(/\s+/).filter(Boolean).length;
 }
@@ -46,7 +52,8 @@ export function mockOutput<S extends AiStep>(step: S, input: ProviderCall<S>["in
         return {
           covered,
           missing,
-          followup: "А сколько вам тогда было лет и где это было?",
+          // Разные уточнения по номеру (#99: повторов нет); первое — то, что ждут e2e.
+          followup: MOCK_FOLLOWUPS[Math.min(i.followupsAsked, MOCK_FOLLOWUPS.length - 1)]!,
           done: false,
           offTopicBlock: null,
         };
@@ -56,7 +63,7 @@ export function mockOutput<S extends AiStep>(step: S, input: ProviderCall<S>["in
     case "next_question": {
       const i = input as ProviderCall<"next_question">["input"];
       const next = i.candidateQuestions.find((q) => !i.coveredBlocks.includes(q.block)) ?? i.candidateQuestions[0]!;
-      return { questionId: next.id, bridge: "Спасибо, это очень ценно." };
+      return { questionId: next.id, bridge: "Спасибо, это очень ценно.", alreadyAnswered: [] };
     }
     case "tale":
       return taleFixture;
