@@ -45,6 +45,7 @@
     "@vitejs/plugin-react": "^6.3.0",
     "eslint": "^9.39.5",
     "eslint-config-next": "^16.4.6",
+    "mupdf": "^1.28.6",
     "tailwindcss": "^4.3.5",
     "tsx": "^4.23.15",
     "typescript": "^5.9.3",

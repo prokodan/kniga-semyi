@@ -8,6 +8,15 @@ import { Font } from "@react-pdf/renderer";
 export const FONT_RU = "BookSerif";
 export const FONT_KO = "BookSerifKR";
 
+/**
+ * Семейства со сменой шрифта по письменности (#97). react-pdf для каждого символа берёт первый шрифт
+ * из списка, где есть глиф: кириллица в корейском тексте («Ерлан», «ЗИЛ») → Noto Serif,
+ * хангыль в русском («고맙습니다») → Noto Serif KR. Без запасного шрифта такие символы печатались
+ * чужими глифами («Ерлан» → «@;0=») и наезжали на соседние буквы. Латиница и цифры есть в обоих.
+ */
+export const FAMILY_RU: string[] = [FONT_RU, FONT_KO];
+export const FAMILY_KO: string[] = [FONT_KO, FONT_RU];
+
 /** Папка шрифтов: на Vercel public/fonts попадает в функцию через outputFileTracingIncludes (next.config.ts). */
 export function fontsDir(): string {
   return path.join(process.cwd(), "public", "fonts");
@@ -31,6 +40,8 @@ export function registerBookFonts(dir = fontsDir()): void {
     family: FONT_KO,
     fonts: [
       { src: f("NotoSerifKR-Regular.ttf"), fontWeight: 400 },
+      // Курсива у корейского нет: хангыль внутри русской цитаты (курсив) берёт прямое начертание.
+      { src: f("NotoSerifKR-Regular.ttf"), fontWeight: 400, fontStyle: "italic" },
       { src: f("NotoSerifKR-Bold.ttf"), fontWeight: 700 },
     ],
   });
