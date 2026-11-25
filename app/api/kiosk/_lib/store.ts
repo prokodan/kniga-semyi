@@ -29,7 +29,8 @@ export interface QueueItem {
   volunteer: string | null;
   /** Последняя активность: создание карточки или начало сессии */
   lastAt: string;
-  stories: { total: number; ready: number; working: number; failed: number };
+  /** #92: skipped (вопрос пропущен, главы не будет) — отдельно, не входит в total и «в работе» */
+  stories: { total: number; ready: number; working: number; failed: number; skipped: number };
 }
 
 export interface KioskStore {
@@ -64,11 +65,18 @@ export const isUuid = (v: string) => UUID_RE.test(v);
 type StoryRow = { family_id: string; status: StoryStatus; parent_story_id: string | null };
 type SessionRow = { family_id: string; volunteer_id: string | null; started_at: string; mode?: string };
 
-/** Счётчики глав: ответы на уточнения — часть основной истории, отдельно не считаем. */
+/**
+ * Счётчики глав: ответы на уточнения — часть основной истории, отдельно не считаем.
+ * #92: skipped (отказ / переспрос имени — главы не будет) — ни «готово», ни «в работе», ни в total.
+ */
 export function countStories(rows: StoryRow[]) {
-  const c = { total: 0, ready: 0, working: 0, failed: 0 };
+  const c = { total: 0, ready: 0, working: 0, failed: 0, skipped: 0 };
   for (const s of rows) {
     if (s.parent_story_id) continue;
+    if (s.status === "skipped") {
+      c.skipped += 1;
+      continue;
+    }
     c.total += 1;
     if (s.status === "ready") c.ready += 1;
     else if (s.status === "failed") c.failed += 1;
