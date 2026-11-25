@@ -18,7 +18,7 @@ const RU_ENDINGS = [
 ];
 
 /** Частицы и окончания корейского после имени. */
-const KO_PARTICLES = [
+export const KO_PARTICLES = [
   "에게서", "께서", "에게", "에서", "한테", "이랑", "부터", "까지", "처럼", "보다", "와의", "과의", "으로", "이나", "이가", "이는", "이를", "이의", "이도",
   "이와", "이에게", "이랑", "이", "가", "은", "는", "을", "를", "의", "에", "께", "와", "과", "도", "만", "로", "나", "랑", "야", "아", "씨", "님",
 ].sort((a, b) => b.length - a.length);
@@ -113,11 +113,16 @@ export function replaceRu(text: string | null, fromRaw: string, toRaw: string): 
   return { text: out, count };
 }
 
+/** Сколько раз имя (с падежными формами для однословных) встречается в тексте. */
+export function countRu(text: string | null, nameRaw: string): number {
+  const name = normName(nameRaw);
+  if (!text || !name) return 0;
+  return scanRu(text, name, inflection(name, name) !== null, (m) => m).count;
+}
+
 /** Встречается ли имя (с падежными формами для однословных) в тексте. */
 export function mentionsRu(text: string | null, nameRaw: string): boolean {
-  const name = normName(nameRaw);
-  if (!text || !name) return false;
-  return scanRu(text, name, inflection(name, name) !== null, (m) => m).count > 0;
+  return countRu(text, nameRaw) > 0;
 }
 
 /** Заменить корейское написание имени: перед ним не буква, после — ничего или частица. */

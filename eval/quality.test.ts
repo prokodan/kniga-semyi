@@ -14,6 +14,8 @@ import {
   renderEvalReport,
   renderPrComment,
   summarize,
+  checkKrRules,
+  krRuleKind,
   VOICE_TARGET,
 } from "./quality";
 import { readFileSync } from "node:fs";
@@ -131,6 +133,26 @@ describe("evaluateRun", () => {
     // без глоссария правила не считаются
     const m0 = await evaluateRun({ sim, ai: inst.ai, models: inst.models, mock: true });
     expect(m0.krRules).toBeNull();
+  });
+
+  it("#157: кириллица в корейском — своя строка «KR без ИИ», а не «прочее»", () => {
+    const glossary = parseGlossary(readFileSync("docs/glossary.md", "utf8"));
+    expect(krRuleKind("cyrillic")).toBe("cyrillic");
+    const r = checkKrRules([{ id: "c1", title: "Аппади", text_ru: "Отец, Пётр Санхович, был строгим.", text_ko: "아버지 Пётр Санхович는 엄격하셨다." }], glossary);
+    expect(r.cyrillic).toBe(1);
+    expect(r.other).toBe(0);
+  });
+
+  it("#157: строка «KR без ИИ: кириллица в корейском» в «до / после»", async () => {
+    const glossary = parseGlossary(readFileSync("docs/glossary.md", "utf8"));
+    const router = fakeRouter({ translate: () => ({ text_ko: "우리 아버지 Пётр는 엄격하셨다.", title_ko: "아버지", quote_ko: "" }) });
+    const { inst, sim } = await simulate(router);
+    const m = await evaluateRun({ sim, ai: inst.ai, models: inst.models, mock: true, glossary });
+    const after = summarize([m], { mode: "mock", label: "PR" });
+    expect(after.totals.krCyrillic).toBe(m.krRules?.cyrillic ?? 0);
+    const before = summarize([{ ...m, krRules: undefined }], { mode: "mock", label: "main" });
+    expect(before.totals.krCyrillic).toBeNull();
+    expect(renderPrComment(after, before)).toMatch(/KR без ИИ: кириллица в корейском \| — \| \d+ \| — \|/);
   });
 
   it("судья недоступен — прогон не падает, ошибка в отчёте", async () => {

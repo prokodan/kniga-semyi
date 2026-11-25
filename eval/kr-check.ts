@@ -1,7 +1,7 @@
 // Проверка корейского (V2): демо-главы книги и банк вопросов.
 //   1) правила без ИИ — глоссарий docs/glossary.md (корё мар, реалии, топонимы, фамилии, «не:» варианты), годы,
 //      пояснения в скобках, которых нет в оригинале,
-//      стиль речи (한다체 в повествовании, 해요체 + почтительное -시- в вопросах), кириллица, цитата;
+//      стиль речи (한다체 в повествовании, 해라체 к внукам, 해요체 + почтительное -시- в вопросах), кириллица, цитата;
 //   2) обратный перевод KR→RU ДРУГИМ провайдером, чем переводил (translate идёт на Gemini → проверяет OpenAI;
 //      нет ключа OpenAI — Gemini Flash, т. е. другая модель), сверка с RU, флажки (промпт eval/back_translate.md).
 // Итог: короткий список флажков по 1–2 самым сомнительным демо-главам — для человека; остальное — в отчёте.
@@ -269,6 +269,9 @@ export function isHapsyo(e: string): boolean {
 }
 const end = (s: string) => s.replace(/["'”»)\s.!?…]+$/, "");
 
+/** Обращение к внукам в абзаце: 손주들아, 손자야, 손녀들, 얘들아… */
+const GRANDKIDS = /(손주|손자|손녀|얘들아)/;
+
 /** Абзацы корейского текста: пустая строка или перевод строки. */
 export const paragraphs = (text: string) => text.split(/\n+/).map((p) => p.trim()).filter((p) => /[가-힣]/.test(p));
 
@@ -278,6 +281,11 @@ function styleFlagsChapter(item: KrItem): KrFlag[] {
   paragraphs(withoutQuotes(item.text_ko)).forEach((p, i) => {
     const ends = sentences(p).map(end);
     const yo = sentences(p).filter((_, k) => /요$/.test(ends[k]!));
+    // #154: прямое обращение к внукам — 해라체 (들어라, 잊지 마라), не 해요체
+    if (yo.length && GRANDKIDS.test(p)) {
+      flags.push({ id: item.id, source: "rule", rule: "style:grandkids", ko: yo[0]!.slice(-30), issue: `к внукам — 해라체 (들어라, 잊지 마라), не 해요체 (абзац ${i + 1})`, severity: "minor" });
+      return; // тот же случай не считаем ещё и смешением
+    }
     if (yo.length && ends.some((e) => /다$/.test(e) && !isHapsyo(e)))
       flags.push({ id: item.id, source: "rule", rule: "style:mixed", ko: yo[0]!.slice(-30), issue: `смешение 해요체 и 한다체 в абзаце ${i + 1} — один стиль повествования`, severity: "minor" });
   });
