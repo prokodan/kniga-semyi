@@ -38,7 +38,10 @@ export async function renderBook(input: BookInput, opts: { fontsDir?: string } =
   await renderToBuffer(doc({ book, collect }));
   const pdf = await renderToBuffer(doc({ book, pages }));
 
-  const koText = book.chapters.map((c) => [c.titleKo, c.quoteKo, c.textKo].join(" ")).join(" ") + (book.storyteller.name_ko ?? "");
+  // Хангыль ищем во всех текстах: после #97 он печатается и внутри русского («고맙습니다»).
+  const koText =
+    book.chapters.map((c) => [c.title, c.titleKo, c.quote, c.quoteKo, c.textRu, c.textKo].join(" ")).join(" ") +
+    ` ${book.storyteller.name} ${book.storyteller.name_ko ?? ""}`;
   return {
     pdf,
     pageCount: total || countPages(pdf),
