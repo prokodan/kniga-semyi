@@ -42,6 +42,8 @@ export interface PipelineRepo {
   familyEntities?(story: Story): Promise<FamilyEntity[]>;
   /** #102: дописать в словарь семьи сущности собранной главы (source='family' не перезаписывается). */
   saveEntities?(story: Story, drafts: EntityDraft[]): Promise<void>;
+  /** #121 #124: запомнить корейское написание (только где name_ko ещё пусто — первая глава задаёт его для всей книги). */
+  saveSpellings?(story: Story, spellings: { id: string; name_ko: string }[]): Promise<void>;
 }
 
 /** Более ранние основные истории рассказчика: не уточнения, не пропуски, создана раньше. */
@@ -127,6 +129,13 @@ export class MemoryPipelineRepo implements PipelineRepo {
   async familyEntities(story: Story) {
     return this.entities.filter((e) => e.family_id === story.family_id).map((e) => structuredClone(e));
   }
+  async saveSpellings(story: Story, spellings: { id: string; name_ko: string }[]) {
+    const now = new Date().toISOString();
+    for (const sp of spellings) {
+      const e = this.entities.find((x) => x.id === sp.id && x.family_id === story.family_id);
+      if (e && !e.name_ko?.trim()) Object.assign(e, { name_ko: sp.name_ko, updated_at: now });
+    }
+  }
   async saveEntities(story: Story, drafts: EntityDraft[]) {
     const { inserts, updates } = mergeEntities(this.entities.filter((e) => e.family_id === story.family_id), drafts, story.family_id, story.id);
     const now = new Date().toISOString();
@@ -203,6 +212,13 @@ export class SupabasePipelineRepo implements PipelineRepo {
     const { data, error } = await this.db.from("family_entities").select("*").eq("family_id", story.family_id).limit(500);
     if (error) return []; // нет таблицы до migrate — работаем без словаря
     return (data ?? []) as FamilyEntity[];
+  }
+  async saveSpellings(story: Story, spellings: { id: string; name_ko: string }[]) {
+    for (const sp of spellings) {
+      // только пустое написание: соседняя глава могла успеть раньше — тогда её вариант и остаётся
+      const { error } = await this.db.from("family_entities").update({ name_ko: sp.name_ko }).eq("id", sp.id).eq("family_id", story.family_id).is("name_ko", null);
+      if (error) throw new Error(`словарь семьи: ${error.message}`);
+    }
   }
   async saveEntities(story: Story, drafts: EntityDraft[]) {
     if (drafts.length === 0) return;

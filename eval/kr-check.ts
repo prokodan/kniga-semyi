@@ -6,6 +6,7 @@
 // Итог: короткий список флажков по 1–2 самым сомнительным демо-главам — для человека; остальное — в отчёте.
 // Запуск: npx tsx scripts/kr-check.ts (без ключей — только правила и mock, бесплатно).
 import type { AiRouter } from "@/lib/ai/router";
+import { sameEntity } from "@/lib/pipeline/entities";
 
 export type GlossarySection = "koryo" | "realia" | "place" | "surname";
 
@@ -234,6 +235,29 @@ function styleFlagsChapter(item: KrItem): KrFlag[] {
   }
   if (yoS.length && daCount)
     flags.push({ id: item.id, source: "rule", rule: "style:mixed", ko: yoS[0]!.slice(-30), issue: "смешение 해요체 и 한다체 в повествовании", severity: "minor" });
+  return flags;
+}
+
+/** Имя есть в русском тексте: многословное — целиком, одно слово — в любом падеже («Лены» ↔ «Лена»). */
+function mentions(textRu: string, name: string): boolean {
+  const t = yo(textRu).toLowerCase();
+  const n = yo(name).toLowerCase().trim();
+  if (!n) return false;
+  if (n.includes(" ")) return t.includes(n);
+  return (t.match(new RegExp(`[${RU_LETTER}-]+`, "gu")) ?? []).some((w) => sameEntity(w, n));
+}
+
+/**
+ * #121: одно имя — одно написание во всей книге. names — словарь семьи (люди и места с корейским написанием):
+ * имя есть в русском тексте главы → его написание должно быть в корейском.
+ */
+export function nameSpellingFlags(item: KrItem, names: { ru: string; ko: string }[]): KrFlag[] {
+  const flags: KrFlag[] = [];
+  const ko = compact(item.text_ko);
+  for (const n of names) {
+    if (!n.ko.trim() || !mentions(item.text_ru, n.ru) || ko.includes(compact(n.ko))) continue;
+    flags.push({ id: item.id, source: "rule", rule: "name:spelling", ko: "", ru: n.ru, issue: `«${n.ru}» в книге пишется ${n.ko} (словарь семьи), в этой главе такого написания нет`, severity: "minor" });
+  }
   return flags;
 }
 
