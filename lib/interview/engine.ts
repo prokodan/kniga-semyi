@@ -108,6 +108,8 @@ export interface InterviewDeps {
 
 const PHRASES = {
   greeting: "Здравствуйте! Мы будем просто разговаривать — отвечайте, как вам удобно. Любой вопрос можно пропустить.",
+  // #108: рассказчик уже отвечал раньше — продолжаем с первого неотвеченного вопроса
+  welcomeBack: "Здравствуйте! Рады снова вас слышать. Продолжим с того места, где остановились. Любой вопрос можно пропустить.",
   // Начало фразы — как в eval/prompt-checks.ts (ENGINE_BRIDGES): фраза движка, а не модели.
   refused: "Хорошо, не будем об этом — это ваше право, и спасибо, что сказали. Давайте о другом.",
   skip: "Хорошо, давайте о другом.",
@@ -400,7 +402,10 @@ export function createInterview(deps: InterviewDeps) {
   return {
     bank,
 
-    /** Начать сессию: первый вопрос банка, без вызова ИИ. */
+    /**
+     * Начать сессию без вызова ИИ: первый вопрос банка, а если рассказчик уже отвечал в прошлых сессиях (#108) —
+     * первый неотвеченный по порядку фаз; отвеченные засчитаны в answered_question_ids.
+     */
     async startSession(input: {
       familyId: string;
       storytellerId: string;
@@ -414,18 +419,30 @@ export function createInterview(deps: InterviewDeps) {
       if (!(await repo.storytellerBelongs(input.familyId, input.storytellerId))) {
         throw new InterviewError("forbidden", "Рассказчик не из этой семьи");
       }
-      const first = bank.first();
+      let answered: string[] = [];
+      if (repo.answeredQuestionIds) {
+        try {
+          const ids = new Set(await repo.answeredQuestionIds(input.storytellerId));
+          answered = bank.all().filter((q) => ids.has(q.id)).map((q) => q.id);
+        } catch {
+          answered = []; // база не ответила — начинаем с первого вопроса, как раньше
+        }
+      }
       const state: SessionState = {
-        current_question_id: first.id,
+        current_question_id: undefined,
         followups_asked: 0,
         covered_blocks: [],
         skipped_question_ids: [],
         later_question_ids: [],
-        answered_question_ids: [],
+        answered_question_ids: answered,
         current_story_id: null,
         pending_followup: null,
         recent_answers: [],
       };
+      // Всё уже рассказано — начинаем сначала: можно дополнить любой ответ.
+      const first = candidateQuestions(bank, state)[0] ?? bank.first();
+      state.current_question_id = first.id;
+      state.covered_blocks = coveredBlocks(bank, state);
       const mode = input.mode ?? "family";
       const session = await repo.createSession({
         family_id: input.familyId,
@@ -434,7 +451,8 @@ export function createInterview(deps: InterviewDeps) {
         volunteer_id: input.volunteerId ?? null,
         state,
       });
-      return { sessionId: session.id, mode, question: view(first), greeting: PHRASES.greeting, progress: progress(state) };
+      const greeting = answered.length > 0 ? PHRASES.welcomeBack : PHRASES.greeting;
+      return { sessionId: session.id, mode, question: view(first), greeting, progress: progress(state) };
     },
 
     /** Ответ на текущий вопрос или на уточнение: текстом или готовой историей (transcript после I2). */

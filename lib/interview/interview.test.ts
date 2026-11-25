@@ -371,3 +371,55 @@ describe("#107: долгая расшифровка — ответ, а не пр
     expect(state.current_question_id).toBe(s.question.id);
   });
 });
+
+describe("#108: новая сессия продолжает с первого неотвеченного вопроса", () => {
+  it("прошлые ответы засчитаны, первый вопрос — следующий открытый; отказ (skipped) и уточнения не в счёт", async () => {
+    const { interview, repo } = setup();
+    const bank = createQuestionBank();
+    const order = bank.all().map((q) => q.id);
+    const s1 = await start(interview);
+    expect(s1.question.id).toBe(order[0]);
+    expect(s1.greeting).toMatch(/^Здравствуйте! Мы будем/);
+
+    // В прошлых сессиях: ответ на 1-й вопрос, отказ на 2-й, запись-уточнение к 3-му.
+    const story = (question_id: string) => repo.createStory({ family_id: "fam-1", storyteller_id: "st-1", session_id: s1.sessionId, question_id, block: null, transcript: LONG() });
+    await story(order[0]!);
+    const refused = await story(order[1]!);
+    await repo.updateStory(refused.id, { status: "skipped" });
+    const child = await story(order[2]!);
+    await repo.updateStory(child.id, { parent_story_id: refused.id });
+
+    const s2 = await start(interview); // другое устройство / очищен localStorage
+    expect(s2.question.id).toBe(order[1]);
+    expect(s2.greeting).toContain("Продолжим");
+    expect(s2.progress.questionsDone).toBe(1);
+    const state = repo.sessions.get(s2.sessionId)!.state as SessionState;
+    expect(state.answered_question_ids).toEqual([order[0]]);
+    expect(state.current_question_id).toBe(order[1]);
+  });
+
+  it("весь первый раздел рассказан → начинаем со второго раздела по фазам", async () => {
+    const { interview, repo } = setup();
+    const bank = createQuestionBank();
+    const s1 = await start(interview);
+    const firstBlock = s1.question.block;
+    for (const q of bank.inBlock(firstBlock)) {
+      await repo.createStory({ family_id: "fam-1", storyteller_id: "st-1", session_id: s1.sessionId, question_id: q.id, block: q.block, transcript: LONG() });
+    }
+    const s2 = await start(interview);
+    expect(s2.question.block).not.toBe(firstBlock);
+    expect(s2.question.id).toBe(bank.all().find((q) => q.block !== firstBlock)!.id);
+    expect(s2.progress.doneBlocks).toContain(firstBlock);
+  });
+
+  it("всё уже рассказано → начинаем с первого вопроса (можно дополнить)", async () => {
+    const { interview, repo } = setup();
+    const bank = createQuestionBank();
+    const s1 = await start(interview);
+    for (const q of bank.all()) {
+      await repo.createStory({ family_id: "fam-1", storyteller_id: "st-1", session_id: s1.sessionId, question_id: q.id, block: q.block, transcript: "ответ" });
+    }
+    const s2 = await start(interview);
+    expect(s2.question.id).toBe(bank.first().id);
+  });
+});

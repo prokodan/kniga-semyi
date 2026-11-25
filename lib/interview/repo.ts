@@ -14,6 +14,8 @@ export interface InterviewRepo {
   getSession(id: string): Promise<Session | null>;
   saveState(id: string, state: SessionState, ended?: boolean): Promise<void>;
   getStory(id: string): Promise<Story | null>;
+  /** #108: вопросы, на которые рассказчик уже ответил в любых сессиях (основные рассказы, кроме skipped) */
+  answeredQuestionIds?(storytellerId: string): Promise<string[]>;
   createStory(d: StoryDraft): Promise<Story>;
   updateStory(id: string, patch: StoryPatch): Promise<void>;
   /** Рассказчик принадлежит семье */
@@ -118,6 +120,11 @@ export class MemoryInterviewRepo implements InterviewRepo {
   async nameHints(storytellerId: string) {
     return nameHints({ storytellerName: this.names.get(storytellerId) });
   }
+  async answeredQuestionIds(storytellerId: string) {
+    return [...this.stories.values()]
+      .filter((s) => s.storyteller_id === storytellerId && s.status !== "skipped" && !s.parent_story_id && s.question_id)
+      .map((s) => s.question_id!);
+  }
   async earlierAnswers(storytellerId: string) {
     return [...this.stories.values()]
       .filter((s) => s.storyteller_id === storytellerId && s.status !== "skipped" && !s.parent_story_id)
@@ -194,6 +201,17 @@ export class SupabaseInterviewRepo implements InterviewRepo {
     } catch {
       return nameHints({});
     }
+  }
+  async answeredQuestionIds(storytellerId: string) {
+    const { data, error } = await this.db
+      .from("stories")
+      .select("question_id")
+      .eq("storyteller_id", storytellerId)
+      .is("parent_story_id", null)
+      .neq("status", "skipped")
+      .not("question_id", "is", null);
+    if (error) fail("отвеченные вопросы", error);
+    return ((data ?? []) as { question_id: string }[]).map((r) => r.question_id);
   }
   async earlierAnswers(storytellerId: string) {
     const { data, error } = await this.db
