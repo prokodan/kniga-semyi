@@ -24,7 +24,17 @@ export interface InterviewRepo {
   storytellerName?(storytellerId: string): Promise<string>;
   /** Имена и места семьи + словарь (пункт 5) — для переспроса неуверенно распознанного имени */
   nameHints?(storytellerId: string): Promise<string[]>;
+  /** #99: прошлые ответы рассказчика (основной ответ + уточнения, по времени) — не спрашивать уже рассказанное */
+  earlierAnswers?(storytellerId: string): Promise<string[]>;
 }
+
+/** Ответ истории одной строкой: расшифровка + ответы на уточнения. */
+function storyAnswer(s: Pick<Story, "transcript" | "followups">): string {
+  return [s.transcript ?? "", ...(s.followups ?? []).map((f) => f.answer)].filter((p) => p.trim()).join(" ");
+}
+
+/** Сколько последних историй смотреть для «уже отвечено». */
+const EARLIER_STORIES = 30;
 
 // ---------------- Memory ----------------
 
@@ -108,6 +118,13 @@ export class MemoryInterviewRepo implements InterviewRepo {
   async nameHints(storytellerId: string) {
     return nameHints({ storytellerName: this.names.get(storytellerId) });
   }
+  async earlierAnswers(storytellerId: string) {
+    return [...this.stories.values()]
+      .filter((s) => s.storyteller_id === storytellerId && s.status !== "skipped" && !s.parent_story_id)
+      .slice(-EARLIER_STORIES)
+      .map(storyAnswer)
+      .filter(Boolean);
+  }
 }
 
 // ---------------- Supabase ----------------
@@ -177,6 +194,18 @@ export class SupabaseInterviewRepo implements InterviewRepo {
     } catch {
       return nameHints({});
     }
+  }
+  async earlierAnswers(storytellerId: string) {
+    const { data, error } = await this.db
+      .from("stories")
+      .select("transcript, followups, created_at")
+      .eq("storyteller_id", storytellerId)
+      .is("parent_story_id", null)
+      .neq("status", "skipped")
+      .order("created_at", { ascending: false })
+      .limit(EARLIER_STORIES);
+    if (error) fail("прошлые ответы", error);
+    return ((data ?? []) as Pick<Story, "transcript" | "followups">[]).reverse().map(storyAnswer).filter(Boolean);
   }
 }
 
