@@ -95,6 +95,12 @@ export default async function ChapterPage({
           >
             ✎ Исправить имена и даты
           </Link>
+          <Link
+            href={`/f/${token}/names`}
+            className="-mt-4 inline-flex min-h-12 items-center gap-2 self-start text-ink-soft underline-offset-4 hover:underline"
+          >
+            Словарь имён: одно имя — сразу во всех главах →
+          </Link>
         </>
       ) : (
         <StoryWaiting

@@ -61,6 +61,12 @@ export default async function BookPage({ params }: { params: Promise<{ token: st
             Книга готова: <b>{book.page_count}</b> стр. формата A5{builtAt ? `, собрана ${builtAt}` : ""}.
           </p>
         )}
+        {book.outdated && (
+          <p>
+            В главах поправили имена{builtAt ? ` после сборки ${builtAt}` : ""}. Нажмите «Пересобрать», чтобы PDF обновился —
+            когда корейский перевод исправленных глав будет готов (обычно пара минут).
+          </p>
+        )}
         {book.status === "building" && <p>Книга собирается — это меньше минуты.</p>}
         {book.status === "failed" && (
           <p className="text-danger">
