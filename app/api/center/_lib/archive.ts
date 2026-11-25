@@ -1,5 +1,6 @@
 import "server-only";
 // Витрина «Архив АКНЦ» (кабинет центра): книги и главы рассказчиков, чьи семьи дали archive_consent.
+// #201: только семьи киоска (source = 'kiosk'); семьи /start в кабинет центра не попадают.
 // Ссылки: книга /book/<токен>, глава /chapter/<id>?token=…, голос /listen/<id>?s=<подпись> (как QR в книге).
 // Кабинет закрыт PIN — ссылки с токеном семьи видит только центр.
 import { BLOCKS } from "@/content/questions/blocks";
@@ -33,7 +34,7 @@ export interface ArchiveFamily {
   chapters: ArchiveChapter[];
 }
 
-type FamilyPick = Pick<Family, "id" | "name" | "access_token" | "is_demo" | "created_at">;
+type FamilyPick = Pick<Family, "id" | "name" | "source" | "access_token" | "is_demo" | "created_at">;
 type StPick = Pick<Storyteller, "family_id" | "name" | "name_ko" | "birth_year" | "birth_place" | "created_at">;
 type StoryPick = Pick<Story, "id" | "family_id" | "block" | "title" | "title_ko" | "quote" | "duration_sec" | "audio_url" | "created_at">;
 type BookPick = Pick<Book, "family_id" | "status" | "page_count" | "created_at">;
@@ -50,7 +51,7 @@ async function rows(): Promise<ArchiveRows> {
   if (!db) {
     const store = getFamilyStore() as Partial<MemoryFamilyStore>;
     const g = globalThis as { __bookMemory?: Map<string, { book: Book }> };
-    const families = [...(store.families?.values() ?? [])].filter((f) => f.archive_consent);
+    const families = [...(store.families?.values() ?? [])].filter((f) => f.archive_consent && f.source === "kiosk");
     const ids = new Set(families.map((f) => f.id));
     return structuredClone({
       families,
@@ -59,7 +60,12 @@ async function rows(): Promise<ArchiveRows> {
       books: [...(g.__bookMemory?.values() ?? [])].map(({ book }) => book).filter((b) => ids.has(b.family_id)),
     });
   }
-  const fam = await db.from("families").select("id, name, access_token, is_demo, created_at").eq("archive_consent", true).limit(500);
+  const fam = await db
+    .from("families")
+    .select("id, name, source, access_token, is_demo, created_at")
+    .eq("archive_consent", true)
+    .eq("source", "kiosk")
+    .limit(500);
   if (fam.error) throw new Error(`архив: ${fam.error.message}`);
   const families = (fam.data ?? []) as FamilyPick[];
   const ids = families.map((f) => f.id);
@@ -93,7 +99,7 @@ async function rows(): Promise<ArchiveRows> {
 export function buildArchive(r: ArchiveRows, opts: { hideDemo?: boolean } = {}): ArchiveFamily[] {
   const byCreated = <T extends { created_at: string }>(xs: T[]) => [...xs].sort((a, b) => a.created_at.localeCompare(b.created_at));
   return byCreated(r.families)
-    .filter((f) => !(opts.hideDemo && f.is_demo))
+    .filter((f) => f.source === "kiosk" && !(opts.hideDemo && f.is_demo))
     .map((f) => {
       const token = encodeURIComponent(f.access_token);
       const st = byCreated(r.storytellers.filter((s) => s.family_id === f.id))[0] ?? null;

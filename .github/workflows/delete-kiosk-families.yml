@@ -1,0 +1,55 @@
+name: delete-kiosk-families
+
+# #201: удалить тестовые семьи киоска вместе со всем (каскад базы + файлы Storage) — scripts/delete-kiosk-families.ts.
+# Только вручную; по умолчанию dry run. Отказывается удалять демо (is_demo) и семьи source=family.
+# План / результат → Summary запуска и комментарий в issue (если указана). Без токенов и текстов.
+on:
+  workflow_dispatch:
+    inputs:
+      families:
+        description: "Короткие id семей киоска (≥ 8 символов) через запятую"
+        required: true
+        default: "19b31d8c,aa41aa7c"
+      apply:
+        description: "Удалить (иначе только показать план)"
+        type: boolean
+        default: false
+      issue:
+        description: "Номер issue для комментария с планом / результатом (пусто — не писать)"
+        required: false
+        default: "201"
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: delete-kiosk-families
+  cancel-in-progress: false
+
+jobs:
+  delete:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
+      SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+      DELETE_FAMILIES: ${{ inputs.families }}
+      DELETE_APPLY: ${{ inputs.apply && '1' || '0' }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npx tsx scripts/delete-kiosk-families.ts
+      - name: Комментарий в issue
+        if: always() && inputs.issue != '' && hashFiles('delete-plan.md') != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ISSUE: ${{ inputs.issue }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          printf '\n[Запуск workflow](%s)\n' "$RUN_URL" >> delete-plan.md
+          gh api "repos/${{ github.repository }}/issues/${ISSUE}/comments" -F body=@delete-plan.md > /dev/null

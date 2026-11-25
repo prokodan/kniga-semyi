@@ -5,9 +5,10 @@ vi.mock("server-only", () => ({}));
 import { buildArchive } from "./archive";
 import { verifyListen } from "@/lib/book/qr";
 
-const fam = (id: string, over: Partial<{ is_demo: boolean; created_at: string }> = {}) => ({
+const fam = (id: string, over: Partial<{ is_demo: boolean; created_at: string; source: "kiosk" | "family" }> = {}) => ({
   id,
   name: `Семья ${id}`,
+  source: "kiosk" as "kiosk" | "family",
   access_token: `tok-${id}`,
   is_demo: false,
   created_at: "2026-11-20T10:00:00Z",
@@ -27,7 +28,11 @@ const story = (id: string, family_id: string, block: string, created_at: string,
 
 describe("buildArchive", () => {
   const rows = {
-    families: [fam("b", { created_at: "2026-11-21T10:00:00Z" }), fam("demo", { is_demo: true })],
+    families: [
+      fam("b", { created_at: "2026-11-21T10:00:00Z" }),
+      fam("demo", { is_demo: true }),
+      fam("home", { source: "family", created_at: "2026-11-22T10:00:00Z" }), // #201: семья /start — не в архиве центра
+    ],
     storytellers: [{ family_id: "b", name: "Ли Нина", name_ko: "이니나", birth_year: 1938, birth_place: "Уштобе", created_at: "2026-11-21T10:00:00Z" }],
     stories: [
       story("s-work", "b", "work", "2026-11-21T09:00:00Z"),
@@ -50,6 +55,10 @@ describe("buildArchive", () => {
     expect(verifyListen("s-child-1", voice.searchParams.get("s"))).toBe(true);
     expect(b!.chapters[1]!.voiceHref).toBeNull();
     expect(b!.chapters[0]!.minutes).toBe(5);
+  });
+
+  it("#201: семьи /start (source=family) в витрину центра не попадают", () => {
+    expect(buildArchive(rows).some((f) => f.id === "home")).toBe(false);
   });
 
   it("демо-семьи скрываются фильтром", () => {

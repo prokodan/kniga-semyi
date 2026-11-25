@@ -38,7 +38,8 @@ class SupabaseCenterSource implements CenterSource {
 
   async rows(): Promise<CenterRows> {
     const [families, storytellers, stories, books, sessions, volunteers] = await Promise.all([
-      this.db.from("families").select("id, name, source, archive_consent, is_demo, created_at").range(0, MAX),
+      // #201: кабинет центра — только семьи киоска (то же ещё раз проверяет applyFilter)
+      this.db.from("families").select("id, name, source, archive_consent, is_demo, created_at").eq("source", "kiosk").range(0, MAX),
       this.db.from("storytellers").select("id, family_id, name, birth_year, consent_at, created_at").range(0, MAX),
       this.db.from("stories").select("family_id, status, parent_story_id, duration_sec, created_at").range(0, MAX),
       this.db.from("books").select("family_id, status, built_at, created_at").range(0, MAX),

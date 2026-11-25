@@ -32,14 +32,13 @@ export function CountersGrid({ c }: { c: CenterCounters }) {
     <div className="flex flex-col gap-4">
       <section className="rounded-card bg-paper-deep p-4 shadow-card">
         <h2 className="font-serif text-xl">Голос общины</h2>
-        <p className="mt-1 text-sm text-muted">Всего и за сегодня (с полуночи по Алматы)</p>
+        <p className="mt-1 text-sm text-muted">Записи через киоск центра · всего и за сегодня (с полуночи по Алматы)</p>
         <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-3">
           <Tile label="Минут голоса сохранено" {...t(c.minutes)} unit="мин" />
           <Tile label="Старейшин записано" {...t(c.elders)} />
           <Tile label="Историй" {...t(c.stories)} />
           <Tile label="Глав готово" {...t(c.readyStories)} />
-          <Tile label="Семей" {...t(c.families)} />
-          <Tile label="Из них через киоск" {...t(c.kioskFamilies)} />
+          <Tile label="Семей через киоск" {...t(c.families)} />
         </div>
         <p className="mt-3 text-sm text-ink-soft">
           Голосовое согласие: {c.consented} из {c.elders.total} · в архив АКНЦ согласились {c.archive} {c.archive === 1 ? "семья" : "семей"}
