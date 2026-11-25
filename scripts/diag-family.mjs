@@ -3,7 +3,7 @@
 // токенов и ссылок: только короткие id, вопросы банка, статусы, число слов, годы из глав и пересечения текстов.
 // Что ищем: один ответ в двух главах (дубль), ответ-уточнение, ставший «главой» без текста (потерян),
 // закрытые в сессии вопросы без готовой главы, одна история с разными годами.
-// Запуск: Actions → diag → families = 2026-11-24 (семьи, созданные в этот день и позже, без демо) или короткие id через запятую.
+// Запуск: Actions → diag → families = 2026-11-24 (семьи с историями с этого дня, без демо) или короткие id через запятую.
 import { appendFileSync } from "node:fs";
 
 const URL_ = (process.env.NEXT_PUBLIC_SUPABASE_URL ?? "").replace(/\/+$/, "");
@@ -46,7 +46,10 @@ function containment(a, b) {
 // ---- семьи ----
 let families;
 if (/^\d{4}-\d{2}-\d{2}$/.test(SEL)) {
-  families = await rest(`families?select=id,is_demo,created_at&created_at=gte.${SEL}T00:00:00%2B05:00&is_demo=eq.false&order=created_at.asc`);
+  // семьи, у которых есть истории с этого дня (по Алматы): семью могли завести раньше, а книгу записывать 24.11
+  const recent = await rest(`stories?select=family_id&created_at=gte.${SEL}T00:00:00%2B05:00&limit=5000`);
+  const famIds = [...new Set(recent.map((r) => r.family_id))];
+  families = famIds.length ? await rest(`families?select=id,is_demo,created_at&id=in.(${famIds.join(",")})&is_demo=eq.false&order=created_at.asc`) : [];
 } else {
   const all = await rest(`families?select=id,is_demo,created_at&is_demo=eq.false&order=created_at.desc&limit=500`);
   const want = SEL.split(",").map((s) => s.trim()).filter(Boolean);
