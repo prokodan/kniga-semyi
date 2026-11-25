@@ -123,7 +123,7 @@ export default async function CenterArchivePage({ searchParams }: { searchParams
       <main className="mx-auto flex max-w-5xl snap-y snap-mandatory flex-col gap-6 px-4 py-6 sm:px-8">
         <header className="flex items-center justify-between gap-3">
           <div>
-            <p className="text-sm tracking-widest text-muted uppercase">АКНЦ · 알마티 고려인 민족 센터</p>
+            <p className="text-sm tracking-widest text-muted uppercase">АКНЦ · 알마티 고려인 센터</p>
             <h1 className="font-serif text-4xl">Голоса старейшин · 어르신들의 목소리</h1>
           </div>
           <Link href={centerHref("/center/archive", hideDemo)} className={`${pill} border border-line bg-paper text-ink-soft`}>

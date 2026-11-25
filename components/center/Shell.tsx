@@ -32,7 +32,7 @@ export function CenterShell({
     <main className="mx-auto flex max-w-3xl flex-col gap-4 px-4 py-6 sm:px-6">
       <header className="flex items-center justify-between gap-3">
         <div className="min-w-0">
-          <p className="text-xs tracking-widest text-muted uppercase">АКНЦ · 알마티 고려인 민족 센터</p>
+          <p className="text-xs tracking-widest text-muted uppercase">АКНЦ · 알마티 고려인 센터</p>
           <h1 className="font-serif text-2xl">{title}</h1>
         </div>
         {signedIn ? <LogoutButton /> : null}

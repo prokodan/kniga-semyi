@@ -10,7 +10,7 @@ export default async function KioskPinPage() {
   return (
     <main className="mx-auto flex min-h-dvh max-w-3xl flex-col items-center justify-center gap-8 px-8 text-center">
       <div className="flex flex-col gap-2">
-        <p className="tracking-widest text-muted uppercase">АКНЦ · 알마티 고려인 민족 센터</p>
+        <p className="tracking-widest text-muted uppercase">АКНЦ · 알마티 고려인 센터</p>
         <h1 className="font-serif text-5xl">Книга семьи</h1>
         <p className="text-ink-soft" lang="ko">
           가족의 책
