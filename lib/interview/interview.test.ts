@@ -308,3 +308,66 @@ describe("интервью-агент: пропуск, позже, блоки, �
     expect(r.type).toBe("nextQuestion");
   });
 });
+
+describe("#107: долгая расшифровка — ответ, а не пропуск", () => {
+  const recording = (repo: MemoryInterviewRepo, sessionId: string, opts: { transcript?: string | null; question_id?: string | null; family_id?: string } = {}) =>
+    repo.createStory({
+      family_id: opts.family_id ?? "fam-1",
+      storyteller_id: "st-1",
+      session_id: sessionId,
+      question_id: opts.question_id ?? null,
+      block: null,
+      transcript: opts.transcript ?? null,
+    });
+
+  it("основной ответ ещё расшифровывается → вопрос засчитан, запись привязана, без уточнений и без сборки сейчас", async () => {
+    const { interview, repo, count } = setup();
+    const s = await start(interview);
+    const rec = await recording(repo, s.sessionId);
+    const r = await interview.skip(s.sessionId, "skip", { token: "tok-1", storyId: rec.id });
+    expect(count("completeness")).toBe(0);
+    expect(r.type === "nextQuestion" || r.type === "blockDone").toBe(true);
+    expect(r.storyId).toBeNull(); // главу запустит конвейер после расшифровки
+    if (r.type === "nextQuestion") expect(r.bridge).toContain("рассказ сохранён");
+    const state = repo.sessions.get(s.sessionId)!.state as SessionState;
+    expect(state.answered_question_ids).toContain(s.question.id);
+    expect(state.skipped_question_ids ?? []).not.toContain(s.question.id);
+    const saved = repo.stories.get(rec.id)!;
+    expect(saved.question_id).toBe(s.question.id);
+    expect(saved.block).toBe(s.question.block);
+    expect(saved.parent_story_id).toBeNull();
+    expect(r.progress.questionsDone).toBe(1);
+  });
+
+  it("расшифровка успела к моменту «не ждать» → storyId для сборки главы", async () => {
+    const { interview, repo } = setup();
+    const s = await start(interview);
+    const rec = await recording(repo, s.sessionId, { transcript: LONG(), question_id: s.question.id });
+    const r = await interview.skip(s.sessionId, "skip", { storyId: rec.id });
+    expect(r.storyId).toBe(rec.id);
+  });
+
+  it("ответ на уточнение ещё расшифровывается → приклеен к основному рассказу, вопрос засчитан", async () => {
+    const { interview, repo } = setup();
+    const s = await start(interview);
+    const f = await interview.submitAnswer(s.sessionId, { text: "Да." });
+    expect(f.type).toBe("followup");
+    const mainId = f.storyId!;
+    const rec = await recording(repo, s.sessionId, { question_id: s.question.id });
+    const r = await interview.skip(s.sessionId, "skip", { storyId: rec.id });
+    expect(r.storyId).toBe(mainId);
+    expect(repo.stories.get(rec.id)!.parent_story_id).toBe(mainId);
+    const state = repo.sessions.get(s.sessionId)!.state as SessionState;
+    expect(state.answered_question_ids).toContain(s.question.id);
+  });
+
+  it("чужая запись → not_found, состояние не меняется", async () => {
+    const { interview, repo } = setup();
+    repo.addFamily("fam-2", "tok-2", ["st-2"]);
+    const s = await start(interview);
+    const rec = await recording(repo, s.sessionId, { family_id: "fam-2" });
+    await expect(interview.skip(s.sessionId, "skip", { storyId: rec.id })).rejects.toMatchObject({ code: "not_found" });
+    const state = repo.sessions.get(s.sessionId)!.state as SessionState;
+    expect(state.current_question_id).toBe(s.question.id);
+  });
+});

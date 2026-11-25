@@ -112,6 +112,8 @@ const PHRASES = {
   refused: "Хорошо, не будем об этом — это ваше право, и спасибо, что сказали. Давайте о другом.",
   skip: "Хорошо, давайте о другом.",
   later: "Хорошо, вернёмся к этому, когда захотите.",
+  // #107: запись сохранена, расшифровка ещё идёт — ответ засчитан, идём дальше без уточнений
+  saved: "Спасибо, рассказ сохранён. Давайте дальше.",
   pause: "Спасибо, что поделились этим. Давайте немного передохнём — к этой теме можно вернуться позже, когда захотите.",
   blockDone: (title: string) => `Глава «${title}» собрана. Можно собрать её сейчас или продолжить разговор.`,
   finished: "Спасибо вам огромное! Все вопросы позади — теперь из ваших рассказов соберём книгу.",
@@ -357,6 +359,39 @@ export function createInterview(deps: InterviewDeps) {
     return advance(sessionId, state, question, { storyteller: name, storytellerId, storyId: main.id, wasBlockDone });
   }
 
+  /**
+   * #107: голосовой ответ записан, но расшифровка не успела (≈ 50 с) или нажали «не ждать». Это ответ, а не пропуск:
+   * запись привязывается к вопросу (или к основной истории, если это ответ на уточнение), вопрос засчитан.
+   * Уточнений нет — проверять полноту нечем. Главу соберёт конвейер, когда расшифровка будет готова
+   * (вопрос закрыт → interviewHold её не держит).
+   */
+  async function skipRecorded(
+    sessionId: string,
+    ctx: { session: { id: string; family_id: string; storyteller_id: string }; state: SessionState; question: Question; name: string; wasBlockDone: boolean },
+    recordedId: string,
+  ): Promise<AnswerResult> {
+    const { session, state, question, name, wasBlockDone } = ctx;
+    const rec = await repo.getStory(recordedId);
+    if (!rec || rec.family_id !== session.family_id) throw new InterviewError("not_found", "История не найдена");
+    const mainId = state.current_story_id ?? null;
+    let release: string | null;
+    if (mainId && mainId !== rec.id) {
+      // ответ на уточнение: основной рассказ уже есть — запись приклеивается к нему (конвейер #98 допишет её в главу)
+      if (!rec.parent_story_id) await repo.updateStory(rec.id, { parent_story_id: mainId });
+      release = mainId;
+    } else {
+      const patch = { question_id: rec.question_id ?? question.id, block: rec.block ?? question.block, parent_story_id: null };
+      await repo.updateStory(rec.id, patch);
+      // ещё расшифровывается — главу запустит сам конвейер; уже расшифрована — собрать сейчас
+      release = rec.transcript?.trim() ? rec.id : null;
+    }
+    state.answered_question_ids = addUnique(state.answered_question_ids, question.id);
+    state.skipped_question_ids = removeValue(state.skipped_question_ids, question.id);
+    state.later_question_ids = removeValue(state.later_question_ids, question.id);
+    state.name_check = null;
+    return advance(sessionId, state, question, { storyteller: name, storytellerId: session.storyteller_id, bridge: PHRASES.saved, storyId: release, wasBlockDone });
+  }
+
   async function storytellerName(session: { storyteller_id: string }) {
     // Имя нужно только для фразы-связки; без него next_question работает.
     return repo.storytellerName ? await repo.storytellerName(session.storyteller_id) : "";
@@ -545,10 +580,11 @@ export function createInterview(deps: InterviewDeps) {
      * «Пропустить» / «вернуться позже» — без уточнений. Если основной ответ уже записан и шли
      * уточнения, «пропустить» означает «хватит уточнять»: ответ засчитывается.
      */
-    async skip(sessionId: string, action: "skip" | "later", opts: { token?: string } = {}): Promise<AnswerResult> {
+    async skip(sessionId: string, action: "skip" | "later", opts: { token?: string; storyId?: string } = {}): Promise<AnswerResult> {
       const { session, state, question } = await load(sessionId, opts.token);
       const name = await storytellerName(session);
       const wasBlockDone = isBlockDone(bank, state, question.block);
+      if (action === "skip" && opts.storyId) return skipRecorded(sessionId, { session, state, question, name, wasBlockDone }, opts.storyId);
       const storyId = state.current_story_id ?? null;
       if (action === "skip" && storyId) {
         state.answered_question_ids = addUnique(state.answered_question_ids, question.id);
