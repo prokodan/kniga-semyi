@@ -6,19 +6,22 @@ const ORDER = BLOCKS.map((b) => b.id);
 
 // #101: полоса разделов интервью — текущий раздел жёлтым акцентом (gold), пройденные ✓, будущие приглушённо;
 // под ней строка «Вопрос 2 из 5 в разделе „Детство“ · уточнение 1 из 3». large — крупно для киоска.
+// showLine=false — только полоса (экран ожидания следующего вопроса: раздел остаётся жёлтым, #164).
 export function InterviewProgress({
   current,
   progress,
   kind,
   large = false,
+  showLine = true,
 }: {
   current: { block: LifeBlock; title: string } | null;
   progress?: InterviewProgressView | null;
   kind: "question" | "followup";
   large?: boolean;
+  showLine?: boolean;
 }) {
   const done = progress?.doneBlocks ?? [];
-  const line = current ? progressLine(progress, kind, current.title) : null;
+  const line = current && showLine ? progressLine(progress, kind, current.title) : null;
   return (
     <div className="flex flex-col gap-2">
       <ol className="flex gap-1" aria-label="Разделы книги">
