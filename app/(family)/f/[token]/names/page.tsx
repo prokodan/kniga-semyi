@@ -18,7 +18,11 @@ export default async function NamesPage({ params }: { params: Promise<{ token: s
   const { family } = view;
   const svc = entityService();
   const [entities, chapters, book] = await Promise.all([svc.list(family.id), svc.chapters(family.id), getBookView(family.id)]);
-  const refs: ChapterRef[] = chapters.map((c, i) => ({ id: c.id, title: c.title?.trim() || `Глава ${i + 1}` }));
+  // #166: глава ещё не собрана — «глава собирается…» (ссылка ведёт на экран ожидания /chapter/<id>)
+  const refs: ChapterRef[] = chapters.map((c, i) => ({
+    id: c.id,
+    title: c.title?.trim() || (c.status === "ready" ? `Глава ${i + 1}` : "глава собирается…"),
+  }));
 
   return (
     <main className="mx-auto flex max-w-xl flex-col gap-6 px-5 py-8">

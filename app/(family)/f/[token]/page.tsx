@@ -1,13 +1,25 @@
 import { groupBySection } from "@/lib/book/order";
 import type { Metadata } from "next";
 import Link from "next/link";
+import { requestOrigin } from "@/lib/book/chapter";
 import { blockProgress, getFamilyByToken, getFamilyStore } from "@/lib/db/access";
+import { healFamily } from "@/lib/pipeline/heal";
 import { BlockProgress } from "../../_ui/BlockProgress";
 import { LinkNotFound } from "../../_ui/LinkNotFound";
 import { ShareLink } from "../../_ui/ShareLink";
 
 export const dynamic = "force-dynamic";
 export const metadata: Metadata = { title: "Книга семьи", robots: { index: false, follow: false } };
+
+/**
+ * #166: подпись главы — её название, даже пока идёт перевод («Пигоди в школе»), а не название раздела.
+ * Названия ещё нет — «глава собирается…»; готовая глава без названия — раздел, как раньше.
+ */
+function chapterLabel(c: { status: string; title?: string | null }, section: string): string {
+  const title = c.title?.trim();
+  if (title) return title;
+  return c.status === "ready" ? section : "глава собирается…";
+}
 
 const cta = "button flex items-center justify-center rounded-button bg-seal px-6 py-4 text-elder font-semibold text-paper active:bg-seal-dark";
 
@@ -17,6 +29,9 @@ export default async function FamilyPage({ params, searchParams }: { params: Pro
   const { new: isNew } = await searchParams;
   const view = await getFamilyByToken(token);
   if (!view) return <LinkNotFound />;
+
+  // #166: открыли страницу семьи — подтолкнуть главы, которые стоят на шаге (после ответа страницы, в after())
+  healFamily(await requestOrigin(), token);
 
   const { family, storyteller } = view;
   const progress = blockProgress(view.stories, storyteller?.id);
@@ -96,7 +111,7 @@ export default async function FamilyPage({ params, searchParams }: { params: Pro
                       className="flex min-h-12 items-center justify-between gap-3 rounded-card border border-line bg-paper px-4 py-3"
                     >
                       <span>
-                        {++n}. {c.status === "ready" && c.title?.trim() ? c.title.trim() : sec.ru}
+                        {++n}. {chapterLabel(c, sec.ru)}
                       </span>
                       <span className={`text-sm ${c.status === "ready" ? "text-jade" : c.status === "failed" ? "text-danger" : "text-muted"}`}>
                         {c.status === "ready" ? "читать →" : c.status === "failed" ? "нужна помощь" : "готовится…"}

@@ -42,6 +42,12 @@ export interface RunOptions {
   deadline?: number;
 }
 
+/**
+ * #166: после 429 модель пропускаем только минуту. Лимиты бесплатного Gemini — запросы в минуту; 10 минут
+ * остывания после одного 429 (25.11) выключали модель для всех шагов.
+ */
+export const RATE_LIMIT_COOLDOWN_MIN = 1;
+
 /** Меньше этого до дедлайна — новую попытку не начинаем */
 const MIN_ATTEMPT_MS = 4_000;
 
@@ -116,8 +122,11 @@ export function createRouter(deps: RouterDeps) {
 
     const t = now();
     if (settings.cooldown_minutes > 0 && !ignoreCooldown) {
+      // #166: таймаут — остывание cooldown_minutes (10); 429 — только RATE_LIMIT_COOLDOWN_MIN (лимит Gemini — в минуту)
       const since = new Date(t.getTime() - settings.cooldown_minutes * 60_000);
-      if (await store.hadFailureSince(entry.provider, entry.model, since)) return "остывает после 429/таймаута";
+      if (await store.hadFailureSince(entry.provider, entry.model, since, ["timeout"])) return "остывает после 429/таймаута";
+      const rateSince = new Date(t.getTime() - Math.min(settings.cooldown_minutes, RATE_LIMIT_COOLDOWN_MIN) * 60_000);
+      if (await store.hadFailureSince(entry.provider, entry.model, rateSince, ["rate_limited"])) return "остывает после 429/таймаута";
     }
     if (entry.daily_limit !== undefined && entry.daily_limit !== null) {
       const dayStart = startOfDayInTz(QUOTA_TIMEZONE[entry.provider] ?? "UTC", t);
