@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { familyToken, ok, readJson } from "@/lib/interview/http";
 import { pipeline, PIPELINE_STEPS } from "@/lib/pipeline";
-import { chainDepth, continueInBackground } from "@/lib/pipeline/chain";
+import { chainDepth, continueInBackground, retryQueuedLater } from "@/lib/pipeline/chain";
 import { pipelineError } from "@/lib/pipeline/http";
 
 export const dynamic = "force-dynamic";
@@ -22,6 +22,7 @@ const Body = z.object({
 // Следующий шаг сервер запускает сам (lib/pipeline/chain.ts) — экран можно закрыть. running: true — шаг уже идёт.
 // queued → «глава будет готова через N минут» (продолжит экран главы или workflow kick-stuck).
 export async function POST(req: Request, ctx: { params: Promise<{ id: string }> }) {
+  const startedAt = Date.now();
   try {
     const { id } = await ctx.params;
     const raw = await readJson(req);
@@ -32,6 +33,8 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
       ? await pipeline.rebuild(id, body.from, { token })
       : await pipeline.runStep(id, { step: body.step, token, restart: body.restart });
     if (res.next && !res.queued && !res.running && !res.waiting && res.status !== "failed") continueInBackground(req, id, token, chainDepth(req));
+    // #166: ИИ недоступен — сервер сам повторит шаг через ~30 с (не ждём экран и kick-stuck)
+    if (res.queued) retryQueuedLater(req, id, token, startedAt);
     // #98: поздний ответ на уточнение — основная глава сброшена на edit, сервер её пересобирает
     if (res.rebuildParent) continueInBackground(req, res.rebuildParent, token);
     return ok(res, res.queued ? 202 : 200);

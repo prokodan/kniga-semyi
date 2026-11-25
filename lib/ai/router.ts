@@ -1,7 +1,10 @@
 // Роутер ИИ: «сначала бесплатное, потом платное».
 // Для шага берёт упорядоченный список провайдеров (ai_routes) и выбирает первый подходящий:
 //   выключен / нет ключа / не умеет шаг  → пропуск
-//   «остывает» после 429 или таймаута     → пропуск (cooldown_minutes, по умолчанию 10)
+//   «остывает» после таймаута              → пропуск (cooldown_minutes, по умолчанию 10)
+//   «остывает» после 429                   → пропуск на RATE_LIMIT_COOLDOWN_MIN (1 мин: лимит Gemini — в минуту)
+//   все модели шага «остывают»             → #166: последний шанс — всё равно вызвать остывшие по порядку
+//                                            (раньше шаг сразу отказывал, глава висела до kick-stuck)
 //   квота за сутки ≥ daily_limit × threshold → пропуск
 //   платный и бюджет дня/месяца исчерпан   → пропуск
 //   429 / таймаут при вызове               → запись в ai_usage (запускает cooldown) → следующий
@@ -40,6 +43,14 @@ export interface RunOptions {
    */
   deadline?: number;
 }
+
+/**
+ * #166: после 429 модель пропускаем только минуту. Лимиты бесплатного Gemini — запросы в минуту; 10 минут
+ * остывания после одного 429 (25.11) выключали модель для всех шагов, и при трёх таких моделях edit / translate
+ * отказывали, ничего не вызвав.
+ */
+export const RATE_LIMIT_COOLDOWN_MIN = 1;
+const COOLING = "остывает после 429/таймаута";
 
 /** Меньше этого до дедлайна — новую попытку не начинаем */
 const MIN_ATTEMPT_MS = 4_000;
@@ -116,7 +127,10 @@ export function createRouter(deps: RouterDeps) {
     const t = now();
     if (settings.cooldown_minutes > 0) {
       const since = new Date(t.getTime() - settings.cooldown_minutes * 60_000);
-      if (await store.hadFailureSince(entry.provider, entry.model, since)) return "остывает после 429/таймаута";
+      if (await store.hadFailureSince(entry.provider, entry.model, since, ["timeout"])) return COOLING;
+      const rateMin = Math.min(settings.cooldown_minutes, RATE_LIMIT_COOLDOWN_MIN);
+      const rateSince = new Date(t.getTime() - rateMin * 60_000);
+      if (await store.hadFailureSince(entry.provider, entry.model, rateSince, ["rate_limited"])) return COOLING;
     }
     if (entry.daily_limit !== undefined && entry.daily_limit !== null) {
       const dayStart = startOfDayInTz(QUOTA_TIMEZONE[entry.provider] ?? "UTC", t);
@@ -157,12 +171,25 @@ export function createRouter(deps: RouterDeps) {
     }
 
     const { entries, timeoutMs } = await candidates(step);
-    for (const [i, entry] of entries.entries()) {
-      const reason = await skipReason(entry, step);
+    // Очередь попыток: сначала маршрут как есть; если ни одна модель не ответила, а часть пропущена только из-за
+    // «остывания» — в конец добавляются они (последний шанс, #166): лучше рискнуть ещё одним 429, чем отказать.
+    const queue: { entry: RouteEntry; lastChance: boolean }[] = entries.map((entry) => ({ entry, lastChance: false }));
+    const cooled: RouteEntry[] = [];
+    let appended = false;
+    for (let i = 0; ; i++) {
+      if (i === entries.length && cooled.length > 0 && !appended) {
+        appended = true;
+        queue.push(...cooled.map((entry) => ({ entry, lastChance: true })));
+      }
+      if (i >= queue.length) break;
+      const { entry, lastChance } = queue[i]!;
+      const reason = lastChance ? null : await skipReason(entry, step);
       if (reason) {
         attempts.push({ provider: entry.provider, model: entry.model, reason });
+        if (reason === COOLING) cooled.push(entry);
         continue;
       }
+      const isLast = i === queue.length - 1 && (appended || cooled.length === 0);
       let callTimeout = timeoutMs;
       if (opts.deadline !== undefined) {
         const left = opts.deadline - now().getTime() - 1_000;
@@ -170,7 +197,7 @@ export function createRouter(deps: RouterDeps) {
           attempts.push({ provider: entry.provider, model: entry.model, reason: "не хватило времени шага" });
           break;
         }
-        callTimeout = i === entries.length - 1 ? left : Math.min(timeoutMs, left);
+        callTimeout = isLast ? left : Math.min(timeoutMs, left);
       }
       const impl = providers[entry.provider]!;
       const settings = await store.getProviderSettings(entry.provider);

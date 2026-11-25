@@ -160,3 +160,39 @@ describe("ai router: дедлайн шага (пункт 1)", () => {
     expect(store.usage.some((u) => u.status === "rate_limited")).toBe(false);
   });
 });
+
+describe("ai router: остывание (#166)", () => {
+  it("все модели шага «остывают» — всё равно вызывает первую (последний шанс), а не отказывает", async () => {
+    const t = Date.parse("2026-11-25T16:00:00Z");
+    const store = new MemoryStore();
+    store.now = () => new Date(t);
+    for (const e of DEFAULT_ROUTES.translate.providers) {
+      await store.recordUsage({ step: "edit", provider: e.provider, model: e.model, status: "timeout", cost_usd: 0, created_at: new Date(t - 60_000).toISOString() });
+    }
+    const gemini = fakeProvider("gemini", () => okOutput);
+    const openai = fakeProvider("openai", () => okOutput);
+    const router = createRouter({ store, providers: { gemini, openai }, mode: () => "auto", loadPrompt: prompt, now: () => new Date(t) });
+    const res = await router.runWithMeta("translate", translateInput);
+    expect(res.model).toBe(DEFAULT_ROUTES.translate.providers[0]!.model);
+    expect(res.attempts.every((a) => a.reason.startsWith("остывает"))).toBe(true);
+  });
+
+  it("после 429 модель пропускается только минуту, после таймаута — 10 минут", async () => {
+    const t = Date.parse("2026-11-25T16:00:00Z");
+    const first = DEFAULT_ROUTES.translate.providers[0]!;
+    const second = DEFAULT_ROUTES.translate.providers[1]!;
+    const store = new MemoryStore();
+    await store.recordUsage({ step: "transcribe", provider: first.provider, model: first.model, status: "rate_limited", cost_usd: 0, created_at: new Date(t - 2 * 60_000).toISOString() });
+    await store.recordUsage({ step: "translate", provider: second.provider, model: second.model, status: "timeout", cost_usd: 0, created_at: new Date(t - 2 * 60_000).toISOString() });
+    const gemini = fakeProvider("gemini", () => okOutput);
+    const router = createRouter({ store, providers: { gemini }, mode: () => "auto", loadPrompt: prompt, now: () => new Date(t) });
+    // 429 был 2 мин назад — первая модель снова в деле
+    expect((await router.runWithMeta("translate", translateInput)).model).toBe(first.model);
+
+    const fresh = new MemoryStore();
+    await fresh.recordUsage({ step: "transcribe", provider: first.provider, model: first.model, status: "rate_limited", cost_usd: 0, created_at: new Date(t - 30_000).toISOString() });
+    const router2 = createRouter({ store: fresh, providers: { gemini: fakeProvider("gemini", () => okOutput) }, mode: () => "auto", loadPrompt: prompt, now: () => new Date(t) });
+    // 429 полминуты назад — пропускаем, берём следующую
+    expect((await router2.runWithMeta("translate", translateInput)).model).toBe(second.model);
+  });
+});
