@@ -16,6 +16,7 @@ import { AiUnavailableError } from "@/lib/ai/types";
 import { getQuestionBank, type QuestionBank } from "@/lib/interview/bank";
 import type { Story, StoryStatus } from "@/lib/types";
 import type { PipelinePatch, PipelineRepo } from "./repo";
+import { entitiesFromChapter } from "./entities";
 import { attachChildren, represented } from "./sources";
 import { PIPELINE_STEPS, StepError, StepSkip, type PipelineStep, type StepFn } from "./steps/context";
 import { edit } from "./steps/edit";
@@ -211,6 +212,15 @@ export function createPipeline(deps: PipelineDeps) {
       const after = { ...story, ...patch } as Story;
       const next = nextStep(after);
       story = await save(story, { ...patch, status: next ? STEP_STATUS[next] : "ready", error: null, step_started_at: null });
+      // #102: глава собрана — люди, места и слова корё мар в словарь семьи (подсказки следующим главам).
+      // Словарь — помощник: его сбой главу не роняет.
+      if (step === "edit" && repo.saveEntities) {
+        try {
+          await repo.saveEntities(story, entitiesFromChapter(story));
+        } catch (e) {
+          console.warn(`[pipeline] словарь семьи ${story.id.slice(0, 8)}:`, (e as Error).message);
+        }
+      }
       const rebuildParent = step === "transcribe" && story.parent_story_id ? await lateChild(story) : null;
       return result(story, step, rebuildParent ? { rebuildParent } : {});
     } catch (e) {

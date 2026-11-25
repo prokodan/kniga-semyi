@@ -1,4 +1,5 @@
 // Шаг 1: расшифровка аудио. Текстовый ответ (transcript уже есть) этот шаг пропускает — решает движок.
+import { reconcileNames } from "@/lib/interview/names";
 import type { StepFn } from "./context";
 import { StepError } from "./context";
 
@@ -28,7 +29,9 @@ export const transcribe: StepFn = async ({ story, ai, repo, deadline }) => {
     { audioBase64: audio.base64, mimeType: audio.mimeType, durationSec, languageHint: "ru", ...(hints?.length ? { hints } : {}) },
     { storyId: story.id, deadline },
   );
-  const text = out.text.trim();
-  if (!text) throw new StepError("В записи не удалось разобрать речь — попробуйте записать ближе к телефону");
+  const heard = out.text.trim();
+  if (!heard) throw new StepError("В записи не удалось разобрать речь — попробуйте записать ближе к телефону");
+  // #102: сверка со словарём семьи и глоссарием — «опаса уле» → «апа Сауле», «кончана» → «кочжана»
+  const text = hints?.length ? reconcileNames(heard, hints).text : heard;
   return duration ? { transcript: text } : { transcript: text, duration_sec: durationSec };
 };

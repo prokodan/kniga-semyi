@@ -1,0 +1,35 @@
+name: entities-backfill
+
+# #102: словарь семьи (family_entities) по уже собранным главам — без ИИ, из facts и текста глав
+# (scripts/entities-backfill.ts). Демо-семью не трогает. Только вручную; по умолчанию dry run.
+on:
+  workflow_dispatch:
+    inputs:
+      families:
+        description: "Короткие id семей через запятую (из diag) или all"
+        required: true
+      apply:
+        description: "Записать (иначе только показать)"
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  backfill:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
+      SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+      BACKFILL_FAMILIES: ${{ inputs.families }}
+      BACKFILL_APPLY: ${{ inputs.apply && '1' || '0' }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npx tsx scripts/entities-backfill.ts
