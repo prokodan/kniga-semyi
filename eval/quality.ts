@@ -4,11 +4,14 @@
 //   • голос: LLM-судья ai.run("judge") 1–5 по каждой главе (промпт eval/judge.md), цель MLP — среднее ≥ 4;
 //   • корейский: обратный перевод ai.run("back_translate") KR→RU ДРУГОЙ моделью, чем translate,
 //     с флажками сомнительных мест (промпт eval/back_translate.md);
+//   • корейский без ИИ (eval/kr-check, #103): пояснения в скобках, которых нет в оригинале; отклонение от
+//     глоссария (нет эквивалента / вариант «не:»); смешение 해요체 и 한다체 в абзаце;
 //   • время шага: среднее время ai.run по каждому шагу;
 //   • уточнения, связки и сказка — эвристики без ИИ (eval/prompt-checks), сказка — один вызов ai.run("tale").
 // ИИ — только через роутер. В mock всё работает бесплатно и честно помечается «не показательна».
 import type { AiRouter, RunOptions } from "@/lib/ai/router";
 import { AiUnavailableError, type AiInput, type AiOutput, type AiStep } from "@/lib/ai/types";
+import { checkItem, type GlossaryEntry } from "./kr-check";
 import { checkDialogue, checkTale, pickTaleChapters, type DialogueChecks, type TaleChecks, type TextIssue } from "./prompt-checks";
 import { SimBudgetError } from "./sim/budget";
 import { tally, type FactStatus } from "./sim/facts";
@@ -101,6 +104,43 @@ export interface KrFlag {
   severity: "minor" | "major";
 }
 
+/** Флажок правил корейского без ИИ (eval/kr-check) */
+export interface KrRuleIssue {
+  chapter: string;
+  kind: KrRuleKind;
+  rule: string;
+  ko: string;
+  issue: string;
+}
+export type KrRuleKind = "paren" | "glossary" | "style" | "other";
+export interface KrRules {
+  paren: number;
+  glossary: number;
+  style: number;
+  other: number;
+  issues: KrRuleIssue[];
+}
+
+export function krRuleKind(rule: string): KrRuleKind {
+  if (rule === "paren") return "paren";
+  if (rule.startsWith("glossary:")) return "glossary";
+  if (rule === "style:mixed" || rule === "style:hapsyo") return "style";
+  return "other";
+}
+
+/** Правила без ИИ по готовым главам прогона. */
+export function checkKrRules(chapters: { id: string; title?: string | null; text_ru?: string | null; text_ko?: string | null; quote_ko?: string | null }[], glossary: GlossaryEntry[]): KrRules {
+  const issues: KrRuleIssue[] = [];
+  for (const c of chapters) {
+    if (!c.text_ru || !c.text_ko) continue;
+    const title = c.title ?? c.id;
+    for (const f of checkItem({ id: c.id, kind: "chapter", label: title, text_ru: c.text_ru, text_ko: c.text_ko, quote_ko: c.quote_ko ?? undefined }, glossary))
+      issues.push({ chapter: title, kind: krRuleKind(f.rule), rule: f.rule, ko: f.ko, issue: f.issue });
+  }
+  const n = (k: KrRuleKind) => issues.filter((i) => i.kind === k).length;
+  return { paren: n("paren"), glossary: n("glossary"), style: n("style"), other: n("other"), issues };
+}
+
 export interface ChapterQuality {
   id: string;
   title: string;
@@ -134,6 +174,8 @@ export interface RunMetrics {
   translateModels: string[];
   sameModel: boolean;
   chapterQuality: ChapterQuality[];
+  /** Корейский: правила без ИИ (null — глоссарий не передан) */
+  krRules?: KrRules | null;
   /** Уточнения и связки агента — эвристики без ИИ */
   dialogue: DialogueChecks;
   /** Сказка по главам прогона (null — глав меньше двух или шаг не ответил) */
@@ -167,6 +209,8 @@ export interface EvaluateOptions {
   models?: (step: AiStep) => string[];
   wallMs?: number;
   mock?: boolean;
+  /** docs/glossary.md, разобранный parseGlossary — для правил корейского без ИИ */
+  glossary?: GlossaryEntry[];
 }
 
 /** Судья + обратный перевод по главам симуляции → метрики прогона. */
@@ -262,6 +306,7 @@ export async function evaluateRun(o: EvaluateOptions): Promise<RunMetrics> {
     translateModels,
     sameModel: !o.mock && backModels.some((m) => translateModels.includes(m)),
     chapterQuality,
+    krRules: o.glossary ? checkKrRules(done, o.glossary) : null,
     dialogue: checkDialogue(sim),
     tale,
     aiCalls: sim.aiCalls.used + extra,
@@ -305,6 +350,10 @@ export interface EvalSummary {
     /** Сказок написано и флажков в них */
     tales: number;
     taleIssues: number;
+    /** Корейский без ИИ: скобки-пояснения, глоссарий, смешение стилей в абзаце (null — не считалось) */
+    krParen?: number | null;
+    krGlossary?: number | null;
+    krStyle?: number | null;
   };
 }
 
@@ -347,8 +396,16 @@ export function summarize(
       bridgeIssues: sum((r) => r.dialogue?.bridgeIssues.length ?? 0),
       tales: runs.filter((r) => r.tale).length,
       taleIssues: sum((r) => r.tale?.issues.length ?? 0),
+      ...krTotals(runs),
     },
   };
+}
+
+function krTotals(runs: RunMetrics[]) {
+  const counted = runs.filter((r) => r.krRules);
+  if (!counted.length) return { krParen: null, krGlossary: null, krStyle: null };
+  const sum = (k: "paren" | "glossary" | "style") => counted.reduce((n, r) => n + r.krRules![k], 0);
+  return { krParen: sum("paren"), krGlossary: sum("glossary"), krStyle: sum("style") };
 }
 
 // ---------------- Markdown ----------------
@@ -383,6 +440,9 @@ export const METRICS: MetricDef[] = [
   { name: "KR: смысл по обратному переводу 1–5", get: (s) => s.totals.meaningAvg, better: "up", fmt: n2 },
   { name: "KR: флажки major", get: (s) => s.totals.krMajor, better: "down", fmt: (x) => String(x ?? "—") },
   { name: "KR: флажки minor", get: (s) => s.totals.krMinor, better: "down", fmt: (x) => String(x ?? "—") },
+  { name: "KR без ИИ: пояснения в скобках, которых нет в оригинале", get: (s) => s.totals.krParen ?? null, better: "down", fmt: (x) => String(x ?? "—") },
+  { name: "KR без ИИ: отклонения от глоссария", get: (s) => s.totals.krGlossary ?? null, better: "down", fmt: (x) => String(x ?? "—") },
+  { name: "KR без ИИ: смешение 해요체 / 한다체 в абзаце, 습니다체", get: (s) => s.totals.krStyle ?? null, better: "down", fmt: (x) => String(x ?? "—") },
   { name: "Уточнения: флажки (длина, два вопроса, «ты», «подробнее», повтор)", get: (s) => s.totals.followupIssues ?? null, better: "down", fmt: (x) => String(x ?? "—") },
   { name: "Уточнения: давление после отказа / боли", get: (s) => s.totals.pressure ?? null, better: "down", fmt: (x) => String(x ?? "—") },
   { name: "Связки: флажки (длина, вопрос, лесть, повтор)", get: (s) => s.totals.bridgeIssues ?? null, better: "down", fmt: (x) => String(x ?? "—") },
@@ -459,6 +519,15 @@ function flagRows(s: EvalSummary, limit = Number.POSITIVE_INFINITY): string[] {
   return out;
 }
 
+function krRuleRows(s: EvalSummary, limit = Number.POSITIVE_INFINITY): string[] {
+  const all = s.runs.flatMap((r) => (r.krRules?.issues ?? []).filter((i) => i.kind !== "other").map((i) => ({ r, i })));
+  if (!all.length) return [s.runs.some((r) => r.krRules) ? "Флажков нет." : "Не считалось (глоссарий не передан)."];
+  const rows = all.slice(0, limit).map(({ r, i }) => `| ${r.persona} · ${cell(i.chapter)} | \`${i.rule}\` | ${cell(i.ko)} | ${cell(i.issue)} |`);
+  const out = ["| Глава | Правило | KR | Что не так |", "| --- | --- | --- | --- |", ...rows];
+  if (all.length > limit) out.push("", `…и ещё ${all.length - limit} — в полном отчёте.`);
+  return out;
+}
+
 /** Полный отчёт: eval/reports/<дата>.md */
 function issueRows(items: { persona: string; it: TextIssue }[], limit: number): string[] {
   if (!items.length) return ["Флажков нет."];
@@ -507,6 +576,7 @@ export function renderEvalReport(s: EvalSummary, before?: EvalSummary): string {
   out.push("## По прогонам", "", ...runsTable(s), "");
   out.push("## Время шагов", "", ...stepsTable(s), "");
   out.push("## Корейский: обратный перевод KR → RU", "", ...flagRows(s), "");
+  out.push("## Корейский: правила без ИИ (скобки, глоссарий, стиль)", "", ...krRuleRows(s), "");
   out.push("## Уточнения, связки, сказка (эвристики без ИИ)", "", ...agentSection(s, Number.POSITIVE_INFINITY), "");
 
   out.push("## Главы: голос и смысл", "");
@@ -548,6 +618,7 @@ export function renderPrComment(s: EvalSummary, before?: EvalSummary, opts: { li
   if (errs.length) out.push(`⚠️ **Прогон неполный** — цифры ниже не показательны:`, "", ...errs.slice(0, 6), "");
   out.push("<details><summary>По прогонам</summary>", "", ...runsTable(s), "", "</details>", "");
   out.push("<details><summary>Корейский: сомнительные места (обратный перевод)</summary>", "", ...flagRows(s, 10), "", "</details>", "");
+  out.push("<details><summary>Корейский: правила без ИИ (скобки, глоссарий, стиль)</summary>", "", ...krRuleRows(s, 10), "", "</details>", "");
   out.push("<details><summary>Уточнения, связки, сказка</summary>", "", ...agentSection(s, 12), "", "</details>", "");
   if (opts.link) out.push(`Полный отчёт и главы — [артефакт запуска](${opts.link}).`);
   return out.join("\n").replace(/\n{3,}/g, "\n\n") + "\n";

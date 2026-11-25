@@ -84,6 +84,33 @@ describe("правила без ИИ", () => {
     expect(rules(chapter("Я жил. Внуки, слушайте.", "나는 살았다. 손주들아, 들어 봐요."))).toContain("style:mixed");
   });
 
+  it("#103: пояснения в скобках, которых нет в оригинале — major; глоссарные — можно", () => {
+    const f = checkItem(chapter("Мы жили в доме аппади.", "우리는 아파디 우리(아버지의 집)에서 살았다. 아버지는 웃으셨다."), glossary);
+    expect(f.find((x) => x.rule === "paren")).toMatchObject({ ko: "우리(아버지의 집)", severity: "major" });
+    expect(rules(chapter("Пришёл аджибай.", "아지바이(아버지)가 오셨다."))).toEqual(expect.arrayContaining(["paren", "glossary:koryo"]));
+    expect(rules(chapter("Отец работал в колхозе.", "아버지는 콜호스(집단농장)에서 일하셨다."))).not.toContain("paren");
+    expect(rules(chapter("На хансик ездили к отцу.", "한식(寒食)에는 아버지께 갔다."))).not.toContain("paren");
+    // скобки есть в оригинале — переводятся, не флажок
+    expect(rules(chapter("Тётя Валя (мамина сестра) приехала.", "발랴 이모(어머니의 언니)가 오셨다."))).not.toContain("paren");
+  });
+
+  it("#103: вариант «не:» из глоссария — флажок glossary:variant", () => {
+    const g = parseGlossary("## Корё мар\n| RU | 한국어 | Пояснение | Носитель |\n| --- | --- | --- | --- |\n| аппади | 아버지 | отец; не: 아버님 / 아빠 | ❓ |\n");
+    expect(g[0]!.avoid).toEqual(["아버님", "아빠"]);
+    const f = checkItem(chapter("Аппади работал.", "아버님은 일하셨다. 아버지는 웃으셨다."), g);
+    expect(f.map((x) => x.rule)).toEqual(["glossary:variant"]);
+    expect(f[0]!.issue).toContain("не 아버님");
+    // нет эквивалента вовсе — и вариант, и отсутствие
+    expect(checkItem(chapter("Аппади работал.", "아버님은 일하셨다."), g).map((x) => x.rule)).toEqual(["glossary:variant", "glossary:koryo"]);
+  });
+
+  it("#103: смешение стилей — по абзацам; разные абзацы в разных стилях — не флажок", () => {
+    const f = checkItem(chapter("Жили. Внуки, слушайте. Работали.", "우리는 살았다. 손주들아, 들어 봐요. 열심히 일했다."), glossary);
+    expect(f.filter((x) => x.rule === "style:mixed")).toHaveLength(1);
+    expect(f.find((x) => x.rule === "style:mixed")!.issue).toContain("абзаце 1");
+    expect(rules(chapter("Жили.\n\nВнуки, помните.", "우리는 살았다.\n\n손주들, 꼭 기억해요."))).not.toContain("style:mixed");
+  });
+
   it("вопросы: 해요체 и почтительное -시-", () => {
     const q = (ko: string): KrItem => ({ id: "q", kind: "question", label: "Вопросы", text_ru: "Вопрос?", text_ko: ko });
     expect(rules(q("어디에서 태어나셨어요?"))).toEqual([]);
