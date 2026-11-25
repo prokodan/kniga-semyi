@@ -1,4 +1,5 @@
 // Шаг 3: перевод главы на корейский → text_ko, title_ko, quote_ko.
+import { fixCyrillic } from "../cyrillic";
 import { namesForTranslate } from "../entities";
 import { applySpellings, learnSpellings, requiredSpellings } from "../names";
 import type { StepFn } from "./context";
@@ -33,5 +34,9 @@ export const translate: StepFn = async ({ story, ai, repo, deadline }) => {
     }
   }
   if (fixed.length) console.info(`[pipeline] имена ${story.id.slice(0, 8)}: ${fixed.map((f) => `${f.from} → ${f.to}`).join(", ")}`);
+  // #163: кириллицы в корейском быть не должно — словарное написание или транслитерация хангылем
+  const cyr = fixCyrillic(out, requiredSpellings(repo.familyEntities ? await repo.familyEntities(story).catch(() => entities) : entities));
+  out = cyr.out;
+  if (cyr.fixed.length) console.info(`[pipeline] кириллица в KR ${story.id.slice(0, 8)}: ${cyr.fixed.map((f) => `${f.from} → ${f.to}`).join(", ")}`);
   return { text_ko: out.text_ko, title_ko: out.title_ko, quote_ko: out.quote_ko };
 };
