@@ -7,6 +7,9 @@ import type { AiProviderName, AiStep } from "./types";
 
 export type UsageStatus = "ok" | "error" | "rate_limited" | "timeout" | "cache_hit";
 
+/** Неудачи, после которых модель «остывает» (503 / прочие ошибки — нет: перегрузка обычно секундная). */
+export const COOLDOWN_STATUSES: UsageStatus[] = ["rate_limited", "timeout"];
+
 export interface UsageRow {
   step: AiStep;
   provider: string;
@@ -31,7 +34,8 @@ export interface AiStore {
   /** Сумма cost_usd провайдера начиная с since */
   spend(provider: string, since: Date): Promise<number>;
   /** Был ли 429 / таймаут у модели начиная с since (провайдер «остывает») */
-  hadFailureSince(provider: string, model: string, since: Date): Promise<boolean>;
+  /** Была ли у модели неудача из `statuses` (по умолчанию 429 и таймаут) с момента `since` — для «остывания». */
+  hadFailureSince(provider: string, model: string, since: Date, statuses?: UsageStatus[]): Promise<boolean>;
   recordUsage(row: UsageRow): Promise<void>;
   cacheGet(hash: string): Promise<unknown | null>;
   cacheSet(hash: string, step: AiStep, provider: string, model: string, output: unknown): Promise<void>;
@@ -65,10 +69,8 @@ export class MemoryStore implements AiStore {
       .filter((r) => r.provider === provider)
       .reduce((s, r) => s + r.cost_usd, 0);
   }
-  async hadFailureSince(provider: string, model: string, since: Date) {
-    return this.since(this.usage, since).some(
-      (r) => r.provider === provider && r.model === model && (r.status === "rate_limited" || r.status === "timeout"),
-    );
+  async hadFailureSince(provider: string, model: string, since: Date, statuses: UsageStatus[] = COOLDOWN_STATUSES) {
+    return this.since(this.usage, since).some((r) => r.provider === provider && r.model === model && statuses.includes(r.status));
   }
   async recordUsage(row: UsageRow) {
     this.usage.push({ ...row, created_at: row.created_at ?? this.now().toISOString() });
@@ -132,13 +134,13 @@ export class SupabaseStore implements AiStore {
     return (data ?? []).reduce((s, r) => s + Number(r.cost_usd), 0);
   }
 
-  async hadFailureSince(provider: string, model: string, since: Date) {
+  async hadFailureSince(provider: string, model: string, since: Date, statuses: UsageStatus[] = COOLDOWN_STATUSES) {
     const { count } = await this.db
       .from("ai_usage")
       .select("id", { count: "exact", head: true })
       .eq("provider", provider)
       .eq("model", model)
-      .in("status", ["rate_limited", "timeout"])
+      .in("status", statuses)
       .gte("created_at", since.toISOString());
     return (count ?? 0) > 0;
   }

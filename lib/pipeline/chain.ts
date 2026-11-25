@@ -30,6 +30,50 @@ export function continueInBackground(req: Request, storyId: string, token: strin
   }
 }
 
+/**
+ * #166: ИИ недоступен (все модели шага отказали / «остывают») → { queued }. Раньше дальше главу двигали только
+ * открытый экран главы и kick-stuck, а GitHub запускает cron «каждые 10 мин» на деле раз в несколько часов —
+ * главы висели весь вечер. Теперь сервер сам повторяет шаг через ~30 с, до QUEUED_RETRIES раз (≈ 3 мин).
+ * Пауза — внутри after() этой же функции (лимит 60 с), поэтому не больше, чем осталось от её времени.
+ */
+export const QUEUED_RETRY_MS = 30_000;
+export const QUEUED_RETRIES = 6;
+const FUNCTION_BUDGET_MS = 55_000;
+
+export function queuedRetry(req: Request): number {
+  const n = Number(req.headers.get("x-pipeline-retry") ?? 0);
+  return Number.isFinite(n) && n > 0 ? Math.floor(n) : 0;
+}
+
+/** Пауза перед повтором: QUEUED_RETRY_MS, но не дольше остатка функции (startedAt — начало запроса). */
+export function retryDelay(startedAt: number, now = Date.now()): number {
+  return Math.max(0, Math.min(QUEUED_RETRY_MS, FUNCTION_BUDGET_MS - (now - startedAt) - 3_000));
+}
+
+export function retryQueuedLater(req: Request, storyId: string, token: string, startedAt: number) {
+  const n = queuedRetry(req);
+  if (n >= QUEUED_RETRIES) return; // дальше — экран главы, страница семьи (healFamily) и kick-stuck
+  const url = `${new URL(req.url).origin}/api/stories/${encodeURIComponent(storyId)}/process`;
+  const run = async () => {
+    await new Promise((r) => setTimeout(r, retryDelay(startedAt)));
+    try {
+      await fetch(url, {
+        method: "POST",
+        headers: { "content-type": "application/json", "x-family-token": token, "x-pipeline-retry": String(n + 1) },
+        body: "{}",
+        signal: AbortSignal.timeout(2_500),
+      });
+    } catch {
+      // таймаут ожидания ответа — нормально
+    }
+  };
+  try {
+    after(run);
+  } catch {
+    // вне запроса Next
+  }
+}
+
 export function chainDepth(req: Request): number {
   const n = Number(req.headers.get("x-pipeline-chain") ?? 0);
   return Number.isFinite(n) && n > 0 ? Math.floor(n) : 0;

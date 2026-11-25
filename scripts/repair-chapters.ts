@@ -3,11 +3,14 @@
 //  - failed после 3 попыток kick-stuck (перегрузка ИИ) → «Перезапустить сборку» (restart);
 //  - готовая глава, в которую не попала запись-уточнение (parent_story_id) → пересборка с edit;
 //  - готовая глава, где есть рассказ, уже рассказанный в более ранней главе → пересборка с edit
-//    (новый edit сам выкинет повтор; весь ответ — повтор → skipped).
+//    (новый edit сам выкинет повтор; весь ответ — повтор → skipped);
+//  - #163: готовая глава с кириллицей в корейском тексте → пересборка с translate (ответ модели из кэша,
+//    кириллицу убирает lib/pipeline/cyrillic.ts — денег не стоит).
 // Вызывает прод POST /api/stories/:id/process с токеном семьи из базы. Токены, имена и тексты в лог не пишет.
 // Запуск: Actions → repair-chapters (families, apply). По умолчанию — только показать (dry run).
 import { appendFileSync } from "node:fs";
 import type { Story } from "@/lib/types";
+import { hasCyrillic } from "@/lib/pipeline/cyrillic";
 import { attachChildren, dropRepeats, fullSource } from "@/lib/pipeline/sources";
 
 const SB = (process.env.NEXT_PUBLIC_SUPABASE_URL ?? "").replace(/\/+$/, "");
@@ -33,7 +36,10 @@ const log = (l = "") => {
 };
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
-type Row = Pick<Story, "id" | "storyteller_id" | "parent_story_id" | "question_id" | "status" | "error" | "transcript" | "text_ru" | "followups" | "created_at">;
+type Row = Pick<
+  Story,
+  "id" | "storyteller_id" | "parent_story_id" | "question_id" | "status" | "error" | "transcript" | "text_ru" | "text_ko" | "title_ko" | "quote_ko" | "followups" | "created_at"
+>;
 
 async function call(id: string, token: string, body: Record<string, unknown>) {
   const res = await fetch(`${PROD}/api/stories/${id}/process`, {
@@ -66,7 +72,7 @@ async function main() {
     const token = (await rest<{ access_token: string }[]>(`families?select=access_token&id=eq.${fam.id}`))[0]?.access_token;
     if (!token) continue;
     const rows = await rest<Row[]>(
-      `stories?select=id,storyteller_id,parent_story_id,question_id,status,error,transcript,text_ru,followups,created_at&family_id=eq.${fam.id}&order=created_at.asc&limit=1000`,
+      `stories?select=id,storyteller_id,parent_story_id,question_id,status,error,transcript,text_ru,text_ko,title_ko,quote_ko,followups,created_at&family_id=eq.${fam.id}&order=created_at.asc&limit=1000`,
     );
     const plan: { id: string; q: string | null; why: string; body: Record<string, unknown> }[] = [];
     for (const s of rows) {
@@ -84,6 +90,7 @@ async function main() {
       const d = dropRepeats([s.transcript ?? "", ...(s.followups ?? []).map((f) => f.answer)], earlier);
       const why = [added ? `не попало уточнений: ${added}` : "", d.dropped ? `повтор из ${d.repeatsOf.map(short).join(", ")}: ${d.dropped} предл.` : ""].filter(Boolean).join("; ");
       if (why) plan.push({ id: s.id, q: s.question_id, why, body: { from: "edit" } });
+      else if (hasCyrillic(s.text_ko, s.title_ko, s.quote_ko)) plan.push({ id: s.id, q: s.question_id, why: "кириллица в корейском (#163)", body: { from: "translate" } });
     }
     log();
     log(`## Семья ${short(fam.id)} · к пересборке: ${plan.length}`);
