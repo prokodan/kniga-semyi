@@ -56,43 +56,51 @@ async function drive(id: string, token: string, first: Record<string, unknown>):
   return `${r.status}${r.queued ? " (очередь ИИ)" : ""}${r.error ? ` — ${String(r.error).slice(0, 90)}` : ""}`;
 }
 
-const all = await rest<{ id: string; is_demo: boolean }[]>("families?select=id,is_demo&is_demo=eq.false&limit=1000");
-const families = all.filter((f) => SEL.some((s) => f.id.startsWith(s)));
-log(`# repair-chapters · ${new Date().toISOString()} · ${APPLY ? "ПЕРЕСБОРКА" : "dry run"} · семей: ${families.length}`);
-let fixed = 0;
-for (const fam of families) {
-  const token = (await rest<{ access_token: string }[]>(`families?select=access_token&id=eq.${fam.id}`))[0]?.access_token;
-  if (!token) continue;
-  const rows = await rest<Row[]>(
-    `stories?select=id,storyteller_id,parent_story_id,question_id,status,error,transcript,text_ru,followups,created_at&family_id=eq.${fam.id}&order=created_at.asc&limit=1000`,
-  );
-  const plan: { id: string; q: string | null; why: string; body: Record<string, unknown> }[] = [];
-  for (const s of rows) {
-    if (s.parent_story_id || s.status === "skipped") continue;
-    if (s.status === "failed") {
-      plan.push({ id: s.id, q: s.question_id, why: `failed: ${String(s.error ?? "").slice(0, 60)}`, body: { restart: true } });
-      continue;
+// tsx запускает .ts как CommonJS — без top-level await
+async function main() {
+  const all = await rest<{ id: string; is_demo: boolean }[]>("families?select=id,is_demo&is_demo=eq.false&limit=1000");
+  const families = all.filter((f) => SEL.some((s) => f.id.startsWith(s)));
+  log(`# repair-chapters · ${new Date().toISOString()} · ${APPLY ? "ПЕРЕСБОРКА" : "dry run"} · семей: ${families.length}`);
+  let fixed = 0;
+  for (const fam of families) {
+    const token = (await rest<{ access_token: string }[]>(`families?select=access_token&id=eq.${fam.id}`))[0]?.access_token;
+    if (!token) continue;
+    const rows = await rest<Row[]>(
+      `stories?select=id,storyteller_id,parent_story_id,question_id,status,error,transcript,text_ru,followups,created_at&family_id=eq.${fam.id}&order=created_at.asc&limit=1000`,
+    );
+    const plan: { id: string; q: string | null; why: string; body: Record<string, unknown> }[] = [];
+    for (const s of rows) {
+      if (s.parent_story_id || s.status === "skipped") continue;
+      if (s.status === "failed") {
+        plan.push({ id: s.id, q: s.question_id, why: `failed: ${String(s.error ?? "").slice(0, 60)}`, body: { restart: true } });
+        continue;
+      }
+      if (s.status !== "ready" || !s.text_ru) continue;
+      const kids = rows.filter((k) => k.parent_story_id === s.id) as Pick<Story, "id" | "transcript" | "status" | "created_at">[];
+      const { added } = attachChildren(s.followups ?? [], kids);
+      const earlier = rows
+        .filter((e) => !e.parent_story_id && e.status !== "skipped" && e.storyteller_id === s.storyteller_id && e.created_at < s.created_at)
+        .map((e) => ({ id: e.id, source: fullSource(e) }));
+      const d = dropRepeats([s.transcript ?? "", ...(s.followups ?? []).map((f) => f.answer)], earlier);
+      const why = [added ? `не попало уточнений: ${added}` : "", d.dropped ? `повтор из ${d.repeatsOf.map(short).join(", ")}: ${d.dropped} предл.` : ""].filter(Boolean).join("; ");
+      if (why) plan.push({ id: s.id, q: s.question_id, why, body: { from: "edit" } });
     }
-    if (s.status !== "ready" || !s.text_ru) continue;
-    const kids = rows.filter((k) => k.parent_story_id === s.id) as Pick<Story, "id" | "transcript" | "status" | "created_at">[];
-    const { added } = attachChildren(s.followups ?? [], kids);
-    const earlier = rows
-      .filter((e) => !e.parent_story_id && e.status !== "skipped" && e.storyteller_id === s.storyteller_id && e.created_at < s.created_at)
-      .map((e) => ({ id: e.id, source: fullSource(e) }));
-    const d = dropRepeats([s.transcript ?? "", ...(s.followups ?? []).map((f) => f.answer)], earlier);
-    const why = [added ? `не попало уточнений: ${added}` : "", d.dropped ? `повтор из ${d.repeatsOf.map(short).join(", ")}: ${d.dropped} предл.` : ""].filter(Boolean).join("; ");
-    if (why) plan.push({ id: s.id, q: s.question_id, why, body: { from: "edit" } });
+    log();
+    log(`## Семья ${short(fam.id)} · к пересборке: ${plan.length}`);
+    log("| id | вопрос | причина | результат |");
+    log("|---|---|---|---|");
+    for (const p of plan) {
+      const res = APPLY ? await drive(p.id, token, p.body) : "—";
+      if (APPLY && /^(ready|skipped)/.test(res)) fixed++;
+      log(`| ${short(p.id)} | ${p.q ?? "—"} | ${p.why} | ${res} |`);
+    }
   }
   log();
-  log(`## Семья ${short(fam.id)} · к пересборке: ${plan.length}`);
-  log("| id | вопрос | причина | результат |");
-  log("|---|---|---|---|");
-  for (const p of plan) {
-    const res = APPLY ? await drive(p.id, token, p.body) : "—";
-    if (APPLY && /^(ready|skipped)/.test(res)) fixed++;
-    log(`| ${short(p.id)} | ${p.q ?? "—"} | ${p.why} | ${res} |`);
-  }
+  log(APPLY ? `Готово: исправлено ${fixed}. Книгу после этого пересобрать на /book/<токен> («Пересобрать»).` : "Dry run: ничего не менял. Запустите с apply = true.");
+  if (process.env.GITHUB_STEP_SUMMARY) appendFileSync(process.env.GITHUB_STEP_SUMMARY, out.join("\n") + "\n");
 }
-log();
-log(APPLY ? `Готово: исправлено ${fixed}. Книгу после этого пересобрать на /book/<токен> («Пересобрать»).` : "Dry run: ничего не менял. Запустите с apply = true.");
-if (process.env.GITHUB_STEP_SUMMARY) appendFileSync(process.env.GITHUB_STEP_SUMMARY, out.join("\n") + "\n");
+
+main().catch((e) => {
+  console.error(e instanceof Error ? e.message : e);
+  process.exit(1);
+});
