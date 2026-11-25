@@ -166,6 +166,8 @@ async function geminiCall(model, kind) {
   }
   console.log(`  ${model} [${kind}] → ${r.status || "—"} за ${(r.ms / 1000).toFixed(1)} с${thinking ? "" : " (без thinkingLevel)"}`);
   if (r.status === 0) return { ok: false, ms: r.ms, note: r.body };
+  // 429 (квота) / 503 (перегрузка) — модель есть, но занята: не повод выкидывать её из маршрутов
+  if (r.status === 429 || r.status === 503) return { ok: false, busy: true, ms: r.ms, note: `HTTP ${r.status}: ${shortError(r.body)}` };
   if (r.status !== 200) return { ok: false, ms: r.ms, note: `HTTP ${r.status}: ${shortError(r.body)}` };
   let text = "";
   try {
@@ -232,9 +234,12 @@ async function pickWorking(list, label, rows) {
     const audio = text.ok ? await geminiCall(m.id, "audio") : { ok: false, ms: 0, note: "—" };
     rows.push({ role: label, model: m.id, text, audio });
     if (text.ok) return { id: m.id, audio: audio.ok };
+    if (text.busy) busy.push(`${label} \`${m.id}\``);
   }
   return null;
 }
+/** Модели, ответившие 429 / 503 (квота, перегрузка). Есть такие — маршруты не переписываем (25.11: выкинуло рабочие). */
+const busy = [];
 
 // ---------- main ----------
 const rows = [];
@@ -301,7 +306,9 @@ if (gpt.ok === false) {
 // ---------- маршруты ----------
 const FL = flashLite && { provider: "gemini", model: flashLite.id, daily_limit: LIMIT_FL, threshold: 0.9 };
 const F = flash && { provider: "gemini", model: flash.id, daily_limit: LIMIT_F, threshold: 0.9 };
-const T = transcribeModel && { provider: "gemini", model: transcribeModel };
+// #52: отдельная модель расшифровки (gemini-3.5-transcribe) — в маршрут только по явному флагу (после питча)
+const USE_T = process.env.USE_TRANSCRIBE_MODEL === "1";
+const T = USE_T && transcribeModel && { provider: "gemini", model: transcribeModel };
 const GPT = { provider: "openai", model: gptModel };
 const WHISPER = { provider: "openai", model: "gpt-4o-transcribe" };
 const audioOk = (entry, info) => entry && info?.audio;
@@ -321,6 +328,9 @@ const routes = {
 };
 const TIMEOUTS = { transcribe: 45000, edit: 30000, translate: 30000, completeness: 7000, next_question: 7000, tale: 40000, persona_reply: 20000, judge: 40000, back_translate: 60000 };
 const geminiWorks = Boolean(FL || F);
+// 25.11: при исчерпанной квоте Flash-Lite 3.5 и Flash 3.6 ответили 429, скрипт выбрал старую 3.1-flash-lite без Flash
+// и переписал прод. Теперь при любом 429 / 503 у кандидатов маршруты не меняются — только отчёт.
+const unstable = busy.length > 0;
 
 const esc = (s) => s.replace(/'/g, "''");
 const sql = [
@@ -333,12 +343,23 @@ const sql = [
   "commit;",
   "select step, jsonb_path_query_array(providers, '$[*].model') as models from ai_routes order by step;",
 ].join("\n");
-writeFileSync(OUT_SQL, sql + "\n");
+writeFileSync(
+  OUT_SQL,
+  (unstable
+    ? "-- ai-models: модели заняты (429 / 503) — маршруты не меняем.\nselect step, jsonb_path_query_array(providers, '$[*].model') as models from ai_routes order by step;"
+    : sql) + "\n",
+);
 writeFileSync(OUT_JSON, JSON.stringify({ flashLite: flashLite?.id ?? null, flash: flash?.id ?? null, transcribe: transcribeModel, gpt: { model: gptModel, ...gpt }, routes }, null, 2));
 
 // ---------- summary ----------
 const mark = (r) => (r.ok === null ? "—" : r.ok ? `✅ ${(r.ms / 1000).toFixed(1)} с` : "❌");
-md(geminiWorks ? "## 🟢 Модели ИИ проверены" : "## 🔴 Ни одна модель Gemini не ответила — ai_routes не меняем");
+md(
+  unstable
+    ? `## 🟡 Модели заняты (429 / 503): ${busy.join(", ")} — ai_routes не меняем, повторите позже (квота Gemini сбрасывается в полночь по Тихоокеанскому)`
+    : geminiWorks
+      ? "## 🟢 Модели ИИ проверены"
+      : "## 🔴 Ни одна модель Gemini не ответила — ai_routes не меняем",
+);
 md();
 md("| Роль | Модель | Текст (JSON) | Аудио | Примечание |");
 md("| --- | --- | --- | --- | --- |");
@@ -353,6 +374,7 @@ md("### Порядок в `ai_routes`");
 md("| Шаг | Порядок |");
 md("| --- | --- |");
 for (const [step, list] of Object.entries(routes)) md(`| \`${step}\` | ${list.map((e) => `\`${e.model}\``).join(" → ")} |`);
+if (transcribeModel && !USE_T) md(`| | \`${transcribeModel}\` проверена, но в transcribe не включена (флаг use_transcribe_model, #52) |`);
 md("| `illustrate` | без изменений (`gpt-image-2` → `gpt-image-1.5`) |");
 md();
 md(`Квоты в сутки: Flash-Lite ${LIMIT_FL}, Flash ${LIMIT_F} (порог 90%). Фактические лимиты — AI Studio → Rate limits.`);

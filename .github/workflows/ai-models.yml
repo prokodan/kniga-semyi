@@ -17,6 +17,10 @@ on:
       flash_daily_limit:
         description: "Бесплатных запросов в сутки у Flash"
         default: "20"
+      use_transcribe_model:
+        description: "#52: ставить отдельную модель расшифровки (gemini-*-transcribe) первой в transcribe"
+        type: boolean
+        default: false
 
 concurrency:
   group: ai-models
@@ -35,6 +39,7 @@ jobs:
       SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
       FLASH_LITE_DAILY_LIMIT: ${{ inputs.flash_lite_daily_limit }}
       FLASH_DAILY_LIMIT: ${{ inputs.flash_daily_limit }}
+      USE_TRANSCRIBE_MODEL: ${{ inputs.use_transcribe_model && '1' || '0' }}
       OUT_SQL: ai_routes.sql
       OUT_JSON: ai_models.json
     steps:
