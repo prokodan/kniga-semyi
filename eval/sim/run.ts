@@ -7,6 +7,7 @@ import type { QuestionBank } from "@/lib/interview/bank";
 import { createInterview, type AnswerResult } from "@/lib/interview/engine";
 import type { SessionState } from "@/lib/interview/policy";
 import { MemoryInterviewRepo } from "@/lib/interview/repo";
+import { fixCyrillic } from "@/lib/pipeline/cyrillic";
 import { entitiesFromChapter, mergeEntities, namesForTranslate } from "@/lib/pipeline/entities";
 import { applySpellings, learnSpellings, requiredSpellings, type NamePair } from "@/lib/pipeline/names";
 import type { FamilyEntity, LifeBlock, Story } from "@/lib/types";
@@ -218,7 +219,10 @@ export async function runSimulation(opts: SimOptions): Promise<SimResult> {
       const raw = await budget.ai.run("translate", { text_ru: edited.text_ru, title: edited.title, quote: edited.quote, ...(names.length ? { names } : {}) });
       const tr = applySpellings(raw, requiredSpellings(entities)).out;
       for (const l of learnSpellings(entities, raw.names, story.id)) Object.assign(entities.find((e) => e.id === l.id)!, { name_ko: l.name_ko });
-      Object.assign(ch, { title_ko: tr.title_ko, text_ko: tr.text_ko, quote_ko: tr.quote_ko, names: tr.names });
+      // #197: кириллица в KR — как в конвейере (lib/pipeline/steps/translate.ts, #163): словарь семьи, аббревиатуры,
+      // транслитерация. Иначе eval показывает 🔴 «кириллица», которой на проде нет.
+      const kr = fixCyrillic(applySpellings(tr, requiredSpellings(entities)).out, requiredSpellings(entities)).out;
+      Object.assign(ch, { title_ko: kr.title_ko, text_ko: kr.text_ko, quote_ko: kr.quote_ko, names: tr.names });
     } catch (e) {
       if (!(e instanceof AiUnavailableError || e instanceof SimBudgetError)) throw e;
       ch.error = e.message;

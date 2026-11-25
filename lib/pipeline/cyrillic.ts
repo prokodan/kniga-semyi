@@ -2,7 +2,9 @@
 // Промпт велит транслитерировать имена (prompts/translate.md), но модель иногда оставляет слово как есть.
 // После перевода каждое кириллическое слово в text_ko / title_ko / quote_ko заменяем:
 //   1) написанием из словаря семьи (одно имя — одно написание, #121 #124);
-//   2) иначе — транслитерацией по правилам записи русских слов хангылем (Уштобе → 우슈토베, Николай → 니콜라이).
+//   2) аббревиатуры (#197) — по смыслу, не по буквам: СССР → 소련, Казахская ССР → 카자흐 소비에트 사회주의 공화국,
+//      КГБ → KGB; неизвестная аббревиатура ЗАГЛАВНЫМИ (2–5 букв) — латиницей (ГАИ → GAI), а не хангылем по буквам (스르);
+//   3) иначе — транслитерацией по правилам записи русских слов хангылем (Уштобе → 우슈토베, Николай → 니콜라이).
 // Чистые функции, без ИИ: повтор шага ничего не стоит.
 import { sameEntity } from "./entities";
 import type { NamePair, Translated } from "./names";
@@ -102,24 +104,85 @@ export function hangulizeRu(word: string): string {
   return syl.map(compose).join("");
 }
 
+// ── #197 аббревиатуры ────────────────────────────────────────────────────────
+
+const SSR_KO = "소비에트 사회주의 공화국";
+/** Республики по основе прилагательного (Казахская / Казахской ССР) и по сокращению (КазССР). */
+const REPUBLICS: { stem: string; short: string[]; ko: string }[] = [
+  { stem: "казах", short: ["Каз"], ko: "카자흐" },
+  { stem: "узбек", short: ["Уз"], ko: "우즈베크" },
+  { stem: "кирги", short: ["Кирг", "Кир"], ko: "키르기스" },
+  { stem: "таджик", short: ["Тадж", "Тад"], ko: "타지크" },
+  { stem: "туркмен", short: ["Туркм", "Тур"], ko: "투르크멘" },
+  { stem: "украин", short: ["Укр"], ko: "우크라이나" },
+  { stem: "белорус", short: ["Бел", "Б"], ko: "벨라루스" },
+];
+/** Известные аббревиатуры (ключ — заглавными). ЗИЛ читается словом — 질, как раньше (#163). */
+const ABBR: Record<string, string> = {
+  СССР: "소련",
+  ССР: SSR_KO,
+  КГБ: "KGB",
+  ЗИЛ: "질",
+  ...Object.fromEntries(REPUBLICS.flatMap((r) => r.short.map((s) => [`${s}ССР`.toUpperCase(), `${r.ko} ${SSR_KO}`]))),
+};
+/** «Казахская ССР», «Узбекской ССР» — прилагательное с аббревиатурой одной фразой. */
+const REPUBLIC_PHRASE = new RegExp(`(?<![А-Яа-яЁё])(${REPUBLICS.map((r) => r.stem).join("|")})[а-яё]*\\s+ССР(?![А-Яа-яЁё])`, "giu");
+
+const LAT: Record<string, string> = {
+  а: "A", б: "B", в: "V", г: "G", д: "D", е: "E", ё: "YO", ж: "ZH", з: "Z", и: "I", й: "Y", к: "K", л: "L", м: "M", н: "N",
+  о: "O", п: "P", р: "R", с: "S", т: "T", у: "U", ф: "F", х: "KH", ц: "TS", ч: "CH", ш: "SH", щ: "SHCH", ъ: "", ы: "Y", ь: "",
+  э: "E", ю: "YU", я: "YA",
+};
+/** Аббревиатура латиницей: ГАИ → GAI, МТС → MTS. */
+export const latinizeAbbr = (word: string) => [...word.toLowerCase()].map((c) => LAT[c] ?? "").join("");
+const isAbbr = (word: string) => /^[А-ЯЁ]{2,5}$/.test(word);
+
+/** Корейское написание аббревиатуры или null, если слово — не аббревиатура. */
+export function abbrKo(word: string): string | null {
+  const known = ABBR[word.toUpperCase()];
+  // «ССР» / «КазССР» узнаём и в смешанном регистре; прочие — только ЗАГЛАВНЫМИ (иначе «Каз», «зил» — обычные слова)
+  if (known && (isAbbr(word) || /ССР$/.test(word))) return known;
+  return isAbbr(word) ? latinizeAbbr(word) : null;
+}
+
 /** Кириллическое слово (возможно, через дефис: Иссык-Куль, Ким-Ли). */
 const CYR_WORD = /[А-Яа-яЁё]+(?:-[А-Яа-яЁё]+)*/g;
 
 export interface CyrillicFix {
   from: string;
   to: string;
-  /** dict — из словаря семьи; translit — транслитерация */
-  how: "dict" | "translit";
+  /** dict — из словаря семьи; abbr — аббревиатура (#197); translit — транслитерация */
+  how: "dict" | "abbr" | "translit";
 }
+
+const note = (fixes: CyrillicFix[], fix: CyrillicFix) => {
+  if (!fixes.some((f) => f.from === fix.from)) fixes.push(fix);
+};
 
 /** Заменить кириллицу в одном тексте. */
 export function replaceCyrillic(text: string, dict: NamePair[], fixes: CyrillicFix[]): string {
   if (!text || !/[А-Яа-яЁё]/.test(text)) return text;
-  return text.replace(CYR_WORD, (word) => {
+  // #197: сначала фразы «Казахская ССР» — иначе прилагательное ушло бы в транслитерацию (카자흐스카야)
+  const phrased = text.replace(REPUBLIC_PHRASE, (phrase, stem: string) => {
+    const r = REPUBLICS.find((x) => x.stem === stem.toLowerCase())!;
+    const to = `${r.ko} ${SSR_KO}`;
+    note(fixes, { from: phrase, to, how: "abbr" });
+    return to;
+  });
+  return phrased.replace(CYR_WORD, (word) => {
     const hit = dict.find((p) => sameEntity(p.ru, word));
-    const to = hit ? hit.ko : word.split("-").map(hangulizeRu).join("");
+    if (hit) {
+      note(fixes, { from: word, to: hit.ko, how: "dict" });
+      return hit.ko;
+    }
+    const abbr = word.includes("-") ? null : abbrKo(word);
+    if (abbr) {
+      note(fixes, { from: word, to: abbr, how: "abbr" });
+      return abbr;
+    }
+    const to = word.split("-").map(hangulizeRu).join("");
     if (!to) return word;
-    if (!fixes.some((f) => f.from === word)) fixes.push({ from: word, to, how: hit ? "dict" : "translit" });
+    note(fixes, { from: word, to, how: "translit" });
     return to;
   });
 }
