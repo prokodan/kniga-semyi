@@ -1,10 +1,8 @@
 // Роутер ИИ: «сначала бесплатное, потом платное».
 // Для шага берёт упорядоченный список провайдеров (ai_routes) и выбирает первый подходящий:
 //   выключен / нет ключа / не умеет шаг  → пропуск
-//   «остывает» после таймаута              → пропуск (cooldown_minutes, по умолчанию 10)
-//   «остывает» после 429                   → пропуск на RATE_LIMIT_COOLDOWN_MIN (1 мин: лимит Gemini — в минуту)
-//   все модели шага «остывают»             → #166: последний шанс — всё равно вызвать остывшие по порядку
-//                                            (раньше шаг сразу отказывал, глава висела до kick-stuck)
+//   «остывает» после 429 или таймаута     → пропуск (cooldown_minutes, по умолчанию 10); #161 #162: если из-за
+//                                          остывания не осталось ни одного вызова — всё же пробуем остывшие по порядку
 //   квота за сутки ≥ daily_limit × threshold → пропуск
 //   платный и бюджет дня/месяца исчерпан   → пропуск
 //   429 / таймаут при вызове               → запись в ai_usage (запускает cooldown) → следующий
@@ -46,11 +44,9 @@ export interface RunOptions {
 
 /**
  * #166: после 429 модель пропускаем только минуту. Лимиты бесплатного Gemini — запросы в минуту; 10 минут
- * остывания после одного 429 (25.11) выключали модель для всех шагов, и при трёх таких моделях edit / translate
- * отказывали, ничего не вызвав.
+ * остывания после одного 429 (25.11) выключали модель для всех шагов.
  */
 export const RATE_LIMIT_COOLDOWN_MIN = 1;
-const COOLING = "остывает после 429/таймаута";
 
 /** Меньше этого до дедлайна — новую попытку не начинаем */
 const MIN_ATTEMPT_MS = 4_000;
@@ -116,7 +112,7 @@ export function createRouter(deps: RouterDeps) {
   }
 
   /** Почему кандидат не подходит прямо сейчас (null — подходит). */
-  async function skipReason(entry: RouteEntry, step: AiStep): Promise<string | null> {
+  async function skipReason(entry: RouteEntry, step: AiStep, ignoreCooldown = false): Promise<string | null> {
     const impl = providers[entry.provider];
     if (!impl) return "неизвестный провайдер";
     if (!impl.isConfigured()) return "нет ключа";
@@ -125,12 +121,12 @@ export function createRouter(deps: RouterDeps) {
     if (!settings.enabled) return "выключен в админке";
 
     const t = now();
-    if (settings.cooldown_minutes > 0) {
+    if (settings.cooldown_minutes > 0 && !ignoreCooldown) {
+      // #166: таймаут — остывание cooldown_minutes (10); 429 — только RATE_LIMIT_COOLDOWN_MIN (лимит Gemini — в минуту)
       const since = new Date(t.getTime() - settings.cooldown_minutes * 60_000);
-      if (await store.hadFailureSince(entry.provider, entry.model, since, ["timeout"])) return COOLING;
-      const rateMin = Math.min(settings.cooldown_minutes, RATE_LIMIT_COOLDOWN_MIN);
-      const rateSince = new Date(t.getTime() - rateMin * 60_000);
-      if (await store.hadFailureSince(entry.provider, entry.model, rateSince, ["rate_limited"])) return COOLING;
+      if (await store.hadFailureSince(entry.provider, entry.model, since, ["timeout"])) return "остывает после 429/таймаута";
+      const rateSince = new Date(t.getTime() - Math.min(settings.cooldown_minutes, RATE_LIMIT_COOLDOWN_MIN) * 60_000);
+      if (await store.hadFailureSince(entry.provider, entry.model, rateSince, ["rate_limited"])) return "остывает после 429/таймаута";
     }
     if (entry.daily_limit !== undefined && entry.daily_limit !== null) {
       const dayStart = startOfDayInTz(QUOTA_TIMEZONE[entry.provider] ?? "UTC", t);
@@ -171,31 +167,14 @@ export function createRouter(deps: RouterDeps) {
     }
 
     const { entries, timeoutMs } = await candidates(step);
-    // Очередь попыток: сначала маршрут как есть; если ни одна модель не ответила, а часть пропущена только из-за
-    // «остывания» — в конец добавляются они (последний шанс, #166): лучше рискнуть ещё одним 429, чем отказать.
-    const queue: { entry: RouteEntry; lastChance: boolean }[] = entries.map((entry) => ({ entry, lastChance: false }));
-    const cooled: RouteEntry[] = [];
-    let appended = false;
-    for (let i = 0; ; i++) {
-      if (i === entries.length && cooled.length > 0 && !appended) {
-        appended = true;
-        queue.push(...cooled.map((entry) => ({ entry, lastChance: true })));
-      }
-      if (i >= queue.length) break;
-      const { entry, lastChance } = queue[i]!;
-      const reason = lastChance ? null : await skipReason(entry, step);
-      if (reason) {
-        attempts.push({ provider: entry.provider, model: entry.model, reason });
-        if (reason === COOLING) cooled.push(entry);
-        continue;
-      }
-      const isLast = i === queue.length - 1 && (appended || cooled.length === 0);
+    /** Одна попытка: результат, null — не вышло (идём дальше), "stop" — время шага кончилось. */
+    async function attempt(entry: RouteEntry, isLast: boolean): Promise<RunResult<S> | null | "stop"> {
       let callTimeout = timeoutMs;
       if (opts.deadline !== undefined) {
         const left = opts.deadline - now().getTime() - 1_000;
         if (left < MIN_ATTEMPT_MS) {
           attempts.push({ provider: entry.provider, model: entry.model, reason: "не хватило времени шага" });
-          break;
+          return "stop";
         }
         callTimeout = isLast ? left : Math.min(timeoutMs, left);
       }
@@ -241,9 +220,31 @@ export function createRouter(deps: RouterDeps) {
           err.kind === "rate_limited" ? "rate_limited" : fullTimeout ? "timeout" : "error";
         await record(step, entry, status, { error: err.message.slice(0, 500), latency_ms: Date.now() - started }, opts.storyId);
         attempts.push({ provider: entry.provider, model: entry.model, reason: `${status}: ${err.message.slice(0, 120)}` });
+        return null;
       } finally {
         clearTimeout(timer);
       }
+    }
+
+    // Первый проход — как всегда: остывшие модели пропускаем.
+    const allowed: RouteEntry[] = [];
+    const cooled: RouteEntry[] = [];
+    for (const entry of entries) {
+      const reason = await skipReason(entry, step);
+      if (!reason) allowed.push(entry);
+      else {
+        attempts.push({ provider: entry.provider, model: entry.model, reason });
+        // Остывание (после 429 / таймаута на любом шаге) — предпочтение, а не запрет: кандидат на последний шанс.
+        if (reason.startsWith("остывает") && !(await skipReason(entry, step, true))) cooled.push(entry);
+      }
+    }
+    // #161 #162: все модели шага «остывают» (например, после перегрузки 25.11 — сказка и редактура падали без единого
+    // вызова, глава висела «готовится»). Тогда пробуем остывшие по порядку маршрута: лучше попытка, чем пустая очередь.
+    const order = allowed.length > 0 ? allowed : cooled;
+    for (const [i, entry] of order.entries()) {
+      const res = await attempt(entry, i === order.length - 1);
+      if (res === "stop") break;
+      if (res) return res;
     }
     throw new AiUnavailableError(step, attempts);
   }
