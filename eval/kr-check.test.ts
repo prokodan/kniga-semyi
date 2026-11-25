@@ -9,6 +9,7 @@ import {
   backTranslate,
   checkItem,
   chooseBackMode,
+  grandkidsHaeyo,
   isHapsyo,
   nameSpellingFlags,
   parseGlossary,
@@ -148,6 +149,16 @@ describe("правила без ИИ", () => {
     const ok = rules(chapter("Мы жили в Уштобе. Внуки, слушайте и не забывайте.", "우리는 우슈토베에서 살았다. 손주들아, 잘 들어라. 우리 뿌리를 잊지 마라."));
     expect(ok).not.toContain("style:grandkids");
     expect(ok).not.toContain("style:mixed");
+  });
+
+  it("#183: grandkidsHaeyo — абзацы с 해요체 к внукам (для repair-chapters)", () => {
+    expect(grandkidsHaeyo("우리는 살았다.\n\n손주들아, 꼭 기억해요.")).toEqual([{ paragraph: 2, ko: "손주들아, 꼭 기억해요." }]);
+    expect(grandkidsHaeyo("얘들아, 들어 봐요. 잊지 마요.")).toHaveLength(1);
+    expect(grandkidsHaeyo("우리는 살았다. 손주들아, 잘 들어라. 우리 뿌리를 잊지 마라.")).toEqual([]);
+    // 해요체 без внуков и внуки в прямой речи — не наш случай
+    expect(grandkidsHaeyo("여러분, 들어 봐요.")).toEqual([]);
+    expect(grandkidsHaeyo("할머니는 \"손주야, 밥 먹어요\"라고 하셨다.")).toEqual([]);
+    expect(grandkidsHaeyo(null)).toEqual([]);
   });
 
   it("вопросы: 해요체 и почтительное -시-", () => {
