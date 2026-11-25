@@ -134,6 +134,42 @@ for (const fam of families) {
   });
   log();
 
+  // Главы между собой: похожие тексты глав (3-словные фрагменты) и «чужой» текст в главе — фрагменты главы,
+  // которых нет в её источнике, но есть в источнике другой истории (протекло на редактуре или ответ записан не туда).
+  const chapters = mains.filter((s) => s.status === "ready" && s.text_ru);
+  const c3 = new Map(chapters.map((s) => [s.id, shingles(s.text_ru, 3)]));
+  const s3 = new Map(mains.map((s) => [s.id, shingles(src(s), 3)]));
+  const stem = (w) => w.slice(0, 5);
+  const content = (s) => new Set(words(s).filter((w) => w.length >= 6).map(stem));
+  const cw = new Map(chapters.map((s) => [s.id, content(s.text_ru)]));
+  const pairs = [];
+  for (let i = 0; i < chapters.length; i++)
+    for (let j = i + 1; j < chapters.length; j++) {
+      const a = chapters[i], b = chapters[j];
+      const sim = Math.max(containment(c3.get(a.id), c3.get(b.id)), containment(c3.get(b.id), c3.get(a.id)));
+      const A = cw.get(a.id), B = cw.get(b.id);
+      let common = 0;
+      for (const x of A) if (B.has(x)) common++;
+      const jac = common / Math.max(1, A.size + B.size - common);
+      if (sim >= 0.15 || jac >= 0.2) pairs.push(`${short(a.id)} (${a.question_id}) ↔ ${short(b.id)} (${b.question_id}): фрагменты ${Math.round(sim * 100)}%, общие слова ${Math.round(jac * 100)}% (${common})`);
+    }
+  log(`**Похожие главы** (фрагменты ≥ 15 % или общие слова ≥ 20 %): ${pairs.length ? "" : "нет"}`);
+  for (const p of pairs) log(`- ${p}`);
+  const leaks = [];
+  for (const ch of chapters) {
+    const own = s3.get(ch.id);
+    const mine = c3.get(ch.id);
+    for (const other of mains) {
+      if (other.id === ch.id) continue;
+      let hit = 0;
+      for (const x of mine) if (!own.has(x) && s3.get(other.id).has(x)) hit++;
+      if (hit >= 4) leaks.push(`${short(ch.id)} (${ch.question_id}) ← ${short(other.id)} (${other.question_id}): ${hit} фрагм. не из своего ответа`);
+    }
+  }
+  log(`**Чужой текст в главе:** ${leaks.length ? "" : "нет"}`);
+  for (const l of leaks) log(`- ${l}`);
+  log();
+
   // Сессии: что агент считает закрытым и есть ли по этим вопросам глава
   const chapterQ = new Map();
   for (const s of mains) if (s.status === "ready" && s.text_ru && s.question_id) chapterQ.set(s.question_id, (chapterQ.get(s.question_id) ?? 0) + 1);
