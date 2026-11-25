@@ -320,9 +320,10 @@ export function RecordFlow(props: {
           ← К книге
         </Link>
         <InterviewProgress
-          current={current && phase === "ask" ? { block: current.question.block, title: current.question.blockTitle.ru } : null}
+          current={current && phase !== "finished" ? { block: current.question.block, title: current.question.blockTitle.ru } : null}
           progress={current?.progress}
           kind={current?.kind ?? "question"}
+          showLine={phase === "ask"}
         />
       </header>
 
