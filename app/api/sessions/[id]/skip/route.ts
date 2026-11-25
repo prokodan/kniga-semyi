@@ -2,6 +2,7 @@ import { z } from "zod";
 import { interview } from "@/lib/interview";
 import { errorResponse, familyToken, ok, readJson } from "@/lib/interview/http";
 import { releaseAfterInterview } from "@/lib/pipeline/chain";
+import { healFamily } from "@/lib/pipeline/heal";
 
 export const dynamic = "force-dynamic";
 
@@ -19,6 +20,7 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
     const { action, storyId } = Body.parse(raw ?? {});
     const res = await interview.skip(id, action, { token, storyId });
     releaseAfterInterview(req, res, token); // вопрос закрыт — собрать главу с тем, что есть
+    healFamily(new URL(req.url).origin, token); // #166: заодно подтолкнуть главы семьи, которые стоят
     return ok(res);
   } catch (e) {
     return errorResponse(e);
