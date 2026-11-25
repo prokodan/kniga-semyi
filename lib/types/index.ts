@@ -162,6 +162,25 @@ export interface KioskVolunteer {
   created_at: IsoDateTime;
 }
 
+/** Словарь семьи (#102 / #104): люди, места, слова корё мар из глав книги. */
+export type FamilyEntityKind = "person" | "place" | "word";
+export type FamilyEntitySource = "auto" | "family";
+
+export interface FamilyEntity {
+  id: Uuid;
+  family_id: Uuid;
+  kind: FamilyEntityKind;
+  name_ru: string;
+  name_ko: string | null;
+  /** Кем ИИ его понял: «сосед, друг детства», «посёлок, где родился рассказчик» */
+  description: string | null;
+  /** В каких главах встречается */
+  story_ids: Uuid[];
+  /** auto — заполнила сборка глав; family — поправила семья (автоматика не перезаписывает) */
+  source: FamilyEntitySource;
+  updated_at: IsoDateTime;
+}
+
 /** Вопрос из банка (V0 заполняет content/questions/bank.ts). */
 export interface Question {
   id: string; // например "childhood-03"
