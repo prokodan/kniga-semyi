@@ -11,7 +11,7 @@ import { postJson, Recorder, UploadError, uploadAudio, type Take } from "@/compo
 import type { LifeBlock } from "@/lib/types";
 import { InterviewProgress } from "../../_ui/InterviewProgress";
 import { localProgress, type InterviewProgressView } from "../../_ui/progress-line";
-import { canSpeak, speak, stopSpeaking, useSpeechBlocked } from "../../_ui/speak";
+import { canSpeak, speak, stopSpeaking, useSpeechBlocked, useSpeechState } from "../../_ui/speak";
 
 interface QuestionView {
   id: string;
@@ -82,7 +82,6 @@ export function RecordFlow(props: {
   const [saved, setSaved] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [take, setTake] = useState(0); // ключ Recorder — новый вопрос = чистая запись
-  const [autoSpeak, setAutoSpeak] = useState(false);
   const recording = useSpeechBlocked(); // #100: идёт запись — «Прослушать вопрос» недоступна
 
   const session = useRef<string | null>(null); // null — идём по банку сами
@@ -202,10 +201,14 @@ export function RecordFlow(props: {
     };
   }, [start]);
 
-  // Озвучивать каждый новый вопрос, если человек уже нажимал «Прослушать» (на iOS нужен первый жест)
+  // #169: каждый новый вопрос озвучивается сам, один раз (ключ — текст, а не объект вопроса). Браузер не дал звук
+  // без нажатия — через ~1 с кнопка становится «▶ Прослушать вопрос» (useSpeechState → blocked).
+  const questionText = current && phase === "ask" ? [current.bridge, current.prompt].filter(Boolean).join(" ") : null;
+  const speech = useSpeechState();
+  const speechBlocked = Boolean(questionText) && speech.status === "blocked" && speech.text === questionText;
   useEffect(() => {
-    if (autoSpeak && current && phase === "ask") speak([current.bridge, current.prompt].filter(Boolean).join(" "));
-  }, [autoSpeak, current, phase]);
+    if (questionText) speak(questionText, { auto: true });
+  }, [questionText]);
 
   /** Конвейер I2 по шагам. Ошибки не мешают интервью: история перезапускается с того же шага позже. */
   const drive = useCallback(
@@ -309,7 +312,6 @@ export function RecordFlow(props: {
 
   function listen() {
     if (!current || recording) return;
-    setAutoSpeak(true);
     speak([current.bridge, current.prompt].filter(Boolean).join(" "));
   }
 
@@ -382,9 +384,11 @@ export function RecordFlow(props: {
                 onClick={listen}
                 disabled={recording}
                 title={recording ? "Во время записи вопрос не озвучивается" : undefined}
-                className="self-start rounded-button border border-line bg-paper px-5 py-3 disabled:opacity-50"
+                className={`self-start rounded-button px-5 py-3 disabled:opacity-50 ${
+                  speechBlocked ? "bg-seal font-semibold text-paper" : "border border-line bg-paper"
+                }`}
               >
-                🔊 Прослушать вопрос
+                {speechBlocked ? "▶ Прослушать вопрос" : "🔊 Прослушать вопрос"}
               </button>
             )}
           </section>

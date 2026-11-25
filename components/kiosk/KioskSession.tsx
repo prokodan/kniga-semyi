@@ -12,7 +12,7 @@ import { postJson, Recorder, uploadAudio, type Take } from "@/components/recorde
 import type { LifeBlock } from "@/lib/types";
 import { InterviewProgress } from "@/app/(family)/_ui/InterviewProgress";
 import { localProgress, type InterviewProgressView } from "@/app/(family)/_ui/progress-line";
-import { canSpeak, speak, stopSpeaking, useSpeechBlocked } from "@/app/(family)/_ui/speak";
+import { canSpeak, speak, stopSpeaking, useSpeechBlocked, useSpeechState } from "@/app/(family)/_ui/speak";
 import { kDark, kGhost, kioskPost, kPrimary, kRecorderWrap } from "./ui";
 
 interface QuestionView {
@@ -79,7 +79,6 @@ export function KioskSession(props: KioskSessionProps) {
   const [saved, setSaved] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [take, setTake] = useState(0);
-  const [autoSpeak, setAutoSpeak] = useState(false);
   const recording = useSpeechBlocked(); // #100: идёт запись — «Озвучить» недоступна
   const [count, setCount] = useState(0);
 
@@ -201,9 +200,13 @@ export function KioskSession(props: KioskSessionProps) {
 
   useEffect(() => () => stopSpeaking(), []);
 
+  // #169: каждый новый вопрос озвучивается сам, один раз (ключ — текст). Не стартовал за ~1 с — «▶ Прослушать вопрос».
+  const questionText = current && phase === "ask" ? [current.bridge, current.prompt].filter(Boolean).join(" ") : null;
+  const speech = useSpeechState();
+  const speechBlocked = Boolean(questionText) && speech.status === "blocked" && speech.text === questionText;
   useEffect(() => {
-    if (autoSpeak && current && phase === "ask") speak([current.bridge, current.prompt].filter(Boolean).join(" "));
-  }, [autoSpeak, current, phase]);
+    if (questionText) speak(questionText, { auto: true });
+  }, [questionText]);
 
   async function toggleArchive(next: boolean) {
     setArchive(next);
@@ -219,7 +222,6 @@ export function KioskSession(props: KioskSessionProps) {
   async function sendConsent(t: Take, onProgress: (p: number) => void) {
     const path = await uploadAudio({ token, storytellerId: storyteller.id, kind: "consent", take: t, onProgress });
     await postJson("/api/consent", token, { storytellerId: storyteller.id, path });
-    setAutoSpeak(true); // жест уже был — дальше вопросы озвучиваются сами
     setPhase("loading");
   }
 
@@ -333,7 +335,6 @@ export function KioskSession(props: KioskSessionProps) {
 
   function listen() {
     if (!current || recording) return;
-    setAutoSpeak(true);
     speak([current.bridge, current.prompt].filter(Boolean).join(" "));
   }
 
@@ -427,8 +428,13 @@ export function KioskSession(props: KioskSessionProps) {
             {error && <p className="text-elder text-danger">{error}</p>}
             <div className="mt-auto grid grid-cols-3 gap-3">
               {canSpeak() && (
-                <button type="button" onClick={listen} disabled={recording} className={`${kGhost} disabled:opacity-50`}>
-                  🔊 Озвучить
+                <button
+                  type="button"
+                  onClick={listen}
+                  disabled={recording}
+                  className={`${speechBlocked ? kPrimary : kGhost} disabled:opacity-50`}
+                >
+                  {speechBlocked ? "▶ Прослушать" : "🔊 Озвучить"}
                 </button>
               )}
               <button type="button" onClick={() => void skip("skip")} className={kGhost}>
