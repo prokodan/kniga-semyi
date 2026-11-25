@@ -9,7 +9,7 @@
 // здесь к ним добавлены «сырые» расшифровки, уточнения интервью-агента (банк V0) и факты.
 // ID и токены фиксированные: ссылки и QR демо не меняются после сброса.
 import type { AiOutput } from "@/lib/ai/types";
-import { DEMO_STORIES } from "@/lib/book/pdf/demo";
+import { DEMO_KIOSK_STORIES, DEMO_STORIES } from "@/lib/book/pdf/demo";
 import type { FollowUp, LifeBlock, StoryFact } from "@/lib/types";
 
 const id = (n: number) => `0de30000-0000-4000-8000-${n.toString(16).padStart(12, "0")}`;
@@ -277,34 +277,84 @@ export const DEMO_KIOSK_STORYTELLER = {
 
 export const DEMO_KIOSK_SESSION_ID = id(0x1021);
 
-/** Корейский вычитан ИИ по норме и docs/glossary.md (#122, 25.11); носитель не проверял. */
-export const DEMO_KIOSK_STORY: DemoStorySeed = {
-  id: id(0x1101),
-  key: "kiosk",
-  question_id: "traditions-03",
-  block: "traditions",
-  duration_sec: 96,
-  transcript:
-    "Когда внучке год исполнился, мы асянди устроили, как положено. Я сама чальтоги делала, невестка стол накрыла. Внучка поползла и первым схватила карандаш. Все смеются: учёной будет. Что первым возьмёт — такая и судьба, так у нас говорили. Сейчас ей двадцать, на врача учится.",
-  followups: [{ question: "Что лежало на столе для выбора?", answer: "Рис, нитки, книжка, деньги, карандаш.", duration_sec: 9 }],
-  facts: [
-    { type: "event", value: "асянди внучки" },
-    { type: "person", value: "внучка", relation: "внучка" },
-  ],
-  edit: {
-    title: "Асянди для внучки",
-    quote: "Что первым возьмёт — такая и судьба, так у нас говорили.",
-    text_ru:
-      "Когда внучке исполнился год, мы устроили асянди, как положено. Я сама делала чальтоги, а невестка накрыла стол: рис, нитки, книжка, деньги, карандаш.\nВнучка поползла и первым схватила карандаш. Все засмеялись: будет учёной. Что первым возьмёт — такая и судьба, так у нас говорили.\nСейчас ей двадцать, она учится на врача. Вот и не верь после этого.",
-    facts: [],
-  },
-  translate: {
-    title_ko: "손녀의 돌잔치",
-    quote_ko: "맨 먼저 잡는 것이 그 아이의 운명이라고 우리는 말하곤 했다.",
-    text_ko:
-      "손녀가 첫돌을 맞았을 때 우리는 격식대로 돌잔치를 열었다. 나는 손수 찰떡을 만들었고, 며느리는 상을 차렸다. 상 위에는 쌀, 실, 책, 돈, 연필을 올려놓았다.\n손녀는 기어가더니 맨 먼저 연필을 잡았다. 모두 웃으며 학자가 되겠다고 했다. 맨 먼저 잡는 것이 그 아이의 운명이라고 우리는 말하곤 했다.\n지금 손녀는 스무 살이고, 의사가 되려고 공부하고 있다. 그러니 어찌 안 믿을 수 있겠는가.",
-  },
+export const DEMO_KIOSK_BOOK_TITLE = "Книга семьи Ли · пример";
+
+type KioskRaw = Pick<DemoStorySeed, "key" | "question_id" | "block" | "duration_sec" | "facts"> & {
+  n: number;
+  /** Вопрос уточнения; ответ на него — последний абзац главы, расшифровка — остальные абзацы. */
+  followup?: string;
 };
+
+/**
+ * #202: полная книга киоска — 14 глав по разделам. Тексты глав RU | KR — в lib/book/pdf/demo.ts (DEMO_KIOSK_STORIES,
+ * в том же порядке); здесь — вопрос банка V0, «сырая» расшифровка, уточнение и факты. Первая история киоска
+ * (асянди, key `kiosk`, id 0x1101) — прежняя: на неё ссылаются /admin, режим сцены и e2e.
+ */
+const KIOSK_RAW: KioskRaw[] = [
+  { n: 0x1102, key: "kiosk-roots", question_id: "roots-01", block: "roots", duration_sec: 74, followup: "Что рассказывала мама о дороге?",
+    facts: [{ type: "date", value: "родилась", year: 1944 }, { type: "place", value: "Кзыл-Орда" }, { type: "event", value: "переселение семей родителей из Приморья", year: 1937 }] },
+  { n: 0x1103, key: "kiosk-mother", question_id: "roots-02", block: "roots", duration_sec: 61, followup: "Какой вы её запомнили?",
+    facts: [{ type: "person", value: "мама", relation: "мать" }] },
+  { n: 0x1104, key: "kiosk-father", question_id: "roots-03", block: "roots", duration_sec: 48, followup: "Что он вам говорил?",
+    facts: [{ type: "person", value: "отец", relation: "отец" }, { type: "event", value: "отец вернулся из трудармии, счетовод в колхозе", year: 1946 }] },
+  { n: 0x1105, key: "kiosk-home", question_id: "childhood-01", block: "childhood", duration_sec: 55, followup: "А что было рядом с домом?",
+    facts: [{ type: "place", value: "саманный дом у арыка" }] },
+  { n: 0x1106, key: "kiosk-halmoni", question_id: "childhood-05", block: "childhood", duration_sec: 66, followup: "Что она вам рассказывала перед сном?",
+    facts: [{ type: "person", value: "хальмони", relation: "бабушка" }] },
+  { n: 0x1107, key: "kiosk-study", question_id: "youth-04", block: "youth", duration_sec: 70, followup: "Как вас провожали из дома?",
+    facts: [{ type: "event", value: "болезнь младшего брата", year: 1957 }, { type: "event", value: "медицинское училище в Алма-Ате", year: 1961 }] },
+  { n: 0x1108, key: "kiosk-first-shift", question_id: "work-02", block: "work", duration_sec: 63, followup: "Чем закончилась та ночь?",
+    facts: [{ type: "event", value: "первая смена в детской больнице", year: 1964 }, { type: "place", value: "Алма-Ата" }] },
+  { n: 0x1109, key: "kiosk-pride", question_id: "work-05", block: "work", duration_sec: 57, followup: "А что для вас дороже наград?",
+    facts: [{ type: "event", value: "сорок лет медсестрой" }] },
+  { n: 0x110a, key: "kiosk-love", question_id: "love-01", block: "love", duration_sec: 59, followup: "Что было потом?",
+    facts: [{ type: "person", value: "Володя", relation: "муж" }, { type: "event", value: "знакомство в больнице", year: 1966 }] },
+  { n: 0x110b, key: "kiosk-names", question_id: "love-04", block: "love", duration_sec: 52, followup: "А дома как их звали?",
+    facts: [{ type: "person", value: "Саша", relation: "сын" }, { type: "person", value: "Лена", relation: "дочь" }, { type: "person", value: "свекровь", relation: "свекровь" }] },
+  { n: 0x110c, key: "kiosk-neighbor", question_id: "hardship-01", block: "hardship", duration_sec: 68, followup: "Вы с ней видитесь?",
+    facts: [{ type: "person", value: "Гульнара", relation: "соседка" }, { type: "event", value: "зарплату не платили", year: 1990 }] },
+  { n: 0x110d, key: "kiosk-kimchi", question_id: "traditions-02", block: "traditions", duration_sec: 50, followup: "А кто делает чимчи сейчас?",
+    facts: [{ type: "event", value: "день чимчи в ноябре" }] },
+  { n: 0x1101, key: "kiosk", question_id: "traditions-03", block: "traditions", duration_sec: 96, followup: "А что с ней сейчас?",
+    facts: [{ type: "event", value: "асянди внучки" }, { type: "person", value: "внучка", relation: "внучка" }] },
+  { n: 0x110e, key: "kiosk-legacy", question_id: "legacy-05", block: "legacy", duration_sec: 62, followup: "Что внукам важно помнить о корнях?",
+    facts: [] },
+];
+
+const unquote = (s: string) => s.replace(/[«»]/g, "");
+
+export const DEMO_KIOSK_STORY_SEEDS: DemoStorySeed[] = KIOSK_RAW.map(({ n, followup, ...r }, i) => {
+  const ch = DEMO_KIOSK_STORIES[i];
+  if (!ch) throw new Error(`нет главы киоска ${i}`);
+  if (ch.block !== r.block) throw new Error(`глава киоска ${i}: блок ${ch.block} ≠ ${r.block}`);
+  const paras = ch.text_ru!.split("\n");
+  const last = paras.length > 1 && followup ? paras.pop()! : null;
+  return {
+    ...r,
+    id: id(n),
+    transcript: unquote(paras.join(" ")),
+    followups: last ? [{ question: followup!, answer: unquote(last), duration_sec: Math.max(8, Math.round(last.length / 14)) }] : [],
+    edit: { text_ru: ch.text_ru!, title: ch.title!, quote: ch.quote ?? "", facts: r.facts },
+    translate: { text_ko: ch.text_ko!, title_ko: ch.title_ko ?? "", quote_ko: ch.quote_ko ?? "" },
+  };
+});
+
+/** Первая история киоска (асянди) — та же, что до #202: на неё ссылаются /admin, lib/stage.ts и e2e. */
+export const DEMO_KIOSK_STORY: DemoStorySeed = DEMO_KIOSK_STORY_SEEDS.find((s) => s.key === "kiosk")!;
+
+/** Словарь имён семьи киоска — как у Ким (#125): KR ровно как в главах. */
+export const DEMO_KIOSK_ENTITIES: DemoEntitySeed[] = [
+  { kind: "place", name_ru: "Кзыл-Орда", name_ko: "크질오르다", description: "здесь родилась рассказчица", stories: ["kiosk-roots", "kiosk-legacy"] },
+  { kind: "place", name_ru: "Приморье", name_ko: "연해주", description: "родина родителей на Дальнем Востоке", stories: ["kiosk-roots", "kiosk-legacy"] },
+  { kind: "place", name_ru: "Алма-Ата", name_ko: "알마아타", description: "медучилище и детская больница", stories: ["kiosk-study", "kiosk-first-shift"] },
+  { kind: "person", name_ru: "Володя", name_ko: "볼로댜", description: "муж, прожили вместе сорок три года", stories: ["kiosk-love", "kiosk-names", "kiosk-neighbor"] },
+  { kind: "person", name_ru: "Гульнара", name_ko: "굴나라", description: "соседка, выручала в девяностые", stories: ["kiosk-neighbor"] },
+  { kind: "word", name_ru: "омани", name_ko: "어머니", description: "мама (корё мар)", stories: ["kiosk-mother"] },
+  { kind: "word", name_ru: "хальмони", name_ko: "할머니", description: "бабушка (корё мар) — учила языку и сказкам", stories: ["kiosk-halmoni", "kiosk-first-shift"] },
+  { kind: "word", name_ru: "чимчи", name_ko: "김치", description: "квашеные овощи — день чимчи каждую осень", stories: ["kiosk-home", "kiosk-neighbor", "kiosk-kimchi", "kiosk-legacy"] },
+  { kind: "word", name_ru: "чальтоги", name_ko: "찰떡", description: "клейкие рисовые лепёшки — в дорогу и на асянди", stories: ["kiosk-study", "kiosk"] },
+  { kind: "word", name_ru: "асянди", name_ko: "돌잔치", description: "праздник первого дня рождения", stories: ["kiosk"] },
+];
 
 // ---------------- сказка для внуков (I8) ----------------
 

@@ -14,7 +14,7 @@ import { QUESTIONS } from "@/content/questions/bank";
 import { EvalStore } from "@/eval/store";
 import { backTranslate, checkItem, chooseBackMode, parseGlossary, renderKrReport, type KrFlag, type KrItem, type KrReport } from "@/eval/kr-check";
 import { DEMO_STORIES } from "@/lib/book/pdf/demo";
-import { DEMO_KIOSK_STORY, DEMO_STAGE_RESERVE } from "@/fixtures/demo/family";
+import { DEMO_KIOSK_STORY_SEEDS, DEMO_STAGE_RESERVE } from "@/fixtures/demo/family";
 import { createRouter } from "@/lib/ai/router";
 
 for (const f of [".env.local", ".env"]) {
@@ -42,10 +42,10 @@ function items(): KrItem[] {
     text_ko: s.text_ko ?? "",
     quote_ko: s.quote_ko ?? undefined,
   }));
-  // I12: корейский истории киоска и запасной главы «Трудные времена» (режим сцены) писал агент,
-  // носитель их не видел — проверяем так же, как демо-главы.
+  // I12 / #202: корейский книги киоска «Ли Нина» (все главы) и запасной главы «Трудные времена» (режим сцены)
+  // писал агент, носитель их не видел — проверяем так же, как демо-главы.
   const extra: KrItem[] = [
-    { id: "demo-kiosk", label: "Киоск", seed: DEMO_KIOSK_STORY },
+    ...DEMO_KIOSK_STORY_SEEDS.map((seed, i) => ({ id: seed.key === "kiosk" ? "demo-kiosk" : `demo-kiosk-${i + 1}`, label: `Киоск ${i + 1}`, seed })),
     { id: "demo-stage-reserve", label: "Запас сцены", seed: DEMO_STAGE_RESERVE },
   ].map(({ id, label, seed }) => ({
     id,

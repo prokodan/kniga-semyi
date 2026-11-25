@@ -8,7 +8,8 @@
 // Что создаётся (ID и токены фиксированные — ссылки и QR после сброса те же, см. fixtures/demo/family.ts):
 //   • «Семья Ким · пример»: рассказчик с согласием, сессия интервью, 7 готовых глав RU | KR по банку V0
 //     с уточнениями (+ записи-уточнения), книга PDF (I5), сказка с 4 картинками (I8);
-//   • «Ли Нина · пример (киоск АКНЦ)»: история с киоска (I4) с archive_consent — видна в кабинете /center (I9).
+//   • «Ли Нина · пример (киоск АКНЦ)»: полная книга с киоска (I4, #202) — 14 глав RU | KR по разделам, словарь имён,
+//     книга PDF; archive_consent — видна в кабинете /center (I9). Голоса рассказчицы нет (персонаж вымышленный).
 // Удаляется только то, что принадлежит этим двум семьям. «Золотые» файлы в `_demo/` (голос, картинки) не трогаем:
 // они нужны, чтобы демо работало без ИИ и при плохом интернете.
 import type { SupabaseClient } from "@supabase/supabase-js";
@@ -17,9 +18,12 @@ import {
   DEMO_ENTITIES,
   DEMO_FAMILY,
   DEMO_FAMILY_IDS,
+  DEMO_KIOSK_BOOK_TITLE,
+  DEMO_KIOSK_ENTITIES,
   DEMO_KIOSK_FAMILY,
   DEMO_KIOSK_SESSION_ID,
   DEMO_KIOSK_STORY,
+  DEMO_KIOSK_STORY_SEEDS,
   DEMO_KIOSK_STORYTELLER,
   DEMO_SESSION_ID,
   DEMO_STORAGE_PREFIX,
@@ -57,9 +61,11 @@ export interface SeedReport {
   entities: number;
   voices: { found: number; total: number; missing: string[] };
   tale: { pages: number; source: "golden" | "ai" | "bundled" | "mixed" };
-  book: { status: string; pages: number | null; error: string | null };
-  kiosk: { stories: number };
+  book: SeedBook;
+  kiosk: { stories: number; entities: number; book: SeedBook };
 }
+
+type SeedBook = { status: string; pages: number | null; error: string | null };
 
 // ---------------- хранилище ----------------
 
@@ -227,10 +233,10 @@ export async function seedDemo(opts: SeedOptions): Promise<SeedReport> {
   );
 
   // 4. Киоск АКНЦ → кабинет центра
-  must("семья киоска", await db.from("families").insert({ ...DEMO_KIOSK_FAMILY, created_at: at(200) }));
+  must("семья киоска", await db.from("families").insert({ ...DEMO_KIOSK_FAMILY, created_at: at(185) }));
   must(
     "рассказчик киоска",
-    await db.from("storytellers").insert({ ...DEMO_KIOSK_STORYTELLER, consent_audio_url: null, created_at: at(201) }),
+    await db.from("storytellers").insert({ ...DEMO_KIOSK_STORYTELLER, consent_audio_url: null, created_at: at(186) }),
   );
   must(
     "сессия киоска",
@@ -240,19 +246,42 @@ export async function seedDemo(opts: SeedOptions): Promise<SeedReport> {
       storyteller_id: DEMO_KIOSK_STORYTELLER.id,
       mode: "kiosk",
       volunteer_id: null,
-      state: { covered_blocks: [DEMO_KIOSK_STORY.block], answered_question_ids: [DEMO_KIOSK_STORY.question_id], finished: true },
-      started_at: at(202),
+      state: {
+        covered_blocks: [...new Set(DEMO_KIOSK_STORY_SEEDS.map((s) => s.block))],
+        answered_question_ids: DEMO_KIOSK_STORY_SEEDS.map((s) => s.question_id),
+        finished: true,
+      },
+      started_at: at(188),
       ended_at: at(215),
     }),
   );
-  const kiosk = storyRows(DEMO_KIOSK_STORY, {
-    family_id: DEMO_KIOSK_FAMILY.id,
-    storyteller_id: DEMO_KIOSK_STORYTELLER.id,
-    session_id: DEMO_KIOSK_SESSION_ID,
-    voice,
-    i: 14,
-  });
-  must("история киоска", await db.from("stories").insert(kiosk.main));
+  const kioskRows = DEMO_KIOSK_STORY_SEEDS.map(
+    (seed, i) =>
+      storyRows(seed, {
+        family_id: DEMO_KIOSK_FAMILY.id,
+        storyteller_id: DEMO_KIOSK_STORYTELLER.id,
+        session_id: DEMO_KIOSK_SESSION_ID,
+        voice,
+        // асянди — прежнее время записи (i = 14) и последняя; остальные главы — раньше, в той же сессии киоска
+        i: seed.key === DEMO_KIOSK_STORY.key ? 14 : 13 + (i + 1) / 20,
+      }).main,
+  );
+  must("главы киоска", await db.from("stories").insert(kioskRows));
+  const kioskIdByKey = new Map(DEMO_KIOSK_STORY_SEEDS.map((s) => [s.key, s.id]));
+  must(
+    "словарь имён киоска",
+    await db.from("family_entities").insert(
+      DEMO_KIOSK_ENTITIES.map((e) => ({
+        family_id: DEMO_KIOSK_FAMILY.id,
+        kind: e.kind,
+        name_ru: e.name_ru,
+        name_ko: e.name_ko,
+        description: e.description,
+        story_ids: e.stories.map((k) => kioskIdByKey.get(k)!),
+        source: "auto",
+      })),
+    ),
+  );
 
   // 5. Сказка: текст готов, картинки — «золотые» → ИИ (по флагу) → акварельные SVG из репозитория
   const taleIds = DEMO_TALE_STORY_KEYS.map((k) => DEMO_STORY_SEEDS.find((s) => s.key === k)!.id);
@@ -297,24 +326,16 @@ export async function seedDemo(opts: SeedOptions): Promise<SeedReport> {
     }
   }
 
-  // 6. Книга PDF
+  // 6. Книги PDF: Ким и киоск (#202). Собирает сайт — там шрифты и секрет подписи QR.
   must("книга", await db.from("books").insert({ family_id: DEMO_FAMILY.id, status: "draft", title: DEMO_BOOK_TITLE, cover: { title: DEMO_BOOK_TITLE, elder: "grandfather" } }));
-  let book: SeedReport["book"] = { status: "skipped", pages: null, error: null };
-  if ((opts.book ?? "http") === "http") {
-    try {
-      const res = await fetch(`${opts.origin.replace(/\/+$/, "")}/api/books/${DEMO_FAMILY.id}/build`, {
-        method: "POST",
-        headers: { "content-type": "application/json", "x-family-token": DEMO_FAMILY.access_token },
-        body: "{}",
-        signal: AbortSignal.timeout(55_000),
-      });
-      const j = (await res.json().catch(() => ({}))) as { status?: string; page_count?: number | null; error?: string | null; message?: string };
-      book = { status: j.status ?? `HTTP ${res.status}`, pages: j.page_count ?? null, error: j.error ?? j.message ?? null };
-    } catch (e) {
-      const why = e instanceof Error ? e.message : String(e);
-      book = { status: "failed", pages: null, error: `${why} — сайт ${opts.origin} недоступен? Книгу можно собрать кнопкой на /book/<токен>` };
-    }
-  }
+  must(
+    "книга киоска",
+    await db.from("books").insert({ family_id: DEMO_KIOSK_FAMILY.id, status: "draft", title: DEMO_KIOSK_BOOK_TITLE, cover: { title: DEMO_KIOSK_BOOK_TITLE, elder: "grandmother" } }),
+  );
+  const skip: SeedBook = { status: "skipped", pages: null, error: null };
+  const http = (opts.book ?? "http") === "http";
+  const book = http ? await buildViaSite(opts.origin, DEMO_FAMILY) : skip;
+  const kioskBook = http ? await buildViaSite(opts.origin, DEMO_KIOSK_FAMILY) : skip;
 
   const report: SeedReport = {
     ms: Date.now() - started,
@@ -324,13 +345,31 @@ export async function seedDemo(opts: SeedOptions): Promise<SeedReport> {
     voices: { found: wanted.length - missing.length, total: wanted.length, missing },
     tale: { pages: DEMO_TALE.pages.length, source: sources.size === 1 ? ([...sources][0] as SeedReport["tale"]["source"]) : "mixed" },
     book,
-    kiosk: { stories: 1 },
+    kiosk: { stories: kioskRows.length, entities: DEMO_KIOSK_ENTITIES.length, book: kioskBook },
   };
   log(
     `демо готово за ${(report.ms / 1000).toFixed(1)} с: глав ${report.chapters}, уточнений ${report.followups}, словарь ${report.entities}, голосов ${report.voices.found}/${report.voices.total}, ` +
-      `сказка ${report.tale.pages} стр. (${report.tale.source}), книга ${book.status}${book.pages ? `, ${book.pages} стр.` : ""}${book.error ? ` — ${book.error}` : ""}`,
+      `сказка ${report.tale.pages} стр. (${report.tale.source}), книга ${bookLine(book)}; киоск: глав ${kioskRows.length}, книга ${bookLine(kioskBook)}`,
   );
   return report;
+}
+
+const bookLine = (b: SeedBook) => `${b.status}${b.pages ? `, ${b.pages} стр.` : ""}${b.error ? ` — ${b.error}` : ""}`;
+
+async function buildViaSite(origin: string, family: { id: string; access_token: string }): Promise<SeedBook> {
+  try {
+    const res = await fetch(`${origin.replace(/\/+$/, "")}/api/books/${family.id}/build`, {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-family-token": family.access_token },
+      body: "{}",
+      signal: AbortSignal.timeout(55_000),
+    });
+    const j = (await res.json().catch(() => ({}))) as { status?: string; page_count?: number | null; error?: string | null; message?: string };
+    return { status: j.status ?? `HTTP ${res.status}`, pages: j.page_count ?? null, error: j.error ?? j.message ?? null };
+  } catch (e) {
+    const why = e instanceof Error ? e.message : String(e);
+    return { status: "failed", pages: null, error: `${why} — сайт ${origin} недоступен? Книгу можно собрать кнопкой на /book/<токен>` };
+  }
 }
 
 // ---------------- ссылки для проверки ----------------
@@ -356,6 +395,9 @@ export function demoLinks(): DemoLink[] {
     { label: "Допы", path: `/extras/${t}` },
     { label: "Оплата (демо)", path: `/checkout/${t}` },
     { label: "История с киоска АКНЦ — глава", path: `/chapter/${DEMO_KIOSK_STORY.id}?token=${DEMO_KIOSK_FAMILY.access_token}` },
+    { label: "Киоск «Ли Нина» — кабинет семьи", path: `/f/${DEMO_KIOSK_FAMILY.access_token}` },
+    { label: "Киоск «Ли Нина» — книга, экран", path: `/book/${DEMO_KIOSK_FAMILY.access_token}` },
+    { label: "Киоск «Ли Нина» — книга, PDF", path: `/api/books/${DEMO_KIOSK_FAMILY.id}/pdf?token=${DEMO_KIOSK_FAMILY.access_token}` },
     { label: "Киоск АКНЦ (KIOSK_PIN)", path: "/kiosk" },
     { label: "Кабинет центра — семьи (ADMIN_PIN)", path: "/center/families" },
   ];
@@ -383,16 +425,17 @@ async function main() {
 
   const lines = [
     `### Демо-семья пересоздана за ${(report.ms / 1000).toFixed(1)} с`,
-    `- глав RU | KR: ${report.chapters}, записей-уточнений: ${report.followups}, словарь имён: ${report.entities}, история киоска: ${report.kiosk.stories}`,
+    `- глав RU | KR: ${report.chapters}, записей-уточнений: ${report.followups}, словарь имён: ${report.entities}`,
+    `- киоск «Ли Нина»: глав ${report.kiosk.stories}, словарь имён: ${report.kiosk.entities}, книга: ${bookLine(report.kiosk.book)}`,
     `- голос: ${report.voices.found} из ${report.voices.total}${report.voices.missing.length ? ` (нет: ${report.voices.missing.join(", ")} — загрузить в /admin)` : ""}`,
     `- сказка: ${report.tale.pages} стр., картинки — ${report.tale.source}`,
-    `- книга: ${report.book.status}${report.book.pages ? `, ${report.book.pages} стр.` : ""}${report.book.error ? ` — ${report.book.error}` : ""}`,
+    `- книга: ${bookLine(report.book)}`,
     "",
     ...demoLinks().map((l) => `- ${l.label}: ${origin.replace(/\/+$/, "")}${l.path}`),
   ];
   console.info(lines.join("\n"));
   if (process.env.GITHUB_STEP_SUMMARY) fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY, lines.join("\n") + "\n");
-  if (report.book.status !== "ready" && report.book.status !== "skipped") process.exitCode = 1;
+  for (const b of [report.book, report.kiosk.book]) if (b.status !== "ready" && b.status !== "skipped") process.exitCode = 1;
 }
 
 if (process.argv[1] && /seed-demo\.ts$/.test(process.argv[1])) {
