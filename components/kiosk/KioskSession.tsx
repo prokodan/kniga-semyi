@@ -10,7 +10,8 @@ import { QUESTIONS } from "@/content/questions/bank";
 import { BLOCKS } from "@/content/questions/blocks";
 import { postJson, Recorder, uploadAudio, type Take } from "@/components/recorder";
 import type { LifeBlock } from "@/lib/types";
-import { BlockProgress } from "@/app/(family)/_ui/BlockProgress";
+import { InterviewProgress } from "@/app/(family)/_ui/InterviewProgress";
+import { localProgress, type InterviewProgressView } from "@/app/(family)/_ui/progress-line";
 import { canSpeak, speak, stopSpeaking, useSpeechBlocked } from "@/app/(family)/_ui/speak";
 import { kDark, kGhost, kioskPost, kPrimary, kRecorderWrap } from "./ui";
 
@@ -22,11 +23,12 @@ interface QuestionView {
   ko: string;
 }
 
+type P = { progress?: InterviewProgressView };
 type AnswerResult =
-  | { type: "followup"; questionId: string; text: string; storyId: string | null }
-  | { type: "nextQuestion"; question: QuestionView; bridge: string; pause: boolean }
-  | { type: "blockDone"; message: string; nextQuestion: QuestionView | null; bridge: string }
-  | { type: "finished"; message: string };
+  | ({ type: "followup"; questionId: string; text: string; storyId: string | null } & P)
+  | ({ type: "nextQuestion"; question: QuestionView; bridge: string; pause: boolean } & P)
+  | ({ type: "blockDone"; message: string; nextQuestion: QuestionView | null; bridge: string } & P)
+  | ({ type: "finished"; message: string } & P);
 
 interface Current {
   question: QuestionView;
@@ -35,6 +37,8 @@ interface Current {
   bridge?: string;
   pause?: boolean;
   mainStoryId?: string | null;
+  /** #101: прогресс от движка (вопрос N из M в разделе, уточнения) */
+  progress?: InterviewProgressView;
 }
 
 type Phase = "consent" | "loading" | "ask" | "waiting" | "finished";
@@ -74,7 +78,6 @@ export function KioskSession(props: KioskSessionProps) {
   const [message, setMessage] = useState<string | null>(null);
   const [saved, setSaved] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [covered, setCovered] = useState<LifeBlock[]>(props.initialCovered);
   const [take, setTake] = useState(0);
   const [autoSpeak, setAutoSpeak] = useState(false);
   const recording = useSpeechBlocked(); // #100: идёт запись — «Озвучить» недоступна
@@ -119,7 +122,7 @@ export function KioskSession(props: KioskSessionProps) {
       const { done, later } = local.current;
       const q = QUESTIONS.find((x) => !done.has(x.id) && !later.includes(x.id)) ?? QUESTIONS.find((x) => later.includes(x.id) && !done.has(x.id));
       if (q) local.current.later = later.filter((id) => id !== q.id);
-      show(q ? asQuestion(bankView(q)) : null, msg ?? (q ? null : "Все вопросы позади — спасибо огромное!"));
+      show(q ? asQuestion(bankView(q), { progress: localProgress(QUESTIONS, done, q) }) : null, msg ?? (q ? null : "Все вопросы позади — спасибо огромное!"));
     },
     [show],
   );
@@ -128,11 +131,17 @@ export function KioskSession(props: KioskSessionProps) {
     (r: AnswerResult, prev: Current) => {
       switch (r.type) {
         case "followup":
-          return show({ question: prev.question, prompt: r.text, kind: "followup", mainStoryId: r.storyId ?? prev.mainStoryId ?? null });
+          return show({
+            question: prev.question,
+            prompt: r.text,
+            kind: "followup",
+            mainStoryId: r.storyId ?? prev.mainStoryId ?? null,
+            progress: r.progress ?? prev.progress,
+          });
         case "nextQuestion":
-          return show(asQuestion(r.question, { bridge: r.bridge, pause: r.pause }));
+          return show(asQuestion(r.question, { bridge: r.bridge, pause: r.pause, progress: r.progress }));
         case "blockDone":
-          return show(r.nextQuestion ? asQuestion(r.nextQuestion, { bridge: r.bridge }) : null, r.message);
+          return show(r.nextQuestion ? asQuestion(r.nextQuestion, { bridge: r.bridge, progress: r.progress }) : null, r.message);
         case "finished":
           return show(null, r.message);
       }
@@ -160,19 +169,19 @@ export function KioskSession(props: KioskSessionProps) {
       /* начнём заново */
     }
     try {
-      const res = await postJson<{ sessionId: string; question: QuestionView }>("/api/sessions", token, {
+      const res = await postJson<{ sessionId: string; question: QuestionView } & P>("/api/sessions", token, {
         familyId,
         storytellerId: storyteller.id,
         mode: "kiosk",
         volunteerId: props.volunteerId,
       });
       session.current = res.sessionId;
-      let c = asQuestion(res.question);
+      let c = asQuestion(res.question, { progress: res.progress });
       // Повторный приход: пролистываем вопросы, на которые уже есть рассказы
       for (let i = 0; i < QUESTIONS.length && local.current.done.has(c.question.id); i++) {
         const r = await sessionCall("skip", { action: "skip" });
-        if (r.type === "nextQuestion") c = asQuestion(r.question);
-        else if (r.type === "blockDone" && r.nextQuestion) c = asQuestion(r.nextQuestion);
+        if (r.type === "nextQuestion") c = asQuestion(r.question, { progress: r.progress });
+        else if (r.type === "blockDone" && r.nextQuestion) c = asQuestion(r.nextQuestion, { progress: r.progress });
         else return apply(r, c);
       }
       show(c);
@@ -293,7 +302,6 @@ export function KioskSession(props: KioskSessionProps) {
       sessionId: session.current,
       parentStoryId: prev.kind === "followup" ? (prev.mainStoryId ?? null) : null,
     });
-    setCovered((c) => (c.includes(prev.question.block) ? c : [...c, prev.question.block]));
     if (prev.kind === "question") setCount((n) => n + 1);
     setSaved(prev.kind === "followup" ? "Дополнение сохранено ✓" : "Рассказ сохранён ✓");
     setPhase("waiting");
@@ -344,11 +352,6 @@ export function KioskSession(props: KioskSessionProps) {
           <p className="truncate font-serif text-3xl">{storyteller.name}</p>
           <p className="text-muted">{phase === "consent" ? "Шаг 1 · согласие" : `Записано рассказов сегодня: ${count}`}</p>
         </div>
-        {phase !== "consent" && (
-          <div className="w-72 shrink-0">
-            <BlockProgress covered={covered} compact />
-          </div>
-        )}
         {phase !== "finished" ? (
           <button type="button" onClick={finish} className={kGhost}>
             Завершить
@@ -359,6 +362,17 @@ export function KioskSession(props: KioskSessionProps) {
           </Link>
         )}
       </header>
+
+      {phase === "ask" && current && (
+        <div className="shrink-0">
+          <InterviewProgress
+            current={{ block: current.question.block, title: current.question.blockTitle.ru }}
+            progress={current.progress}
+            kind={current.kind}
+            large
+          />
+        </div>
+      )}
 
       {phase === "consent" && (
         <div className="grid min-h-0 flex-1 grid-cols-[1.15fr_1fr] gap-8">
@@ -401,7 +415,6 @@ export function KioskSession(props: KioskSessionProps) {
             <p className="text-elder text-muted">
               {current.question.blockTitle.ru}
               {current.question.blockTitle.ko && <span lang="ko"> · {current.question.blockTitle.ko}</span>}
-              {current.kind === "followup" && " · уточнение"}
             </p>
             {(message || current.bridge) && <p className="text-elder text-ink-soft italic">{message ?? current.bridge}</p>}
             <h1 className="font-serif text-kiosk leading-snug lg:text-4xl lg:leading-snug">{current.prompt}</h1>
