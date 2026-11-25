@@ -2,7 +2,7 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { parseGlossary } from "@/eval/kr-check";
-import { applyName, findUncertain, GLOSSARY_KORYO, GLOSSARY_PLACES, GLOSSARY_SURNAMES, nameHints, resolveName } from "./names";
+import { applyName, findUncertain, GLOSSARY_KORYO, GLOSSARY_PLACES, GLOSSARY_SURNAMES, isCommonWord, nameHints, reconcileNames, resolveName } from "./names";
 
 describe("подсказки из docs/glossary.md", () => {
   const g = parseGlossary(readFileSync("docs/glossary.md", "utf8"));
@@ -88,5 +88,27 @@ describe("переспрос в интервью", async () => {
     // короткий ответ — дальше обычное уточнение, но не второй переспрос
     expect(r2.type).toBe("followup");
     if (r2.type === "followup") expect(r2.text).not.toMatch(/Правильно ли я поняла/);
+  });
+});
+
+describe("reconcileNames: обычные слова не трогает (#168)", () => {
+  // словарь семьи мог подхватить разговорную форму как «слово корё мар» — она не должна стать целью
+  const hints = nameHints({ storytellerName: "Тен Вера", entities: ["Мамо", "Папо", "Мамаев", "апа Сауле"] });
+
+  it("«мама / мамо», «папа», «дом» остаются как есть", () => {
+    for (const t of ["Мама любила готовить.", "мама любила", "Мамо любила", "Я пошёл к маме.", "Папа пришёл домой.", "Дом был большой.", "У папы был дом."]) {
+      expect(reconcileNames(t, hints).text).toBe(t);
+    }
+  });
+
+  it("имена, места и корё мар по-прежнему сверяются", () => {
+    expect(reconcileNames("Мы жили в Уштабе.", hints).text).toBe("Мы жили в Уштобе.");
+    expect(reconcileNames("опаса уле приходила", hints).text).toBe("апа Сауле приходила");
+    expect(reconcileNames("Мамаеф пришёл", hints).text).toBe("Мамаев пришёл");
+  });
+
+  it("isCommonWord: обычные слова и их формы — да, имена — нет", () => {
+    for (const w of ["мама", "Мамо", "мамой", "папа", "дом", "дома", "бабушка", "брату"]) expect(isCommonWord(w)).toBe(true);
+    for (const w of ["Мамаев", "Домна", "Сауле", "Уштобе", "кукси"]) expect(isCommonWord(w)).toBe(false);
   });
 });

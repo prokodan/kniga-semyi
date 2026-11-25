@@ -9,7 +9,11 @@ import { appendFileSync } from "node:fs";
 
 const URL_ = (process.env.NEXT_PUBLIC_SUPABASE_URL ?? "").replace(/\/+$/, "");
 const KEY = process.env.SUPABASE_SERVICE_ROLE_KEY ?? "";
-const SEL = (process.env.DIAG_FAMILIES ?? "").trim();
+// #168: «… | word:мамо» — где в историях семьи встречается слово (расшифровка, уточнения, глава, словарь семьи).
+// Само слово и тексты в лог не идут: только поля и счётчики.
+const [SEL_RAW, WORD_RAW] = (process.env.DIAG_FAMILIES ?? "").split("|").map((p) => p.trim());
+const SEL = SEL_RAW ?? "";
+const WORD = /^word:/i.test(WORD_RAW ?? "") ? WORD_RAW.slice(5).trim().toLowerCase().replace(/ё/g, "е") : "";
 if (!URL_ || !KEY || !SEL) {
   console.error("Нужны NEXT_PUBLIC_SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY и DIAG_FAMILIES");
   process.exit(1);
@@ -72,11 +76,40 @@ log("Глава = история без ↳ (не ответ на уточнен
 log("«дубль» — ≥ 35 % 4-словных фрагментов источника этой главы есть в источнике другой главы (основной ответ + уточнения).");
 log();
 
+/** Сколько раз слово (целиком, без регистра, ё=е) встречается в тексте */
+function countWord(text) {
+  const re = new RegExp(`(^|[^\\p{L}])${WORD.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?=[^\\p{L}]|$)`, "giu");
+  return ((text ?? "").toLowerCase().replace(/ё/g, "е").match(re) ?? []).length;
+}
+
+async function wordReport(fam, stories) {
+  const rows = [];
+  for (const s of stories) {
+    const f = {
+      transcript: countWord(s.transcript),
+      followups: countWord((s.followups ?? []).map((x) => x.answer ?? "").join("\n")),
+      text_ru: countWord(s.text_ru),
+      title: countWord(s.title),
+      quote: countWord(s.quote),
+    };
+    if (Object.values(f).some(Boolean)) rows.push(`| ${short(s.id)} | ${s.parent_story_id ? "↳" : ""} | ${s.question_id ?? "—"} | ${Object.entries(f).filter(([, n]) => n).map(([k, n]) => `${k}×${n}`).join(" ")} |`);
+  }
+  const ents = await rest(`family_entities?select=id,type,source,name_ru&family_id=eq.${fam.id}&limit=500`).catch(() => []);
+  const entHits = ents.filter((e) => countWord(e.name_ru) > 0).map((e) => `${e.type}/${e.source}`);
+  log(`### Слово из запроса · семья ${short(fam.id)}: историй с ним ${rows.length}; в словаре семьи: ${entHits.join(", ") || "нет"}`);
+  if (rows.length) {
+    log("| id | ↳ | вопрос | где |");
+    log("|---|---|---|---|");
+    for (const r of rows) log(r);
+  }
+  log();
+}
+
 const totals = { chapters: 0, dups: 0, lostFollowups: 0, orphanParents: 0, answeredNoChapter: 0, failed: 0, stuck: 0 };
 
 for (const fam of families) {
   const stories = await rest(
-    `stories?select=id,storyteller_id,session_id,parent_story_id,question_id,block,status,error,audio_url,duration_sec,transcript,text_ru,followups,created_at,updated_at&family_id=eq.${fam.id}&order=created_at.asc&limit=500`,
+    `stories?select=id,storyteller_id,session_id,parent_story_id,question_id,block,status,error,audio_url,duration_sec,transcript,text_ru,title,quote,followups,created_at,updated_at&family_id=eq.${fam.id}&order=created_at.asc&limit=500`,
   );
   const sessions = await rest(`sessions?select=id,storyteller_id,mode,state,started_at,ended_at&family_id=eq.${fam.id}&order=started_at.asc&limit=200`);
   const byId = new Map(stories.map((s) => [s.id, s]));
@@ -90,6 +123,7 @@ for (const fam of families) {
   }
 
   const books = await rest(`books?select=status,built_at,page_count&family_id=eq.${fam.id}&order=created_at.desc&limit=3`);
+  if (WORD) await wordReport(fam, stories);
   log(`## Семья ${short(fam.id)} · создана ${hhmm(fam.created_at)} · историй ${stories.length} · сессий ${sessions.length} · книга: ${books.map((b) => `${b.status}${b.built_at ? " " + hhmm(b.built_at) : ""}${b.page_count ? ", " + b.page_count + " с." : ""}`).join("; ") || "нет"}`);
   log();
 

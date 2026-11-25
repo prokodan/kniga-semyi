@@ -181,6 +181,15 @@ export function soundKey(s: string): string {
 const NO_FUZZY = new Set(["морковча", "пап", "хе", "чеса", "кимчи", "корё мар", "корё-сарам", "хан", "ан", "нам", "мун", "юн"]);
 /** Русские слова, звучащие как слово корё мар («кочан капусты» ≠ «кочжан»), — не трогаем. */
 const DECOYS = /^(кочан|кочна|кочне|кочну|морковк|папа|папу|папе)/;
+/**
+ * #168: обычные русские слова (и их разговорные формы — «мамо», «папо») сверка не трогает никогда: ни как
+ * «услышанное» слово, ни как цель из подсказок (словарь семьи мог подхватить «мамо» из расшифровки как слово
+ * корё мар). Сверка — только для имён, мест и слов корё мар.
+ */
+const COMMON_RU =
+  /^(мам[аыеуо]|мамой|мамочк\p{L}*|пап[аыеуо]|папой|папочк\p{L}*|дом|дом[аеуы]|домом|дома[мх]и?|бабушк\p{L}*|дедушк\p{L}*|брат\p{L}{0,3}|сестр\p{L}{0,3}|отец|отц\p{L}{0,3}|мать|матер\p{L}{0,3}|сын\p{L}{0,4}|доч\p{L}{0,4}|жен[аеуыо]|женой|муж\p{L}{0,3}|тет[яиеюь]\p{L}{0,2}|дяд[яиеюь]\p{L}{0,2}|школ\p{L}{0,3}|работ\p{L}{0,3}|город\p{L}{0,3}|войн\p{L}{0,2}|семь[яиеюё]\p{L}{0,2})$/u;
+export const isCommonWord = (w: string) => COMMON_RU.test(yo(w));
+
 /** Основа без падежного окончания — «Караганде» и «Караганда» одно слово. */
 const stem = (s: string) => yo(s).replace(/(ами|ями|ом|ем|ой|ей|ую|юю|[аеиоуыяюй])$/u, "");
 
@@ -197,7 +206,7 @@ export interface NameFix {
  * для слова с заглавной. Неуверенные остаются как есть — их переспрашивает интервью (#87, findUncertain).
  */
 export function reconcileNames(text: string, hints: string[]): { text: string; fixes: NameFix[] } {
-  const targets = [...new Set(hints.map((h) => h.trim()).filter((h) => h.length >= 4 && !NO_FUZZY.has(yo(h))))]
+  const targets = [...new Set(hints.map((h) => h.trim()).filter((h) => h.length >= 4 && !NO_FUZZY.has(yo(h)) && !isCommonWord(h)))]
     .map((h) => ({ h, key: soundKey(h), cap: /^[А-ЯЁ]/.test(h), words: h.split(/\s+/).length }))
     .filter((t) => t.key.length >= 4 && t.words <= 2);
   const tokens = [...text.matchAll(/[А-Яа-яЁё][А-Яа-яЁё-]*/g)].map((m) => ({ w: m[0], i: m.index! }));
@@ -214,6 +223,7 @@ export function reconcileNames(text: string, hints: string[]): { text: string; f
       if (n === 2 && !/^\s+$/.test(text.slice(span[0]!.i + span[0]!.w.length, span[1]!.i))) continue;
       const raw = span.map((s) => s.w).join(n === 2 ? " " : "");
       if (exact.has(yo(raw)) || (n === 1 && (stems.has(stem(raw)) || DECOYS.test(yo(raw))))) continue;
+      if (span.some((t) => isCommonWord(t.w))) continue; // #168: «мама», «папа», «дом» — не имя и не корё мар
       const sentenceStart = k === 0 || /[.!?…]["»]?\s*$/.test(text.slice(0, span[0]!.i));
       const cands: { t: (typeof targets)[number]; suffix: string; d: number }[] = [];
       for (const t of targets) {
