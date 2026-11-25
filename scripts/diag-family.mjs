@@ -7,6 +7,12 @@
 // или name:<фамилия> (#166: по названию семьи / имени рассказчика; в лог — только короткие id).
 import { appendFileSync } from "node:fs";
 
+// #167: families = speed:2026-11-23,2026-11-25 — скорость шагов по дням (scripts/diag-speed.mjs)
+if (/^speed:/i.test((process.env.DIAG_FAMILIES ?? "").trim())) {
+  await import("./diag-speed.mjs");
+  process.exit(0);
+}
+
 const URL_ = (process.env.NEXT_PUBLIC_SUPABASE_URL ?? "").replace(/\/+$/, "");
 const KEY = process.env.SUPABASE_SERVICE_ROLE_KEY ?? "";
 // #168: «… | word:мамо» — где в историях семьи встречается слово (расшифровка, уточнения, глава, словарь семьи).
