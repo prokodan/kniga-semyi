@@ -69,6 +69,13 @@ function clean(s: string | null | undefined, max: number): string | null {
   return v || null;
 }
 
+/**
+ * #138: у слов корё мар корейское написание — обычное слово (аппади → 아버지, кукси → 국수). Замена по всем главам
+ * задела бы и «другого» отца, и цитаты. Поэтому у слов правка KR меняет только словарь: новое написание берёт
+ * перевод следующих глав (namesForTranslate), уже готовые корейские тексты не трогаем.
+ */
+export const KO_REWRITE_KINDS: readonly FamilyEntityKind[] = ["person", "place"];
+
 export function chapterMentions(ch: ChapterText, name: string): boolean {
   return [ch.title, ch.quote, ch.text_ru].some((t) => mentionsRu(t, name));
 }
@@ -185,7 +192,8 @@ export function createEntityService({ repo, markBookOutdated }: EntityServiceDep
       if (name_ru.toLowerCase() !== entity.name_ru.toLowerCase()) assertFree(all, name_ru, [id]);
 
       const ru = name_ru !== entity.name_ru ? { from: entity.name_ru, to: name_ru } : null;
-      const ko = entity.name_ko && name_ko && entity.name_ko !== name_ko ? { from: entity.name_ko, to: name_ko } : null;
+      const koText = KO_REWRITE_KINDS.includes(input.kind ?? entity.kind) && KO_REWRITE_KINDS.includes(entity.kind);
+      const ko = koText && entity.name_ko && name_ko && entity.name_ko !== name_ko ? { from: entity.name_ko, to: name_ko } : null;
       const { retranslate, koOnly, mentioned } = await rewrite(familyId, ru, ko);
 
       const updated = await repo.update(id, {
@@ -208,7 +216,8 @@ export function createEntityService({ repo, markBookOutdated }: EntityServiceDep
 
       const ru = from.name_ru !== into.name_ru ? { from: from.name_ru, to: into.name_ru } : null;
       const koTo = into.name_ko ?? from.name_ko;
-      const ko = from.name_ko && koTo && from.name_ko !== koTo ? { from: from.name_ko, to: koTo } : null;
+      const koText = KO_REWRITE_KINDS.includes(from.kind) && KO_REWRITE_KINDS.includes(into.kind);
+      const ko = koText && from.name_ko && koTo && from.name_ko !== koTo ? { from: from.name_ko, to: koTo } : null;
       const { retranslate, koOnly, mentioned } = await rewrite(familyId, ru, ko);
 
       await repo.remove(from.id); // сначала удалить: уникальность имени не мешает, если «Вова» = «вова»

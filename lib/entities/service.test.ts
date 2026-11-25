@@ -183,6 +183,35 @@ describe("словарь имён: добавить и объединить", ()
     expect(repo.stories.get("s1")!.text_ru).toContain("С Володей");
   });
 
+  it("#138: слово корё мар — правка KR меняет только словарь, корейские главы не трогает", async () => {
+    repo.chapter("w1", { text_ru: "Аппади работал в колхозе.", text_ko: "아버지는 콜호스에서 일하셨다. 친구의 아버지도 왔다." });
+    const word = repo.entity({ name_ru: "аппади", name_ko: "아버지", kind: "word", story_ids: ["w1"] });
+    const r = await svc.edit(FAM, word.id, { name_ko: "아바이" });
+    expect(r.koOnly).toEqual([]);
+    expect(r.koFix).toBeNull();
+    expect(repo.stories.get("w1")!.text_ko).toBe("아버지는 콜호스에서 일하셨다. 친구의 아버지도 왔다.");
+    expect(repo.rows.get(word.id)).toEqual(expect.objectContaining({ name_ko: "아바이", source: "family" }));
+    expect(outdated).not.toHaveBeenCalled();
+  });
+
+  it("#138: слово — правка RU по-прежнему во всех главах с новым переводом, но без koFix", async () => {
+    repo.chapter("w2", { text_ru: "Мама варила кукси.", text_ko: "어머니가 국수를 끓이셨다." });
+    const word = repo.entity({ name_ru: "кукси", name_ko: "국수", kind: "word" });
+    const r = await svc.edit(FAM, word.id, { name_ru: "куксу", name_ko: "국시" });
+    expect(r.retranslate).toEqual(["w2"]);
+    expect(r.koFix).toBeNull();
+    expect(repo.stories.get("w2")!.text_ru).toBe("Мама варила куксу.");
+  });
+
+  it("#138: объединение со словом — корейский текст глав не меняется", async () => {
+    repo.chapter("w3", { text_ru: "Мама пела.", text_ko: "어머니가 노래했다." }); // слово только в корейском
+    const a = repo.entity({ name_ru: "омани", name_ko: "어머니", kind: "word" });
+    const b = repo.entity({ name_ru: "оммани", name_ko: "엄마", kind: "word" });
+    const r = await svc.merge(FAM, a.id, b.id);
+    expect(r.koFix).toBeNull();
+    expect(repo.stories.get("w3")!.text_ko).toBe("어머니가 노래했다.");
+  });
+
   it("список: люди → места → слова, по алфавиту", async () => {
     repo.entity({ name_ru: "кукси", kind: "word" });
     repo.entity({ name_ru: "Уштобе", kind: "place" });
