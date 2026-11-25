@@ -19,7 +19,9 @@ function story(over: Partial<Story> = {}): Story {
   };
 }
 
-function setup(clock = { t: Date.parse("2026-11-23T10:00:00Z") }, hook?: (step: AiStep, opts: unknown) => Promise<void> | void) {
+// Часы теста — от настоящего времени: дедлайн шага (started + STEP_BUDGET_MS) роутер сравнивает с Date.now(),
+// и с часами, застывшими на 23.11, после этой даты каждый шаг сразу «опаздывал» (AiUnavailable → статус не двигался).
+function setup(clock = { t: Date.now() }, hook?: (step: AiStep, opts: unknown) => Promise<void> | void) {
   const router = createRouter({ store: new MemoryStore(), mode: () => "mock" });
   const seen: { step: AiStep; opts: unknown }[] = [];
   const ai = {
