@@ -526,15 +526,24 @@ export function createInterview(deps: InterviewDeps) {
       if (answeringFollowup) {
         main = await repo.getStory(state.current_story_id!);
         if (!main) throw new InterviewError("not_found", "История текущего вопроса не найдена");
-        const followups = [...(main.followups ?? []), { question: state.pending_followup!, answer: text.trim() }];
-        await repo.updateStory(main.id, { followups });
-        main = { ...main, followups };
+        // #128: запись-уточнение помечаем story_id (#98) — конвейер, который приклеивает «опоздавшие» записи сам,
+        // не допишет её второй раз; та же запись уже в followups — не дописываем.
+        const recId = incoming && incoming.id !== main.id ? incoming.id : undefined;
+        const already = recId !== undefined && (main.followups ?? []).some((f) => f.story_id === recId);
+        if (!already) {
+          const entry = { question: state.pending_followup!, answer: text.trim(), ...(recId ? { story_id: recId } : {}) };
+          const followups = [...(main.followups ?? []), entry];
+          await repo.updateStory(main.id, { followups });
+          main = { ...main, followups };
+        }
         // Голосовой ответ на уточнение — отдельная запись; помечаем её, чтобы конвейер (I2) не делал из неё главу.
         if (incoming && incoming.id !== main.id && !incoming.parent_story_id) {
           await repo.updateStory(incoming.id, { parent_story_id: main.id });
         }
       } else if (incoming) {
-        const patch = { question_id: incoming.question_id ?? question.id, block: incoming.block ?? question.block };
+        // #128: после offtopic-уточнения телефон шлёт запись с parentStoryId перенесённой истории, но это уже основной
+        // ответ на вопрос — связь снимаем, иначе конвейер только расшифрует её и глава не соберётся.
+        const patch = { question_id: incoming.question_id ?? question.id, block: incoming.block ?? question.block, parent_story_id: null };
         await repo.updateStory(incoming.id, patch);
         main = { ...incoming, ...patch };
         state.followups_asked = 0;

@@ -11,13 +11,14 @@ export const dynamic = "force-dynamic";
 const time = (iso: string) => new Date(iso).toLocaleTimeString("ru-RU", { hour: "2-digit", minute: "2-digit", timeZone: "Asia/Almaty" });
 
 function StoriesBadge({ s }: { s: QueueItem["stories"] }) {
-  if (s.total === 0) return <span className="text-muted">рассказов пока нет</span>;
+  if (s.total === 0) return <span className="text-muted">рассказов пока нет{s.skipped > 0 ? ` · пропущено ${s.skipped}` : ""}</span>;
   return (
     <span className="flex flex-wrap gap-x-4">
       <span>рассказов: {s.total}</span>
       {s.ready > 0 && <span className="text-success">✓ готово {s.ready}</span>}
       {s.working > 0 && <span className="text-warning">⏳ в работе {s.working}</span>}
       {s.failed > 0 && <span className="text-danger">⚠ ошибка {s.failed}</span>}
+      {s.skipped > 0 && <span className="text-muted">пропущено {s.skipped}</span>}
     </span>
   );
 }
@@ -79,7 +80,7 @@ export default async function KioskQueuePage() {
                 </div>
               </div>
               <Link href={`/kiosk/session/${it.familyId}`} className={kGhost}>
-                {it.stories.total > 0 ? "Продолжить" : "Начать"}
+                {it.stories.total + it.stories.skipped > 0 ? "Продолжить" : "Начать"}
               </Link>
             </li>
           ))}

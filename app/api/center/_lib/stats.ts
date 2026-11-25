@@ -49,7 +49,8 @@ export interface CenterFamily {
   archive: boolean;
   createdAt: string;
   storytellers: { name: string; birthYear: number | null; consent: boolean }[];
-  stories: { total: number; ready: number; working: number; failed: number };
+  /** #92: skipped — отдельно, не входит в total и «в работе» */
+  stories: { total: number; ready: number; working: number; failed: number; skipped: number };
   minutes: number;
   book: FamilyBookStatus;
   lastAt: string;
@@ -97,7 +98,8 @@ export function buildCounters(rows: CenterRows, since: Date): CenterCounters {
   const isToday = (iso: string | null | undefined) => Boolean(iso && iso >= from);
   const count = <T>(xs: T[], at: (x: T) => string): Counter => ({ total: xs.length, today: xs.filter((x) => isToday(at(x))).length });
 
-  const main = rows.stories.filter((s) => !s.parent_story_id);
+  // #92: пропущенные вопросы (skipped) — не истории и не главы
+  const main = rows.stories.filter((s) => !s.parent_story_id && s.status !== "skipped");
   const ready = main.filter((s) => s.status === "ready");
   const sec = (xs: StoryRow[]) => xs.reduce((sum, s) => sum + (Number(s.duration_sec) || 0), 0);
 
@@ -128,9 +130,13 @@ export function buildFamilies(rows: CenterRows): CenterFamily[] {
     .map((f): CenterFamily => {
       const st = rows.storytellers.filter((s) => s.family_id === f.id).sort((a, b) => a.created_at.localeCompare(b.created_at));
       const all = rows.stories.filter((s) => s.family_id === f.id);
-      const c = { total: 0, ready: 0, working: 0, failed: 0 };
+      const c = { total: 0, ready: 0, working: 0, failed: 0, skipped: 0 };
       for (const s of all) {
         if (s.parent_story_id) continue; // ответ на уточнение — часть основной истории
+        if (s.status === "skipped") {
+          c.skipped += 1; // #92: вопрос пропущен — главы не будет, «в работе» не висит
+          continue;
+        }
         c.total += 1;
         if (s.status === "ready") c.ready += 1;
         else if (s.status === "failed") c.failed += 1;

@@ -99,6 +99,7 @@ export function FamilyCard({ f, bookHref }: { f: CenterFamily; bookHref?: string
             {s.ready > 0 && <span className="text-success">✓ готово {s.ready}</span>}
             {s.working > 0 && <span className="text-warning">⏳ в работе {s.working}</span>}
             {s.failed > 0 && <span className="text-danger">⚠ ошибка {s.failed}</span>}
+            {s.skipped > 0 && <span className="text-muted">пропущено {s.skipped}</span>}
             <span className="text-ink-soft">{fmt(f.minutes)} мин голоса</span>
           </>
         )}

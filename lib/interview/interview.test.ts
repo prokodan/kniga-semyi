@@ -423,3 +423,48 @@ describe("#108: новая сессия продолжает с первого �
     expect(s2.question.id).toBe(bank.first().id);
   });
 });
+
+describe("#128: ответ после offtopic-уточнения — своя глава", () => {
+  it("голосовой ответ с parentStoryId перенесённой истории → основной рассказ вопроса без parent_story_id", async () => {
+    let first = true;
+    const { interview, repo } = setup({
+      override: {
+        completeness: (i) => {
+          if (first) {
+            first = false;
+            return { covered: [], missing: i.minimum, followup: null, done: false, offTopicBlock: "traditions" };
+          }
+          return done(i.minimum);
+        },
+      },
+    });
+    const s = await start(interview);
+    const r1 = await interview.submitAnswer(s.sessionId, { text: "А вот мама кукси на Новый год делала, тесто сама раскатывала…" });
+    expect(r1.type).toBe("followup");
+    const moved = r1.storyId!;
+    // телефон записал ответ на «А если вернуться к вопросу…» как уточнение к перенесённой истории
+    const rec = await repo.createStory({ family_id: "fam-1", storyteller_id: "st-1", session_id: s.sessionId, question_id: s.question.id, block: s.question.block, transcript: LONG() });
+    await repo.updateStory(rec.id, { parent_story_id: moved });
+
+    const r2 = await interview.submitAnswer(s.sessionId, { storyId: rec.id });
+    expect(r2.type).not.toBe("followup");
+    expect(r2.storyId).toBe(rec.id); // глава собирается из этой записи
+    const saved = repo.stories.get(rec.id)!;
+    expect(saved.parent_story_id).toBeNull();
+    expect(saved.question_id).toBe(s.question.id);
+    expect(repo.stories.get(moved)!.question_id).toBeNull();
+    expect((repo.sessions.get(s.sessionId)!.state as SessionState).answered_question_ids).toContain(s.question.id);
+  });
+
+  it("голосовой ответ на уточнение → в followups основной истории со story_id записи", async () => {
+    const { interview, repo } = setup();
+    const s = await start(interview);
+    const f = await interview.submitAnswer(s.sessionId, { text: "Да." });
+    expect(f.type).toBe("followup");
+    const rec = await repo.createStory({ family_id: "fam-1", storyteller_id: "st-1", session_id: s.sessionId, question_id: s.question.id, block: s.question.block, transcript: "В Уштобе, в сорок первом." });
+    await interview.submitAnswer(s.sessionId, { storyId: rec.id });
+    const main = repo.stories.get(f.storyId!)!;
+    expect(main.followups.filter((x) => x.story_id === rec.id)).toHaveLength(1);
+    expect(repo.stories.get(rec.id)!.parent_story_id).toBe(main.id);
+  });
+});
