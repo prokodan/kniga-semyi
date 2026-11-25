@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { QUESTIONS } from "@/content/questions/bank";
+import { DEMO_ENTITIES } from "@/fixtures/demo/family";
 import { DEMO_STORIES } from "@/lib/book/pdf/demo";
 import { createRouter } from "@/lib/ai/router";
 import { MemoryStore } from "@/lib/ai/store";
@@ -9,6 +10,7 @@ import {
   checkItem,
   chooseBackMode,
   isHapsyo,
+  nameSpellingFlags,
   parseGlossary,
   pickForHuman,
   renderKrReport,
@@ -191,3 +193,28 @@ describe("обратный перевод и итог", () => {
     expect(md).toContain("**Глава 2**");
   });
 });
+
+describe("#121: одно имя — одно написание (словарь семьи)", () => {
+  const names = [
+    { ru: "Лена", ko: "레나" },
+    { ru: "Анна Петровна", ko: "안나 페트로브나" },
+    { ru: "Уштобе", ko: "우슈토베" },
+  ];
+  it("имя есть в тексте (в любом падеже), а словарного написания в корейском нет — флажок", () => {
+    const f = nameSpellingFlags(chapter("Мы с Леной жили в Уштобе.", "나는 렌나와 우슈토베에서 살았다."), names);
+    expect(f.map((x) => [x.rule, x.ru])).toEqual([["name:spelling", "Лена"]]);
+    expect(f[0]!.issue).toContain("레나");
+  });
+  it("написание как в словаре, имени нет в тексте, многословное имя целиком — без флажков", () => {
+    expect(nameSpellingFlags(chapter("Мы с Леной жили в Уштобе.", "나는 레나와 우슈토베에서 살았다."), names)).toEqual([]);
+    expect(nameSpellingFlags(chapter("Мы жили в Караганде.", "우리는 카라간다에서 살았다."), names)).toEqual([]);
+    expect(nameSpellingFlags(chapter("Учила Анна Петровна.", "안나 페트로브나 선생님이 가르치셨다."), names)).toEqual([]);
+    expect(nameSpellingFlags(chapter("Учила Анна Петровна.", "안나 선생님이 가르치셨다."), names).map((x) => x.ru)).toEqual(["Анна Петровна"]);
+  });
+  it("демо-главы: словарь демо-семьи и тексты глав сходятся", () => {
+    const demo = DEMO_ENTITIES.filter((e) => e.kind !== "word").map((e) => ({ ru: e.name_ru, ko: e.name_ko }));
+    const flags = DEMO_STORIES.flatMap((s, i) => nameSpellingFlags(chapter(s.text_ru ?? "", s.text_ko ?? "", { id: `demo-${i + 1}` }), demo));
+    expect(flags).toEqual([]);
+  });
+});
+
