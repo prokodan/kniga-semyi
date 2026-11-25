@@ -36,7 +36,7 @@ export default async function KioskQueuePage() {
     <main className="mx-auto flex max-w-6xl flex-col gap-6 px-5 py-6 sm:px-8">
       <QueueAutoRefresh />
       <header className="flex flex-wrap items-center gap-3 sm:gap-4">
-        <div className="min-w-0 flex-1 basis-full sm:basis-60">
+        <div className="min-w-0 flex-1 basis-full lg:basis-60">
           <h1 className="font-serif text-4xl">Очередь дня</h1>
           <p className="text-muted">
             {today}

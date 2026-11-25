@@ -112,9 +112,12 @@ export function ArchiveShow({ slides, start }: { slides: Slide[]; start: number 
           →
         </button>
         <span className="min-w-12 flex-1 text-center text-muted">{total ? `${i + 1} из ${total}` : ""}</span>
-        <button type="button" onClick={fullscreen} className={`${ctl} hidden sm:inline-flex`}>
-          ⛶ Весь экран
-        </button>
+        {/* iPhone Safari не умеет «весь экран» для страницы — на телефоне кнопки нет */}
+        <span className="hidden sm:contents">
+          <button type="button" onClick={fullscreen} className={ctl}>
+            ⛶ Весь экран
+          </button>
+        </span>
         <Link href="/kiosk/archive" className={ctl}>
           ✕ Выйти
         </Link>

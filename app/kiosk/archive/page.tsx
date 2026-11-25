@@ -18,7 +18,7 @@ export default async function KioskArchivePage() {
   return (
     <main className="mx-auto flex max-w-6xl flex-col gap-6 px-5 py-6 sm:px-8">
       <header className="flex flex-wrap items-center gap-4">
-        <div className="min-w-0 flex-1 basis-60">
+        <div className="min-w-0 flex-1 basis-full lg:basis-60">
           <h1 className="font-serif text-4xl">Архив</h1>
           <p className="text-muted">
             <span lang="ko">구술 기록 보관소</span> · семьи, которые согласились передать записи в архив АКНЦ
