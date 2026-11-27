@@ -150,6 +150,13 @@ jobs:
         if: always()
         run: |
           if [ -f "$OUT/report.md" ]; then cat "$OUT/report.md" >> "$GITHUB_STEP_SUMMARY"; else echo "## 🔴 eval: отчёт не создан — см. лог" >> "$GITHUB_STEP_SUMMARY"; fi
+          # Отчёт и набор для носителей (#257) — ещё и в лог: его читает агент через REST API, артефакты ему недоступны.
+          # Только вымышленные тексты eval-персонажей; ключей и данных семей здесь нет.
+          if [ -f "$OUT/report.md" ]; then echo "::group::report.md"; cat "$OUT/report.md"; echo "::endgroup::"; fi
+          for f in "$OUT"/sets/*.json; do
+            [ -f "$f" ] || continue
+            echo "::group::review-set $(basename "$f")"; echo "=== REVIEW-SET-BEGIN"; cat "$f"; echo "=== REVIEW-SET-END"; echo "::endgroup::"
+          done
 
       - name: Комментарий в PR
         if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
