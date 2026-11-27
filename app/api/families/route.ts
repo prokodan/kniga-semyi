@@ -65,7 +65,7 @@ export async function POST(req: Request) {
     // анкеты нет (старая форма, скрипты, e2e без выбора) — умолчания базы, как сейчас
     if (flag("culture_packs") && (packs.length > 0 || form.has("spoken") || form.has("book"))) {
       try {
-        langs = parseStartChoices({ packs, spoken: get("spoken"), book: get("book") }, flag("lang_kk"));
+        langs = parseStartChoices({ packs, spoken: get("spoken"), book: get("book") }, flag("lang_kk"), flag("spoken_kk"));
       } catch (e) {
         if (e instanceof StartChoiceError) return ok({ error: "bad_request", message: e.message }, 400);
         throw e;

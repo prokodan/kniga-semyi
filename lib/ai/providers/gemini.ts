@@ -38,10 +38,16 @@ export function usesThinkingLevel(model: string): boolean {
 }
 
 /** Тело запроса к модели расшифровки: инструкция (с подсказками имён) и аудио в user, без config. Ответ — простой текст. */
-export function transcribeModelBody(input: { mimeType: string; audioBase64: string; hints?: string[] }) {
+export function transcribeModelBody(input: { mimeType: string; audioBase64: string; hints?: string[]; spokenLangs?: string[] }) {
   const vocab = (input.hints ?? []).slice(0, 60).join(", ");
+  // #300 (флаг spoken_kk): рассказ с казахским — казахские слова казахскими буквами; без spokenLangs — как раньше
+  const lang = input.spokenLangs?.includes("kk")
+    ? input.spokenLangs.includes("ru")
+      ? "Расшифруй запись дословно, на языке речи: русская речь — по-русски, казахские слова и фразы — казахской кириллицей (ә, і, ң, ғ, ү, ұ, қ, ө, һ), как сказаны, без перевода. "
+      : "Расшифруй запись дословно, на языке речи: казахская речь — казахской кириллицей (ә, і, ң, ғ, ү, ұ, қ, ө, һ), русские слова — по-русски, без перевода. "
+    : "Расшифруй запись дословно, на языке речи (обычно русский, иногда слова на корё мар — пиши их кириллицей так, как звучат). ";
   const instruction =
-    "Расшифруй запись дословно, на языке речи (обычно русский, иногда слова на корё мар — пиши их кириллицей так, как звучат). " +
+    lang +
     "Только текст расшифровки, без пояснений." +
     (vocab ? ` Имена, места и слова, которые могут прозвучать (пиши так): ${vocab}.` : "");
   return {
@@ -68,7 +74,14 @@ export const geminiProvider: AiProvider = {
     if (req.step === "transcribe") {
       const input = req.input as ProviderCall<"transcribe">["input"];
       parts.push({ inline_data: { mime_type: input.mimeType.split(";")[0]!.trim(), data: input.audioBase64 } });
-      parts.push({ text: JSON.stringify({ languageHint: input.languageHint, durationSec: input.durationSec, ...(input.hints?.length ? { hints: input.hints } : {}) }) });
+      parts.push({
+        text: JSON.stringify({
+          languageHint: input.languageHint,
+          durationSec: input.durationSec,
+          ...(input.hints?.length ? { hints: input.hints } : {}),
+          ...(input.spokenLangs ? { spokenLangs: input.spokenLangs } : {}), // #300: только рассказ с kk
+        }),
+      });
     } else {
       parts.push({ text: JSON.stringify(req.input) });
     }

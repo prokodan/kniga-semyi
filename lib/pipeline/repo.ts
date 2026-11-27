@@ -5,7 +5,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { nameHints } from "@/lib/interview/names";
 import { familyPacks } from "@/lib/interview/bank";
 import { loadNameHints } from "@/lib/interview/names-db";
-import type { BookLang, Family, FamilyEntity, Story } from "@/lib/types";
+import type { BookLang, Family, FamilyEntity, SpokenLang, Story } from "@/lib/types";
 import { loadStoryTexts, mirrorRows, withStoryTexts, type StoryTextRow } from "@/lib/book/texts";
 import { mergeEntities, rankEntities, type EntityDraft } from "./entities";
 import { effectiveBookLangs } from "./langs";
@@ -37,6 +37,11 @@ export interface PipelineRepo {
   interviewHold?(story: Story): Promise<boolean>;
   /** Имена и места для расшифровки и редактуры (пункт 5). Нет реализации — без подсказок. */
   nameHints?(story: Story): Promise<string[]>;
+  /**
+   * #300: язык рассказа рассказчика (storytellers.spoken_langs) — только если семье включён флаг spoken_kk.
+   * null / нет реализации — расшифровка как до #300 (ru + корё мар).
+   */
+  spokenLangs?(story: Story): Promise<SpokenLang[] | null>;
   /** #98: записи-уточнения этой истории (parent_story_id = id). Нет реализации — только то, что приклеило интервью. */
   children?(story: Story): Promise<Pick<Story, "id" | "transcript" | "status" | "created_at">[]>;
   /** #98: более ранние основные истории того же рассказчика (не пропущенные) — чтобы не повторять рассказ в двух главах. */
@@ -207,6 +212,12 @@ export class MemoryPipelineRepo implements PipelineRepo {
   /** #231: языки книги по семьям (тесты кладут сами); нет — ru, ko. Флаг lang_kk в памяти включён (как локально). */
   bookLangs = new Map<string, BookLang[]>();
   langKkOn = true;
+  /** #300: язык рассказа по рассказчикам (тесты кладут сами); нет — null. Флаг spoken_kk в памяти включён (как локально). */
+  spoken = new Map<string, SpokenLang[]>();
+  spokenKkOn = true;
+  async spokenLangs(story: Story) {
+    return this.spokenKkOn ? (this.spoken.get(story.storyteller_id) ?? null) : null;
+  }
   /** #233: пакеты семей (тесты кладут сами); нет — null (банк V0). */
   packs = new Map<string, string[] | null>();
   async culturePacks(story: Story) {
@@ -240,7 +251,20 @@ export class SupabasePipelineRepo implements PipelineRepo {
     private packsOn: (family: Pick<Family, "id" | "labs">) => boolean = () => false,
     /** #265: древо семьи после словаря (lib/tree и lib/flags — server-only, поэтому снаружи). Нет — не трогаем. */
     private tree: ((family: Pick<Family, "id" | "labs">) => Promise<void>) | null = null,
+    /** #300: включён ли флаг spoken_kk семье. Нет — выключен (расшифровка как раньше). */
+    private spokenKk: (family: Pick<Family, "id" | "labs">) => boolean = () => false,
   ) {}
+
+  async spokenLangs(story: Story) {
+    // "*": spoken_langs / labs — колонки миграций #230 / #223; ошибка / нет данных — как до #300
+    const [fam, st] = await Promise.all([
+      this.db.from("families").select("*").eq("id", story.family_id).maybeSingle(),
+      this.db.from("storytellers").select("*").eq("id", story.storyteller_id).maybeSingle(),
+    ]);
+    if (fam.error || !fam.data || !this.spokenKk(fam.data as Pick<Family, "id" | "labs">)) return null;
+    const langs = (st.data as { spoken_langs?: SpokenLang[] | null } | null)?.spoken_langs;
+    return langs?.length ? langs : null;
+  }
 
   async updateTree(story: Story) {
     if (!this.tree) return;

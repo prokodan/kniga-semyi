@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { getFamilyByToken } from "@/lib/db/access";
+import { familyBookLangs } from "@/lib/pipeline/book-langs";
 import { LinkNotFound } from "../../_ui/LinkNotFound";
 import { ConsentRecorder } from "./ConsentRecorder";
 import { consentText } from "./text";
@@ -21,7 +22,7 @@ export default async function ConsentPage({ params }: { params: Promise<{ token:
       <p className="text-ink-soft">
         Перед первым рассказом попросите {st.name} прочитать вслух или повторить за вами эти слова. Это займёт меньше минуты.
       </p>
-      <blockquote className="rounded-card border-l-4 border-seal bg-paper-deep p-5 text-elder text-ink">{consentText(st.name)}</blockquote>
+      <blockquote className="rounded-card border-l-4 border-seal bg-paper-deep p-5 text-elder text-ink">{consentText(st.name, familyBookLangs(view.family))}</blockquote>
       <ConsentRecorder token={token} storytellerId={st.id} already={Boolean(st.consent_at)} />
     </main>
   );

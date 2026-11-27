@@ -38,7 +38,7 @@ export interface StartPrefill {
 }
 
 /** #233: анкета «Кто ваша семья?» — только с флагом culture_packs (null — формы нет, семья получает умолчания). */
-export function StartForm({ prefill = {}, choices = null }: { prefill?: StartPrefill; choices?: { kkOn: boolean } | null }) {
+export function StartForm({ prefill = {}, choices = null }: { prefill?: StartPrefill; choices?: { kkOn: boolean; spokenKkOn?: boolean } | null }) {
   const router = useRouter();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -130,7 +130,7 @@ export function StartForm({ prefill = {}, choices = null }: { prefill?: StartPre
         {photoNote && <p className="text-sm text-warning">{photoNote}</p>}
       </fieldset>
 
-      {choices && <FamilyChoices kkOn={choices.kkOn} onPacks={setPacks} />}
+      {choices && <FamilyChoices kkOn={choices.kkOn} spokenKkOn={choices.spokenKkOn} onPacks={setPacks} />}
 
       <label className={label}>
         Когда хотите подарить книгу? <span className="text-sm text-muted">(можно пропустить)</span>
