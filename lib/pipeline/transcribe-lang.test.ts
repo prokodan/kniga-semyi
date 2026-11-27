@@ -108,7 +108,9 @@ describe("расшифровка по языку рассказа (#300, фла�
     const hints = ["Серік", ...KZ_HINTS_RU];
     const s = spokenInput(["ru", "kk"], hints)!;
     expect(s.reconcile).toEqual(hints);
-    for (const w of KZ_HINTS_RU_WORDS) expect(s.hints, w).not.toContain(w);
+    // «Наурыз», «жайлау» пишутся одинаково — остаются как казахское написание
+    for (const w of KZ_HINTS_RU_WORDS.filter((x) => !KZ_HINTS_KK.includes(x))) expect(s.hints, w).not.toContain(w);
+    expect(s.hints).toContain("Наурыз");
     expect(s.hints.slice(0, 2)).toEqual(["Серік", "Алматы"]);
     expect(s.hints).toContain("Уштобе");
     expect(s.hints).toContain("Үштөбе");
