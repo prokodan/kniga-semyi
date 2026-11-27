@@ -4,8 +4,10 @@ import "server-only";
 //   const chapter = await ai.run("edit", { transcript, storytellerName, questionText, block });
 // Ошибка AiUnavailableError → поставить историю в очередь / режим сцены (I2, I12).
 import { getDbOrNull } from "@/lib/db";
+import { env, isAiUsageSinkEnabled, supabaseRef, usageEnv } from "@/lib/env";
 import { withStageFallback } from "@/lib/stage";
 import { createRouter, type AiRouter } from "./router";
+import { SharedUsageStore } from "./shared-usage";
 import { MemoryStore, SupabaseStore, type AiStore } from "./store";
 
 let store: AiStore | null = null;
@@ -14,7 +16,15 @@ let router: AiRouter | null = null;
 export function getAiStore(): AiStore {
   if (!store) {
     const db = getDbOrNull();
-    store = db ? new SupabaseStore(db) : new MemoryStore();
+    store = db ? new SupabaseStore(db, usageEnv() === "staging" ? "staging" : undefined) : new MemoryStore();
+    // #211: превью (staging) шлёт расход в прод и берёт оттуда общий бюджет. Без AI_USAGE_SECRET — как раньше.
+    if (db && isAiUsageSinkEnabled()) {
+      store = new SharedUsageStore(store, {
+        prodUrl: env.productionUrl()!,
+        secret: env.aiUsageSecret()!,
+        sourceRef: supabaseRef(),
+      });
+    }
   }
   return store;
 }

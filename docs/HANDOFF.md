@@ -25,7 +25,7 @@
 | Пульт питча | `/admin` — ссылки демо, загрузка голосов демо, «Сбросить демо» | `ADMIN_PIN` |
 | Админка «Семьи» | `/admin/families` — все семьи: источник, главы, книга, цена, ссылки с токеном (#201) | `ADMIN_PIN` |
 | Админка ИИ | `/admin/ai` — расход, квоты, модели, переключатели | `ADMIN_PIN` |
-| Здоровье | `/api/health` — `ok`, режим ИИ, `stage_mode` | публично |
+| Здоровье | `/api/health` — `ok`, режим ИИ, `stage_mode`, `env` (production / preview), `supabase_ref`, `ai_usage_sink` | публично |
 
 Демо-семья (для питча, не менять руками): токен `988bd31df831624a489e08054fa9e318b0a220ea821983e7d711d685803c827d`,
 пересоздаётся Actions → seed-demo или «Сбросить демо» в `/admin`.
@@ -33,7 +33,28 @@
 ИИ: роутер `ai.run(step)`; порядок моделей в таблице `ai_routes` (подбирает Actions → ai-models):
 Gemini 3.5 Flash-Lite (бесплатно) → Gemini 3.6 Flash (бесплатно) → OpenAI `gpt-5.4-mini` (платный резерв, #105);
 картинки сказки — `gpt-image-2` / `gpt-image-1.5`, при недоступности — готовые акварели.
-Сборкой глав управляет сервер (не открытый экран); застрявшее раз в 10 минут перезапускает workflow kick-stuck.
+Сборкой глав управляет сервер (не открытый экран); застрявшее раз в 5 минут перезапускает Supabase pg_cron (#171).
+
+## 2.1 Окружения (#211)
+Один проект Vercel, две базы Supabase. **Тестируем на превью PR = staging, не на проде.**
+
+| | Прод | Превью (staging) |
+|---|---|---|
+| Сайт | https://kniga-semyi.vercel.app (`VERCEL_ENV=production`) | превью PR / ветки (`VERCEL_ENV=preview`) |
+| База Supabase | боевой проект | `kniga-semyi-staging` (Free; ping раз в день — workflow **staging-ping**) |
+| Supabase в Vercel | `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY` — **Production** | те же имена, значения staging — **Preview** |
+| Ключи ИИ | `GEMINI_API_KEY`, `OPENAI_API_KEY` — одни на оба (Production + Preview) | те же |
+| Расход ИИ | считает всё (prod + staging) — бюджеты общие | пишет у себя + шлёт в прод `POST /api/ai/usage`; бюджет — из `GET /api/ai/usage/summary` прода (кэш 60 с) |
+| Общий секрет | `AI_USAGE_SECRET` — Production + Preview, одно значение; нет секрета → отправка выключена | |
+| `PROD_URL` | боевой адрес (Production + Preview: превью шлёт туда расход) | ссылки и QR на превью — от `VERCEL_BRANCH_URL` / `VERCEL_URL`, не от `PROD_URL` |
+| pg_cron (kick, digest) | есть | не нужен: главы дособирает `after()` и открытие `/f`; без Vault-секретов задания молчат |
+| GitHub Secrets | `SUPABASE_DB_URL`, `NEXT_PUBLIC_SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY` | `STAGING_SUPABASE_DB_URL`, `STAGING_SUPABASE_URL`, `STAGING_SUPABASE_SERVICE_ROLE_KEY`, по желанию `STAGING_URL` (адрес превью для smoke / книги) |
+
+- Workflows **migrate** (при слиянии — в обе базы), **seed-demo**, **smoke**, **diag** — вход `target: prod | staging`.
+- Пересеять staging: Actions → **seed-demo** → target `staging` (без ИИ; книгу PDF соберёт сайт из `STAGING_URL`, только если
+  его `/api/health` показывает ref staging, иначе — кнопка «Сбросить демо» в `/admin` превью). Демо прода это не трогает.
+- Проверить, куда смотрит сайт: `/api/health` → `env` и `supabase_ref` (первые 6 символов ref проекта, не ключ).
+- `/admin/ai` прода — расход по окружениям и общий итог; `/admin/ai` превью видит только базу staging.
 
 ## 3. Как работаем (обязательно для каждого агента)
 1. **Одна задача = один новый чат агента = одна ветка = PR.** Задачи — GitHub Issues. Длинные чаты сжигают лимиты.

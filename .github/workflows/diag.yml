@@ -6,6 +6,11 @@ name: diag
 on:
   workflow_dispatch:
     inputs:
+      target:
+        description: "#211: какая база — prod или staging (база превью)"
+        type: choice
+        options: [prod, staging]
+        default: prod
       limit:
         description: "Сколько последних историй показать"
         default: "30"
@@ -21,11 +26,20 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     env:
-      NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
-      SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+      TARGET: ${{ inputs.target || 'prod' }}
+      PROD_SB_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
+      PROD_SB_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+      STG_SB_URL: ${{ secrets.STAGING_SUPABASE_URL }}
+      STG_SB_KEY: ${{ secrets.STAGING_SUPABASE_SERVICE_ROLE_KEY }}
       DIAG_LIMIT: ${{ inputs.limit || '30' }}
     steps:
       - uses: actions/checkout@v7
+      - name: Выбор базы
+        run: |
+          if [ "$TARGET" = "staging" ]; then url="$STG_SB_URL"; key="$STG_SB_KEY"; else url="$PROD_SB_URL"; key="$PROD_SB_KEY"; fi
+          if [ -z "$url" ] || [ -z "$key" ]; then echo "::error::Нет секретов Supabase для $TARGET"; exit 1; fi
+          { echo "NEXT_PUBLIC_SUPABASE_URL=$url"; echo "SUPABASE_SERVICE_ROLE_KEY=$key"; } >> "$GITHUB_ENV"
+          echo "### diag: база $TARGET" >> "$GITHUB_STEP_SUMMARY"
       - uses: actions/setup-node@v7
         with:
           node-version: 22

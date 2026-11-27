@@ -39,13 +39,68 @@ export const env = {
   kioskPin: () => read("KIOSK_PIN"),
   telegramBotToken: () => read("TELEGRAM_BOT_TOKEN"),
   telegramChatId: () => read("TELEGRAM_CHAT_ID"),
-  prodUrl: () => read("PROD_URL"),
+  /**
+   * Публичный адрес ЭТОГО сайта для абсолютных ссылок (QR в книге, /listen, ссылки в /admin и киоске).
+   * #211: на превью (VERCEL_ENV=preview) — адрес превью (VERCEL_BRANCH_URL, иначе VERCEL_URL), а не боевой
+   * PROD_URL: иначе QR книги, собранной на превью, вёл бы на прод, где такой главы нет. На проде и локально — PROD_URL.
+   */
+  prodUrl: (): string | undefined => {
+    if (getVercelEnv() === "preview") {
+      const host = read("VERCEL_BRANCH_URL") ?? read("VERCEL_URL");
+      if (host) return host.startsWith("http") ? host : `https://${host}`;
+    }
+    return read("PROD_URL");
+  },
+  /** Боевой адрес (PROD_URL) как есть — куда превью шлёт расход ИИ (#211). */
+  productionUrl: () => read("PROD_URL")?.replace(/\/+$/, ""),
+  /** #211: production | preview | development (VERCEL_ENV; локально и в CI — development). */
+  vercelEnv: getVercelEnv,
+  /**
+   * #211: общий секрет «превью → прод» для расхода ИИ (POST /api/ai/usage, GET /api/ai/usage/summary).
+   * Нет секрета → отправка расхода выключена, прод работает как до #211.
+   */
+  aiUsageSecret: () => read("AI_USAGE_SECRET"),
+  /** Короткий ref проекта Supabase (первые 6 символов поддомена) — для /api/health, не ключ. */
+  supabaseRefShort: () => supabaseRef()?.slice(0, 6),
   /** Секрет подписи QR-ссылок /listen (I3). Необязателен: по умолчанию выводится из service-ключа. */
   listenSecret: () => read("LISTEN_SECRET"),
   /** #171: секрет таймера Supabase pg_cron → /api/cron/kick (заголовок Authorization: Bearer …). Пусто = ручка закрыта. */
   cronSecret: () => read("CRON_SECRET"),
   aiMode: getAiMode,
 };
+
+export type VercelEnv = "production" | "preview" | "development";
+
+export function getVercelEnv(): VercelEnv {
+  const v = read("VERCEL_ENV")?.toLowerCase();
+  return v === "production" || v === "preview" ? v : "development";
+}
+
+/** Ref проекта Supabase — поддомен https://<ref>.supabase.co (для локального Supabase — «local»). */
+export function supabaseRef(): string | undefined {
+  const url = read("NEXT_PUBLIC_SUPABASE_URL");
+  if (!url) return undefined;
+  try {
+    const host = new URL(url).hostname;
+    const m = /^([a-z0-9]+)\.supabase\.(co|in)$/i.exec(host);
+    return m?.[1] ? m[1].toLowerCase() : "local";
+  } catch {
+    return undefined;
+  }
+}
+
+/** Окружение для ai_usage.env: превью пишет «staging», всё остальное — «prod». */
+export function usageEnv(): "prod" | "staging" {
+  return getVercelEnv() === "preview" ? "staging" : "prod";
+}
+
+/**
+ * #211: превью отправляет расход ИИ в прод, только если это превью и заданы AI_USAGE_SECRET и PROD_URL.
+ * На проде и локально — всегда false (прод сам себе источник правды).
+ */
+export function isAiUsageSinkEnabled(): boolean {
+  return getVercelEnv() === "preview" && Boolean(read("AI_USAGE_SECRET") && read("PROD_URL"));
+}
 
 export function isSupabaseConfigured(): boolean {
   return Boolean(env.supabaseUrl() && env.supabaseServiceRoleKey());

@@ -7,6 +7,8 @@ const TZ_LABEL: Record<string, string> = {
   UTC: "по UTC",
 };
 
+const ENV_LABEL: Record<string, string> = { prod: "Прод", staging: "Превью (staging)" };
+
 export function SpendSection({ s }: { s: AdminSummary }) {
   return (
     <Section
@@ -19,6 +21,20 @@ export function SpendSection({ s }: { s: AdminSummary }) {
         <Stat label="Месяц" value={fmtUsd(s.totals.month)} />
         <Stat label="Прогноз месяца" value={fmtUsd(s.totals.forecastMonth)} />
       </div>
+      {/* #211: превью (staging) шлёт свой расход сюда — бюджеты ниже общие для обоих окружений */}
+      <Card>
+        <p className="font-medium">По окружениям</p>
+        {(s.byEnv ?? []).map((e) => (
+          <div key={e.env} className="mt-1 flex justify-between text-sm">
+            <span>
+              {ENV_LABEL[e.env] ?? e.env}: сегодня <b className="tabular-nums">{fmtUsd(e.today)}</b> · месяц{" "}
+              <b className="tabular-nums">{fmtUsd(e.month)}</b>
+            </span>
+            <span className="text-muted tabular-nums">{e.callsMonth} выз.</span>
+          </div>
+        ))}
+        <p className="mt-1 text-sm text-muted">Итог и бюджеты — по обоим окружениям: ключи ИИ одни.</p>
+      </Card>
       {s.spend.map((p) => (
         <Card key={p.provider}>
           <div className="flex flex-wrap items-center justify-between gap-2">

@@ -2,11 +2,18 @@ name: smoke
 
 # Ежедневная проверка прода: /api/health, таблицы и хранилища Supabase.
 # 02:23 UTC = 07:23 Алматы. Также запускается вручную (и утром 27.11 перед питчем).
+# #211: target=staging — база превью (STAGING_SUPABASE_URL / STAGING_SUPABASE_SERVICE_ROLE_KEY) и, если задан секрет
+# STAGING_URL (адрес превью), его /api/health: env=preview и ref базы = staging. Расписание — только прод.
 on:
   schedule:
     - cron: "23 2 * * *"
   workflow_dispatch:
     inputs:
+      target:
+        description: "Что проверить: prod — боевой сайт и база, staging — база превью (+ STAGING_URL, если задан)"
+        type: choice
+        options: [prod, staging]
+        default: prod
       stage:
         description: "Режим сцены на проде: on — утро 27.11 (STAGE_MODE=1), off — после питча, any — не проверять"
         type: choice
@@ -21,15 +28,20 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     env:
+      TARGET: ${{ inputs.target || 'prod' }}
       PROD_URL: ${{ secrets.PROD_URL }}
-      SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
-      SUPABASE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+      PROD_SB_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
+      PROD_SB_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+      STG_SB_URL: ${{ secrets.STAGING_SUPABASE_URL }}
+      STG_SB_KEY: ${{ secrets.STAGING_SUPABASE_SERVICE_ROLE_KEY }}
+      STAGING_URL: ${{ secrets.STAGING_URL }}
       EXPECT_STAGE: ${{ inputs.stage || 'any' }}
     steps:
       - uses: actions/checkout@v7
 
       - name: Прод /api/health
         id: health
+        if: env.TARGET == 'prod'
         run: |
           # В $GITHUB_OUTPUT пишем только однострочные key=value (переводы строк вырезаем).
           out() { printf '%s=%s\n' "$1" "$(printf '%s' "$2" | tr '\r\n' '  ')" >> "$GITHUB_OUTPUT"; }
@@ -106,10 +118,47 @@ jobs:
           fi
           echo "✓ $summary"
 
+      - name: Staging — /api/health превью
+        id: shealth
+        if: env.TARGET == 'staging'
+        run: |
+          out() { printf '%s=%s\n' "$1" "$(printf '%s' "$2" | tr '\r\n' '  ')" >> "$GITHUB_OUTPUT"; }
+          ref=$(printf '%s' "$STG_SB_URL" | sed -E 's#^https?://([a-z0-9]+)\..*#\1#' | cut -c1-6)
+          if [ -z "$STAGING_URL" ]; then
+            echo "::notice::STAGING_URL не задан — проверяю только базу staging (адрес превью меняется по веткам)"
+            out summary "staging: база ${ref:-?}, сайт не проверялся (нет STAGING_URL)"
+            exit 0
+          fi
+          code=$(curl -sS --max-time 20 -o health.json -w '%{http_code}' "${STAGING_URL%/}/api/health" || true)
+          echo "HTTP $code"; jq . health.json 2>/dev/null || true
+          if ! jq -e 'type == "object"' health.json > /dev/null 2>&1; then
+            out summary "staging: $STAGING_URL — HTTP $code, не JSON (защита превью Vercel?)"
+            echo "::error::/api/health превью: HTTP $code и не JSON. Если 401 — Vercel → Settings → Deployment Protection."
+            exit 1
+          fi
+          status=$(jq -r '.status // "?"' health.json); db=$(jq -r '.db // "?"' health.json)
+          envname=$(jq -r '.env // "?"' health.json); have=$(jq -r '.supabase_ref // "?"' health.json)
+          sink=$(jq -r '.ai_usage_sink // "?"' health.json)
+          summary="staging: $status, база: $db ($have), env: $envname, расход ИИ → прод: $sink"
+          out summary "$summary"
+          if [ "$code" != "200" ] || [ "$status" != "ok" ] || [ "$db" != "ok" ]; then
+            echo "::error::Превью не здорово: HTTP $code, status=$status, db=$db"; exit 1
+          fi
+          [ "$envname" = "preview" ] || echo "::warning::STAGING_URL отвечает env=$envname, ждали preview"
+          if [ -n "$ref" ] && [ "$have" != "$ref" ]; then
+            echo "::warning::Превью смотрит в базу «$have», а staging — «$ref»: Preview-переменные Supabase в Vercel ещё не переключены"
+          fi
+          [ "$sink" = "ok" ] || echo "::notice::ai_usage_sink=off: на превью нет AI_USAGE_SECRET / PROD_URL — расход ИИ не уходит в прод"
+          echo "✓ $summary"
+
       - name: Supabase — таблицы и хранилища
         id: db
         run: |
+          if [ "$TARGET" = "staging" ]; then SUPABASE_URL="$STG_SB_URL"; SUPABASE_KEY="$STG_SB_KEY"; else SUPABASE_URL="$PROD_SB_URL"; SUPABASE_KEY="$PROD_SB_KEY"; fi
           if [ -z "$SUPABASE_URL" ] || [ -z "$SUPABASE_KEY" ]; then
+            if [ "$TARGET" = "staging" ]; then
+              echo "::error::Нужны секреты STAGING_SUPABASE_URL и STAGING_SUPABASE_SERVICE_ROLE_KEY"; exit 1
+            fi
             echo "::warning::Секреты Supabase не заданы — проверка базы пропущена"
             exit 0
           fi
@@ -125,9 +174,10 @@ jobs:
           echo "ai_routes: $routes"; [ "$routes" -ge 8 ]
 
       # Событие в бота (I16) с учётом настроек 🔔; не ответил 200 — шлём напрямую, как раньше.
+      # Бот знает только smoke прода — staging сообщаем напрямую в Telegram (ниже)
       - name: Бот — smoke
         id: bot
-        if: always()
+        if: always() && env.TARGET == 'prod'
         env:
           NOTIFY_URL: ${{ secrets.PROD_URL }}
           NOTIFY_SECRET: ${{ secrets.BOT_NOTIFY_SECRET }}
@@ -152,11 +202,11 @@ jobs:
         with:
           token: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           chat_id: ${{ secrets.TELEGRAM_CHAT_ID }}
-          text: "🟢 Smoke прода ок — ${{ steps.health.outputs.summary }}"
+          text: "🟢 Smoke ${{ env.TARGET == 'staging' && 'staging' || 'прода' }} ок — ${{ steps.health.outputs.summary }}${{ steps.shealth.outputs.summary }}"
       - name: Telegram — smoke упал
         if: failure() && steps.bot.outputs.sent != 'true'
         uses: ./.github/actions/telegram
         with:
           token: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           chat_id: ${{ secrets.TELEGRAM_CHAT_ID }}
-          text: "🔴 Smoke прода упал — ${{ steps.health.outputs.summary }}: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          text: "🔴 Smoke ${{ env.TARGET == 'staging' && 'staging' || 'прода' }} упал — ${{ steps.health.outputs.summary }}${{ steps.shealth.outputs.summary }}: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
