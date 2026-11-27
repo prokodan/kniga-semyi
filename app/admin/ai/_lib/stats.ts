@@ -4,7 +4,10 @@
 //   бюджет $      — сумма cost_usd с начала суток / месяца UTC;
 //   остывание     — был rate_limited / timeout за последние cooldown_minutes.
 // Модели и лимиты берутся только из маршрутов (ai_routes), ID моделей здесь не зашиты.
+// #218: как и роутер, прод считает расход / квоты / кэш / остывание только по своим строкам (без env='staging');
+//   строки превью видны отдельной строкой «По окружениям» — для информации. У превью — своя база, считается всё.
 import { DEFAULT_THRESHOLD, QUOTA_TIMEZONE, type ProviderSettings } from "@/lib/ai/config";
+import { isOwnUsage } from "@/lib/ai/store";
 import type { AiProviderName } from "@/lib/ai/types";
 import { startOfDayInTz, startOfUtcMonth } from "@/lib/ai/util";
 import type { RouteView } from "./routes";
@@ -84,8 +87,10 @@ export interface AdminSummary {
   now: string;
   spend: SpendRow[];
   totals: { today: number; month: number; forecastMonth: number };
-  /** #211: расход по окружениям (prod — сам прод, staging — строки, присланные превью). Бюджеты общие. */
+  /** #211: расход по окружениям (prod — сам прод, staging — строки, присланные превью). #218: только для информации. */
   byEnv: EnvSpend[];
+  /** #218: чьи бюджеты и итог показаны — prod (без строк превью) или staging (своя база превью) */
+  scope: "prod" | "staging";
   quotas: QuotaRow[];
   /** Модели из маршрутов без суточной квоты (обычно платные) */
   unlimited: { provider: string; model: string; callsToday: number; steps: string[] }[];
@@ -133,8 +138,13 @@ export function summarize(args: {
   providers: ProviderSettings[];
   errors?: UsageError[];
   now: Date;
+  /** #218: окружение сайта (usageEnv()); по умолчанию prod — строки staging в бюджет и квоты не входят */
+  scope?: "prod" | "staging";
 }): AdminSummary {
-  const { rows, routes, providers, now } = args;
+  const { routes, providers, now } = args;
+  const scope = args.scope ?? "prod";
+  const allRows = args.rows;
+  const rows = allRows.filter((r) => isOwnUsage(r.env, scope));
   const t = now.getTime();
   const dayUtc = startOfDayInTz("UTC", now).getTime();
   const monthUtc = startOfUtcMonth(now).getTime();
@@ -258,9 +268,9 @@ export function summarize(args: {
   // ---------- По окружениям (#211) ----------
   const envOf = (r: UsageLite) => (r.env && r.env.trim() ? r.env : "prod");
   const envNames = new Set<string>(["prod", "staging"]);
-  for (const r of rows) envNames.add(envOf(r));
+  for (const r of allRows) envNames.add(envOf(r));
   const byEnv: EnvSpend[] = [...envNames].map((name) => {
-    const mine = rows.filter((r) => r.provider !== "cache" && envOf(r) === name && at(r) >= monthUtc && at(r) <= t);
+    const mine = allRows.filter((r) => r.provider !== "cache" && envOf(r) === name && at(r) >= monthUtc && at(r) <= t);
     const today = mine.filter((r) => at(r) >= dayUtc);
     const sum = (list: UsageLite[]) => round(list.reduce((acc, r) => acc + num(r.cost_usd), 0));
     const called = (list: UsageLite[]) => list.filter((r) => QUOTA_STATUSES.has(r.status)).length;
@@ -271,6 +281,7 @@ export function summarize(args: {
     now: now.toISOString(),
     spend,
     byEnv,
+    scope,
     totals: {
       today: round(spend.reduce((s, r) => s + r.today, 0)),
       month: round(spend.reduce((s, r) => s + r.month, 0)),

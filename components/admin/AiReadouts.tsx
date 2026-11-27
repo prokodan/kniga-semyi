@@ -22,7 +22,7 @@ export function SpendSection({ s }: { s: AdminSummary }) {
         <Stat label="Месяц" value={fmtUsd(s.totals.month)} />
         <Stat label="Прогноз месяца" value={fmtUsd(s.totals.forecastMonth)} />
       </div>
-      {/* #211: превью (staging) шлёт свой расход сюда — бюджеты ниже общие для обоих окружений */}
+      {/* #211 / #218: превью (staging) шлёт свой расход сюда — только для информации; у превью свои ключи и бюджет */}
       <Card>
         <p className="font-medium">По окружениям</p>
         {(s.byEnv ?? []).map((e) => (
@@ -34,7 +34,11 @@ export function SpendSection({ s }: { s: AdminSummary }) {
             <span className="text-muted tabular-nums">{e.callsMonth} выз.</span>
           </div>
         ))}
-        <p className="mt-1 text-sm text-muted">Итог и бюджеты — по обоим окружениям: ключи ИИ одни.</p>
+        <p className="mt-1 text-sm text-muted">
+          {s.scope === "staging"
+            ? "Итог и бюджеты — по базе превью: у превью свои ключи ИИ и свой бюджет."
+            : "Итог, бюджеты, квоты и остывание — только прод. Превью — для информации: у него свои ключи ИИ и свой бюджет."}
+        </p>
       </Card>
       {s.spend.map((p) => (
         <Card key={p.provider}>

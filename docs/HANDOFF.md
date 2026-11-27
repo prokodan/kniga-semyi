@@ -44,9 +44,10 @@ Gemini 3.5 Flash-Lite → Gemini 3.6 Flash (с 25.11 платный уровен
 | Сайт | https://kniga-semyi.vercel.app (`VERCEL_ENV=production`) | превью PR / ветки (`VERCEL_ENV=preview`) |
 | База Supabase | боевой проект | `kniga-semyi-staging` (Free; ping раз в день — workflow **staging-ping**) |
 | Supabase в Vercel | `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY` — **Production** | те же имена, значения staging — **Preview** |
-| Ключи ИИ | `GEMINI_API_KEY`, `OPENAI_API_KEY` — одни на оба (Production + Preview) | те же |
-| Расход ИИ | считает всё (prod + staging) — бюджеты общие | пишет у себя + шлёт в прод `POST /api/ai/usage`; бюджет — из `GET /api/ai/usage/summary` прода (кэш 60 с) |
-| Общий секрет | `AI_USAGE_SECRET` — Production + Preview, одно значение; нет секрета → отправка выключена | |
+| Ключи ИИ | `GEMINI_API_KEY`, `OPENAI_API_KEY` — **Production** | **свои** (#237): те же имена — **Preview** (отдельный проект Google, отдельный ключ OpenAI) |
+| Расход ИИ (#218) | квоты, «остывание», бюджет — **только прод** (`env <> 'staging'`); строки превью — только для отчёта `/admin/ai` | всё по своей базе staging (свой бюджет); каждую строку ещё шлёт в прод `POST /api/ai/usage` — для отчёта |
+| Настройки ИИ (#222) | `ai_routes`, `ai_providers` — эталон (админка / ai-models) | = прод: копирует `scripts/ai-config-sync.mjs` при **seed-demo** target=staging и в **staging-sync**; бюджеты свои (вход `ai_budgets` / переменная `STAGING_AI_BUDGETS`, иначе не трогаем); ai-models в staging не запускать |
+| Общий секрет | `AI_USAGE_SECRET` — Production + Preview, одно значение; нет секрета → отправка в отчёт прода выключена | |
 | `PROD_URL` | боевой адрес (Production + Preview: превью шлёт туда расход) | ссылки и QR на превью — от `VERCEL_BRANCH_URL` / `VERCEL_URL`, не от `PROD_URL` |
 | pg_cron (kick, digest) | есть | не нужен: главы дособирает `after()` и открытие `/f`; без Vault-секретов задания молчат |
 | GitHub Secrets | `SUPABASE_DB_URL`, `NEXT_PUBLIC_SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY` | `STAGING_SUPABASE_DB_URL`, `STAGING_SUPABASE_URL`, `STAGING_SUPABASE_SERVICE_ROLE_KEY`, `STAGING_URL` (постоянное превью ветки `staging`) |
@@ -58,7 +59,10 @@ Gemini 3.5 Flash-Lite → Gemini 3.6 Flash (с 25.11 платный уровен
 - Пересеять staging: Actions → **seed-demo** → target `staging` (без ИИ; книгу PDF соберёт сайт из `STAGING_URL`, только если
   его `/api/health` показывает ref staging, иначе — кнопка «Сбросить демо» в `/admin` превью). Демо прода это не трогает.
 - Проверить, куда смотрит сайт: `/api/health` → `env` и `supabase_ref` (первые 6 символов ref проекта, не ключ).
-- `/admin/ai` прода — расход по окружениям и общий итог; `/admin/ai` превью видит только базу staging.
+  На превью `ai_routes_match_prod`: `true` — маршруты ИИ = прод, `false` — разошлись (Actions → seed-demo target=staging
+  или staging-sync), `null` — прод не ответил. Сам отпечаток — `ai_routes_hash` (маршруты + провайдеры без бюджетов).
+- `/admin/ai` прода — итог, бюджеты, квоты, остывание только прода; превью — отдельной строкой «По окружениям» (для
+  информации). `/admin/ai` превью видит только базу staging и её бюджеты.
 
 ## 3. Как работаем (обязательно для каждого агента)
 
