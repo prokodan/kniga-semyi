@@ -19,6 +19,20 @@ export class GithubError extends Error {
   }
 }
 
+export type GhRun = {
+  id: number;
+  name: string;
+  path?: string;
+  event: string;
+  status: string;
+  conclusion: string | null;
+  html_url: string;
+  created_at: string;
+};
+
+/** Последнее превью Vercel (GitHub Deployments): адрес и коммит. */
+export type Preview = { url: string; ref: string; sha: string; created_at: string };
+
 export type Milestone = { number: number; title: string; open_issues: number; closed_issues: number; html_url: string };
 
 export interface GithubApi {
@@ -32,6 +46,12 @@ export interface GithubApi {
   addLabel(issue: number, label: string): Promise<void>;
   removeLabel(issue: number, label: string): Promise<void>;
   dispatch(workflow: string, inputs?: Record<string, string>): Promise<void>;
+  /** Запуски workflows на main с момента since (ISO). */
+  listMainRuns(since: string): Promise<GhRun[]>;
+  /** Последнее успешное превью (environment «Preview…» в GitHub Deployments) или null. */
+  latestPreview(): Promise<Preview | null>;
+  /** Текст файла из main (для HANDOFF §7) или null. */
+  readFile(path: string): Promise<string | null>;
 }
 
 const TTL_MS = 60_000;
@@ -132,6 +152,31 @@ export function createGithub(opts: {
     },
     async dispatch(workflow, inputs) {
       await call("POST", `/actions/workflows/${workflow}/dispatches`, { ref: "main", ...(inputs ? { inputs } : {}) });
+    },
+    async listMainRuns(since) {
+      const day = since.slice(0, 10);
+      const res = await cachedGet<{ workflow_runs: GhRun[] }>(`/actions/runs?branch=main&per_page=100&created=%3E%3D${day}`);
+      return res.workflow_runs.filter((r) => r.created_at >= since);
+    },
+    async latestPreview() {
+      type Dep = { id: number; ref: string; sha: string; environment: string; created_at: string };
+      type St = { state: string; environment_url?: string; target_url?: string };
+      const deps = await cachedGet<Dep[]>("/deployments?per_page=20");
+      for (const d of deps.filter((x) => /^preview/i.test(x.environment))) {
+        const st = await cachedGet<St[]>(`/deployments/${d.id}/statuses?per_page=5`);
+        const ok = st.find((x) => x.state === "success" && (x.environment_url || x.target_url));
+        const url = ok?.environment_url || ok?.target_url;
+        if (url && /^https:\/\//.test(url)) return { url: url.replace(/\/+$/, ""), ref: d.ref, sha: d.sha, created_at: d.created_at };
+      }
+      return null;
+    },
+    async readFile(path) {
+      try {
+        const res = await cachedGet<{ content?: string; encoding?: string }>(`/contents/${path}?ref=main`);
+        return res.content && res.encoding === "base64" ? Buffer.from(res.content, "base64").toString("utf8") : null;
+      } catch {
+        return null;
+      }
     },
   };
 }

@@ -3,6 +3,7 @@ import { getDbOrNull } from "@/lib/db";
 import { getBotConfig } from "./config";
 import { createGithub } from "./github";
 import { createBot } from "./handler";
+import { createOps } from "./ops";
 import { MemoryBotStore, SupabaseBotStore, type BotStore } from "./store";
 import { createTelegram } from "./telegram";
 import type { HealthResult } from "./texts";
@@ -17,10 +18,10 @@ function getStore(): BotStore {
   return memory;
 }
 
-async function fetchHealth(prodUrl: string | undefined): Promise<HealthResult | null> {
-  if (!prodUrl) return null;
+async function fetchHealth(baseUrl: string | undefined, timeoutMs = 10_000): Promise<HealthResult | null> {
+  if (!baseUrl) return null;
   try {
-    const res = await fetch(`${prodUrl}/api/health`, { cache: "no-store", signal: AbortSignal.timeout(10_000) });
+    const res = await fetch(`${baseUrl}/api/health`, { cache: "no-store", signal: AbortSignal.timeout(timeoutMs) });
     let json: Record<string, unknown> | null = null;
     try {
       json = (await res.json()) as Record<string, unknown>;
@@ -42,6 +43,8 @@ export function getBot() {
       gh: createGithub({ repo: cfg.repo, token: cfg.githubToken }),
       store: getStore(),
       fetchHealth: () => fetchHealth(cfg.prodUrl),
+      fetchUrlHealth: (url) => fetchHealth(url, 5_000),
+      ops: createOps(getDbOrNull()),
     }),
   };
 }

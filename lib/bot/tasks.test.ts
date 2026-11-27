@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildProgress, buildQueue, buildTasks, closedByPull, fileAreas, findTask, parseDeps, parseFiles, progressBar, type GhIssue, type GhPull } from "./tasks";
+import { buildOverview, buildProgress, buildQueue, buildTasks, closedByPull, fileAreas, findTask, parseDeps, parseFiles, progressBar, type GhIssue, type GhPull } from "./tasks";
 
 function issue(n: number, title: string, opts: Partial<GhIssue> & { deps?: string; zone?: string; files?: string[] } = {}): GhIssue {
   const body = [
@@ -83,17 +83,59 @@ describe("очередь", () => {
     expect(q.blocked.map((t) => t.code).sort()).toEqual(["I5", "I9"]);
   });
 
-  it("группы — по одной задаче на зону, критический путь первым", () => {
+  it("группы — по одной задаче на зону, критический путь первым, дальше свежие (#212)", () => {
     const more = [...issues, issue(13, "[I8] сказка", { zone: "Z4" })];
     const q = buildQueue(buildTasks(more));
     for (const g of q.groups) expect(new Set(g.map((t) => t.zone)).size).toBe(g.length);
-    expect(q.groups[0]!.map((t) => t.code)).toEqual(["I6", "I4", "I7"]);
-    expect(q.groups[1]!.map((t) => t.code)).toEqual(["I8"]);
+    expect(q.groups[0]!.map((t) => t.code)).toEqual(["I6", "I8", "I4"]);
+    expect(q.groups[1]!.map((t) => t.code)).toEqual(["I7"]);
+  });
+
+  it("задачи людей и вопросы в очередь не попадают (#212)", () => {
+    const q = buildQueue(
+      buildTasks([
+        issue(208, "[Z5] Согласие на показ", { zone: "Z5", labels: [{ name: "question" }, { name: "owner:human" }] }),
+        issue(212, "[Z6] Telegram-бот", { zone: "Z6", labels: [{ name: "owner:claude" }] }),
+      ]),
+    );
+    expect(q.ready.map((t) => t.number)).toEqual([212]);
   });
 
   it("неизвестная зависимость (W0) считается выполненной", () => {
     const [t] = buildTasks([issue(12, "[I7] оплата", { deps: "W0" })]);
     expect(t!.status).toBe("todo");
+  });
+});
+
+describe("заголовки [Z6] (#212)", () => {
+  it("[Z6] — зона, а не код задачи; пометки не попадают в название", () => {
+    const [a, b] = buildTasks([issue(212, "[Z6] Telegram-бот: ссылки"), issue(150, "[Z1/Z5] Отложенное уточнение")]);
+    expect(a).toMatchObject({ code: null, name: "Telegram-бот: ссылки" });
+    expect(b).toMatchObject({ code: null, name: "Отложенное уточнение" });
+    expect(findTask([a!, b!], "#212")?.number).toBe(212);
+  });
+});
+
+describe("обзор по открытым issues (#212)", () => {
+  it("зоны, в работе, дела людей, без срока, закрыто за неделю, возраст PR", () => {
+    const now = new Date("2026-11-27T05:00:00Z");
+    const o = buildOverview(
+      [
+        issue(1, "[Z6] a", { labels: [{ name: "zone:Z6" }, { name: "in-progress" }], milestone: null }),
+        issue(2, "[Z1/Z5] b", { labels: [{ name: "zone:Z1" }, { name: "zone:Z5" }, { name: "owner:human" }] }),
+        issue(3, "c", { state: "closed", closed_at: "2026-11-25T00:00:00Z" }),
+        issue(4, "d", { state: "closed", closed_at: "2026-11-01T00:00:00Z" }),
+      ],
+      [{ number: 7, title: "PR", body: null, state: "open", html_url: "p7", user: null, merged_at: null, created_at: "2026-11-26T05:00:00Z" }],
+      now,
+    );
+    expect(o.open).toBe(2);
+    expect(o.byZone).toEqual([{ zone: "Z1", count: 1 }, { zone: "Z5", count: 1 }, { zone: "Z6", count: 1 }]);
+    expect(o.inProgress.map((t) => t.number)).toEqual([1]);
+    expect(o.human.map((t) => t.number)).toEqual([2]);
+    expect(o.later).toBe(1);
+    expect(o.closedWeek).toBe(1);
+    expect(o.openPulls[0]!.hours).toBe(24);
   });
 });
 
