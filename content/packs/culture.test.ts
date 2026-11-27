@@ -34,7 +34,7 @@ describe("general: тексты kk (#233)", () => {
   it("разрешение не отвечать на трудных вопросах костяка есть и в kk", () => {
     for (const id of ["hardship-02", "hardship-03", "hardship-04"]) {
       const kk = GENERAL_QUESTIONS.find((q) => q.id === id)!.text.kk!;
-      expect(kk, id).toMatch(/жауап бермеуге|өткізіп жіберуге|бөліскіңіз келгенін ғана/);
+      expect(kk, id).toMatch(/жауап бермеуге|өткізіп жіберуге|бөліскіңіз келгенін ғана/i);
     }
   });
 
