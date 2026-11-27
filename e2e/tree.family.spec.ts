@@ -55,7 +55,8 @@ test("демо: древо семьи — само из глав, правка, 
   await expect(page.getByRole("button", { name: /Валентина, жена, 1943/ })).toBeVisible();
 
   // имя отцу: на древе — имя, подпись «папа» остаётся
-  await page.getByRole("button", { name: /, папа/ }).click();
+  const papa = page.getByRole("button", { name: /, папа/ });
+  await papa.click();
   await page.getByRole("dialog").getByRole("button", { name: "✎ Исправить" }).click();
   await page.getByRole("dialog").getByLabel("Имя").fill("Ким Ён Хо");
   await page.getByRole("dialog").getByRole("button", { name: "Сохранить" }).click();

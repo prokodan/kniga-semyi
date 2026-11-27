@@ -1,5 +1,14 @@
 import { describe, expect, it } from "vitest";
-import { DEMO_ENTITIES, DEMO_FAMILY, DEMO_STORY_SEEDS, DEMO_STORYTELLER } from "@/fixtures/demo/family";
+import {
+  DEMO_ENTITIES,
+  DEMO_FAMILY,
+  DEMO_KIOSK_ENTITIES,
+  DEMO_KIOSK_FAMILY,
+  DEMO_KIOSK_STORY_SEEDS,
+  DEMO_KIOSK_STORYTELLER,
+  DEMO_STORY_SEEDS,
+  DEMO_STORYTELLER,
+} from "@/fixtures/demo/family";
 import { DEMO_BOOK } from "@/lib/book/pdf/demo";
 import { renderBook } from "@/lib/book/pdf/render";
 import { applyPlan, planIsEmpty, planTree, type TreePerson, type TreeSource } from "./build";
@@ -7,7 +16,9 @@ import { treeForBook } from "./book";
 import { createTreeEditor } from "./edit";
 import { isKinOnlyName, parseKin } from "./kinship";
 import { kinPaths, labelFor } from "./labels";
-import { layoutTree } from "./layout";
+import { bigFamily } from "./fixtures/big-family";
+import { CARD, COLLAPSE_AT, layoutTree, type TreeModel } from "./layout";
+import { rowTitle } from "./rows";
 import type { NewPerson, PersonPatch, TreeRepo } from "./store";
 
 const ids = (prefix = "p") => {
@@ -185,11 +196,136 @@ describe("страница древа в PDF", () => {
   it("демо Ким: страница есть, книга собирается", async () => {
     const src = kim();
     const plan = planTree(src, ids());
-    const tree = treeForBook(layoutTree(applyPlan(src, plan), plan.claims), true);
-    expect(tree?.rows.flat().some((p) => p.viewer)).toBe(true);
+    const tree = treeForBook(layoutTree(applyPlan(src, plan), plan.claims), ["ru", "ko"]);
+    expect(tree?.pages).toHaveLength(1);
+    expect(tree?.pages[0]!.flatMap((r) => r.units.flat()).some((p) => p.viewer)).toBe(true);
     const voiceUrl = (id: string) => `https://kniga.example/listen/${id}`;
     const without = await renderBook({ ...DEMO_BOOK, voiceUrl });
     const withTree = await renderBook({ ...DEMO_BOOK, voiceUrl, tree });
     expect(withTree.pageCount).toBe(without.pageCount + 1);
+  }, 60_000);
+});
+
+// ---------------- #277 древо 2.0 ----------------
+
+/** Ли Нина (киоск): рассказчица, муж, дети, внучка — как после seed-demo */
+function liNina(): TreeSource {
+  const byKey = new Map(DEMO_KIOSK_STORY_SEEDS.map((s) => [s.key, s.id]));
+  return {
+    familyId: DEMO_KIOSK_FAMILY.id,
+    storytellers: [{ ...DEMO_KIOSK_STORYTELLER, created_at: "2026-11-20T10:00:00Z", entity_id: null }],
+    chapters: DEMO_KIOSK_STORY_SEEDS.map((s) => ({ id: s.id, storyteller_id: DEMO_KIOSK_STORYTELLER.id, facts: s.facts })),
+    entities: DEMO_KIOSK_ENTITIES.map((e, i) => ({
+      id: `k${i}`,
+      family_id: DEMO_KIOSK_FAMILY.id,
+      kind: e.kind,
+      name_ru: e.name_ru,
+      name_ko: e.name_ko,
+      description: e.description,
+      story_ids: e.stories.map((k) => byKey.get(k)!).filter(Boolean),
+      source: "auto",
+      same_as: null,
+    })),
+    relations: [],
+  };
+}
+
+const model = (src: TreeSource, collapse?: { open: string[] | "all" }) => {
+  const plan = planTree(src, ids());
+  return layoutTree(applyPlan(src, plan), plan.claims, null, collapse ? { collapse } : {});
+};
+
+/** Карточки не наезжают друг на друга и не выходят за древо; капсула — ровно вокруг пары */
+function assertClean(m: TreeModel) {
+  for (const a of m.nodes) {
+    expect(a.x, a.name).toBeGreaterThanOrEqual(0);
+    expect(a.x + CARD.w, a.name).toBeLessThanOrEqual(m.width);
+    expect(a.y + CARD.h, a.name).toBeLessThanOrEqual(m.height);
+    for (const b of m.nodes) {
+      if (a.id >= b.id || a.y !== b.y) continue;
+      expect(Math.abs(a.x - b.x), `${a.name} ↔ ${b.name}`).toBeGreaterThanOrEqual(CARD.w + CARD.couple);
+    }
+  }
+  for (const c of m.capsules) {
+    const [l, r] = c.ids.map((id) => m.nodes.find((n) => n.id === id)!);
+    expect(r!.x - l!.x).toBe(CARD.w + CARD.couple);
+    expect(c.x).toBe(l!.x - CARD.capsule);
+  }
+}
+
+describe("#277 раскладка 2.0", () => {
+  it("Ким: рассказчик и жена — одна капсула, капсула в фокусе; родители парой над ними", () => {
+    const m = model(kim());
+    assertClean(m);
+    const me = m.nodes.find((n) => n.isViewer)!;
+    const wife = m.nodes.find((n) => n.label?.ru === "жена")!;
+    expect(m.capsules.some((c) => c.ids.includes(me.id) && c.ids.includes(wife.id))).toBe(true);
+    expect(m.focus).toMatchObject({ y: me.y - CARD.capsule, w: CARD.w * 2 + CARD.couple + CARD.capsule * 2 });
+    // ⌖ на 390 px: капсула пары (278 px) влезает целиком — супруга не за краем экрана
+    expect(m.focus!.w).toBeLessThanOrEqual(390 - 24);
+    expect(m.rows.map((r) => r.rel)).toEqual([-1, 0]);
+    expect(m.lines.filter((l) => l.kind === "child")).toHaveLength(1);
+  });
+
+  it("Ли Нина: рассказчица с мужем, дети и внучка — ряды от −2 до +2, без наложений", () => {
+    const m = model(liNina());
+    assertClean(m);
+    expect(m.nodes.find((n) => n.isViewer)?.name).toBe(DEMO_KIOSK_STORYTELLER.name);
+    expect(m.rows.map((r) => r.rel)).toEqual([-2, -1, 0, 1, 2]);
+  });
+
+  it("40 человек: ветки двоюродных свёрнуты («+ ещё»), прямая линия видна; «все» — без свёртки", () => {
+    const src = bigFamily();
+    const full = model(src);
+    expect(full.nodes.length + full.others.length).toBe(40);
+    assertClean(full);
+    const m = model(src, { open: [] });
+    assertClean(m);
+    expect(full.nodes.length).toBeGreaterThan(COLLAPSE_AT);
+    expect(m.chips.length).toBeGreaterThan(0);
+    expect(m.nodes.length + m.hidden.length).toBe(full.nodes.length);
+    expect(m.chips.reduce((a, c) => a + c.count, 0)).toBe(m.hidden.length);
+    const names = m.nodes.map((n) => n.name);
+    for (const must of ["Цой Валентин Владиславович", "Ким Елизавета Александровна", "Цой Владислав Константинович", "Ахметжанова Гульжахан", "Ли Алиса", "Цой Наталья Владиславовна"]) {
+      expect(names, must).toContain(must);
+    }
+    expect(m.hidden.map((n) => n.name)).toContain("Пак Ольга Евгеньевна"); // двоюродная — в ветке тёти
+    // развернуть ветку тёти: её дети на древе, чипа у неё больше нет
+    const aunt = m.nodes.find((n) => n.name === "Цой Александра Константиновна")!;
+    const opened = model(src, { open: [aunt.id] });
+    expect(opened.nodes.map((n) => n.name)).toContain("Пак Ольга Евгеньевна");
+    expect(opened.chips.some((c) => c.owner === aunt.id)).toBe(false);
+    expect(model(src, { open: "all" }).chips).toEqual([]);
+    // подписи дальней родни — словами, без «родня»
+    const label = (name: string) => full.nodes.find((n) => n.name === name)?.label?.ru;
+    expect(label("Хегай Андрей Николаевич")).toBe("муж сестры");
+    expect(label("Пак Ирина Сергеевна")).toBe("двоюродная племянница");
+    expect(label("Хегай Арина Артёмовна")).toBe("внучатая племянница");
+  });
+
+  it("подписи рядов: RU + корейский / казахский по языкам книги", () => {
+    expect(rowTitle(-2, "ko")).toEqual({ ru: "Бабушки и дедушки", second: "조부모", lang: "ko" });
+    expect(rowTitle(-1, "kk")).toEqual({ ru: "Родители", second: "Ата-ана", lang: "kk" });
+    expect(rowTitle(0, "ko", true)).toEqual({ ru: "Рассказчица и семья", second: null, lang: null });
+    expect(rowTitle(2, null)?.ru).toBe("Внуки");
+    expect(rowTitle(null, "ko")).toBeNull();
+  });
+});
+
+describe("#277 PDF древа", () => {
+  it("40 человек → две страницы, все люди, полные имена; Ким → одна страница", async () => {
+    const big = treeForBook(model(bigFamily()), ["ru", "kk"])!;
+    expect(big.pages).toHaveLength(2);
+    const people = big.pages.flat().flatMap((r) => r.units.flat());
+    expect(people).toHaveLength(39);
+    expect(people.map((p) => p.name)).toContain("Нурмагамбетова Динара Кайратовна");
+    expect(people.every((p) => p.nameKo === null)).toBe(true); // RU + KZ — без корейских имён
+    expect(big.pages[0]!.map((r) => r.second)).toContain("Ата-әже");
+    expect(big.pages[1]![0]!.title).toBe("Рассказчик и семья");
+    const voiceUrl = (id: string) => `https://kniga.example/listen/${id}`;
+    const without = await renderBook({ ...DEMO_BOOK, voiceUrl });
+    const withTree = await renderBook({ ...DEMO_BOOK, voiceUrl, tree: treeForBook(model(bigFamily()), ["ru", "ko"]) });
+    expect(withTree.pageCount).toBeGreaterThanOrEqual(without.pageCount + 2);
+    expect(withTree.missingKorean).toEqual([]);
   }, 60_000);
 });

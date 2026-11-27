@@ -11,7 +11,7 @@ import { DEMO_BOOK } from "./pdf/demo";
 import { isBookChapter, type BookTree, type Elder } from "./pdf/model";
 import { flag } from "@/lib/flags";
 import { loadTree } from "@/lib/tree";
-import { treeForBook } from "@/lib/tree/book";
+import { treeForBook, treePhotoPaths } from "@/lib/tree/book";
 import { renderBook } from "./pdf/render";
 import { effectiveBookLangs } from "@/lib/pipeline/langs";
 import { loadStoryTexts, withStoryTexts, type StoryTextRow } from "./texts";
@@ -221,7 +221,16 @@ export async function buildBook(familyId: string, opts: { origin: string }): Pro
     if (flag("family_tree", { familyId, labs: src.family.labs })) {
       try {
         const { model } = await loadTree(familyId, { write: true, viewer: st?.id ?? null });
-        tree = treeForBook(model, langs.includes("ko"));
+        tree = treeForBook(model, langs);
+        // #269: фото людей древа — параллельно, по 6; не вышло — кружок с буквой
+        if (tree) {
+          const paths = treePhotoPaths(tree);
+          const got = new Map<string, Buffer | null>();
+          for (let i = 0; i < paths.length; i += 6) {
+            await Promise.all(paths.slice(i, i + 6).map(async (p) => got.set(p, await loadPhoto(p))));
+          }
+          for (const person of tree.pages.flat().flatMap((r) => r.units.flat())) person.photo = person.photoPath ? (got.get(person.photoPath) ?? null) : null;
+        }
       } catch (e) {
         console.warn(`[book] ${familyId}: древо не собралось — ${e instanceof Error ? e.message : e}`);
       }

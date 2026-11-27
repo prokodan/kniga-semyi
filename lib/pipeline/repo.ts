@@ -45,6 +45,8 @@ export interface PipelineRepo {
   familyEntities?(story: Story): Promise<FamilyEntity[]>;
   /** #102: дописать в словарь семьи сущности собранной главы (source='family' не перезаписывается). */
   saveEntities?(story: Story, drafts: EntityDraft[]): Promise<void>;
+  /** #265: дописать древо семьи после словаря (без ИИ, идемпотентно; только при флаге family_tree). Нет — не трогаем. */
+  updateTree?(story: Story): Promise<void>;
   /** #121 #124: запомнить корейское написание (только где name_ko ещё пусто — первая глава задаёт его для всей книги). */
   saveSpellings?(story: Story, spellings: { id: string; name_ko: string }[]): Promise<void>;
   /**
@@ -166,6 +168,8 @@ export class MemoryPipelineRepo implements PipelineRepo {
     return nameHints({ storytellerName: this.names.get(story.storyteller_id), entities });
   }
   entities: FamilyEntity[] = [];
+  /** #265: тесты кладут сюда сборку древа; нет — древо не трогаем */
+  updateTree?: (story: Story) => Promise<void>;
   async familyEntities(story: Story) {
     return this.entities.filter((e) => e.family_id === story.family_id).map((e) => structuredClone(e));
   }
@@ -225,7 +229,17 @@ export class SupabasePipelineRepo implements PipelineRepo {
     private langKk: (family: Pick<Family, "id" | "labs">) => boolean = () => false,
     /** #233: включён ли флаг culture_packs семье. Нет — выключен (банк V0, подсказки корё). */
     private packsOn: (family: Pick<Family, "id" | "labs">) => boolean = () => false,
+    /** #265: древо семьи после словаря (lib/tree и lib/flags — server-only, поэтому снаружи). Нет — не трогаем. */
+    private tree: ((family: Pick<Family, "id" | "labs">) => Promise<void>) | null = null,
   ) {}
+
+  async updateTree(story: Story) {
+    if (!this.tree) return;
+    // "*": labs появились миграцией — до migrate запрос не должен падать
+    const { data, error } = await this.db.from("families").select("*").eq("id", story.family_id).maybeSingle();
+    if (error) throw new Error(`семья истории: ${error.message}`);
+    await this.tree((data ?? { id: story.family_id }) as Pick<Family, "id" | "labs">);
+  }
 
   async culturePacks(story: Story) {
     // "*": culture_packs / labs — колонки миграций #230 / #223; ошибка / нет семьи — банк V0

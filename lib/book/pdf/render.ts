@@ -42,7 +42,7 @@ export async function renderBook(input: BookInput, opts: { fontsDir?: string } =
   const koText =
     book.chapters.map((c) => [c.title, c.titleKo, c.quote, c.quoteKo, c.textRu, c.textKo].join(" ")).join(" ") +
     ` ${book.storyteller.name} ${book.storyteller.name_ko ?? ""}` +
-    ` ${(book.tree?.rows ?? []).flat().map((p) => p.nameKo ?? "").join(" ")}`;
+    ` ${(book.tree?.pages ?? []).flat().flatMap((r) => [r.second ?? "", ...r.units.flat().map((p) => p.nameKo ?? "")]).join(" ")}`;
   return {
     pdf,
     pageCount: total || countPages(pdf),

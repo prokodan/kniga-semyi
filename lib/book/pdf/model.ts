@@ -36,23 +36,32 @@ export interface BookInput {
 
 export type Elder = "grandfather" | "grandmother";
 
-/** #235: человек на странице древа в PDF */
+/** #235 / #277: человек на странице древа в PDF */
 export interface BookTreePerson {
   name: string;
+  /** Имя по-корейски (книга с KO) */
   nameKo: string | null;
   years: string | null;
   /** Кем приходится рассказчику книги («мама», «жена»); у рассказчика — null */
   label: string | null;
   viewer: boolean;
-  /** Супруг стоящего справа — рисуем скрепу */
-  spouseOfNext: boolean;
+  /** Путь фото в бакете photos — загружает lib/book/build.ts */
+  photoPath?: string | null;
+  /** jpg / png; нет — кружок с буквой */
+  photo?: Buffer | null;
 }
 
-/** #235: страница «Древо семьи» — ряды поколений сверху вниз (только при флаге family_tree у семьи) */
+/** #277: ряд поколения — подпись (RU + второй язык книги) и капсулы: пара / один человек / два брака */
+export interface BookTreeRow {
+  title: string | null;
+  second: string | null;
+  units: BookTreePerson[][];
+}
+
+/** #235 / #277: страница(ы) «Древо семьи» (только при флаге family_tree у семьи); 25+ человек — две страницы */
 export interface BookTree {
-  rows: BookTreePerson[][];
+  pages: BookTreeRow[][];
 }
-
 
 /** Второй язык, который книга умеет печатать (шрифт и подписи — document.tsx). */
 export type SecondLang = "ko" | "kk";
@@ -191,6 +200,6 @@ export function composeBook(input: BookInput): BookModel {
     builtAt: input.builtAt ?? new Date(),
     langs,
     second,
-    tree: input.tree && input.tree.rows.length ? input.tree : null,
+    tree: input.tree && input.tree.pages.some((p) => p.length) ? input.tree : null,
   };
 }

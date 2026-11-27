@@ -14,9 +14,11 @@ import { isKinOnlyName, parseKin, plainName, type Kin } from "./kinship";
 export type TreePerson = Pick<
   FamilyEntity,
   "id" | "family_id" | "kind" | "name_ru" | "name_ko" | "description" | "story_ids" | "source" | "birth_year" | "death_year" | "gender" | "same_as"
->;
+> &
+  Partial<Pick<FamilyEntity, "photo_url">>;
 export type TreeEdge = Pick<FamilyRelation, "from_entity_id" | "to_entity_id" | "kind" | "source">;
-export type TreeStoryteller = Pick<Storyteller, "id" | "name" | "name_ko" | "birth_year" | "death_year" | "photo_url" | "created_at"> & {
+export type TreeStoryteller = Pick<Storyteller, "id" | "name" | "name_ko" | "birth_year" | "death_year" | "photo_url" | "created_at"> &
+  Partial<Pick<Storyteller, "birth_place">> & {
   entity_id?: string | null;
 };
 export interface TreeChapter {

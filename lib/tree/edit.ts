@@ -153,9 +153,18 @@ export function createTreeEditor(deps: { repo: TreeRepo; load: (familyId: string
         birth_year: b.birth_year ?? a.birth_year ?? null,
         death_year: b.death_year ?? a.death_year ?? null,
         gender: b.gender ?? a.gender ?? null,
+        ...(!b.photo_url && a.photo_url ? { photo_url: a.photo_url } : {}),
       });
       await repo.updatePerson(familyId, a.id, { same_as: b.id });
       return { id: b.id };
+    },
+
+    /** #269: фото человека (путь в бакете photos; null — убрать). Возвращает прежний путь — его файл можно удалить. */
+    async setPhoto(familyId: string, id: string, path: string | null) {
+      const { person } = await ctx(familyId);
+      const p = person(id);
+      await repo.updatePerson(familyId, p.id, { photo_url: path });
+      return { id: p.id, previous: p.photo_url ?? null };
     },
 
     /** «Поставить на место»: X — роль для Y. Прежние связи X заменяются этой (правка семьи). */

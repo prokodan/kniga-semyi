@@ -9,6 +9,7 @@ import { ai } from "@/lib/ai";
 import { BUCKETS, getDbOrNull } from "@/lib/db";
 import { flag } from "@/lib/flags";
 import { MemoryInterviewRepo } from "@/lib/interview/repo";
+import { loadTree } from "@/lib/tree";
 import { createPipeline, type Pipeline } from "./engine";
 import { MemoryPipelineRepo, SupabasePipelineRepo, type PipelineRepo } from "./repo";
 
@@ -18,13 +19,18 @@ let instance: Pipeline | null = null;
 function getRepo(): PipelineRepo {
   const db = getDbOrNull();
   // #231: перевод на казахский — только семьям с флагом lang_kk; #233: банк и подсказки по пакетам — с culture_packs
-  if (db)
+  if (db) {
     return new SupabasePipelineRepo(
       db,
       BUCKETS.audio,
       (f) => flag("lang_kk", { familyId: f.id, labs: f.labs }),
       (f) => flag("culture_packs", { familyId: f.id, labs: f.labs }),
+      // #265: древо дописывается в шаге словаря — только семьям с флагом family_tree
+      async (f) => {
+        if (flag("family_tree", { familyId: f.id, labs: f.labs })) await loadTree(f.id, { write: true });
+      },
     );
+  }
   g.__interviewMemoryRepo ??= new MemoryInterviewRepo();
   g.__pipelineMemoryRepo ??= new MemoryPipelineRepo(g.__interviewMemoryRepo.stories);
   g.__pipelineMemoryRepo.sessions = g.__interviewMemoryRepo.sessions as never;

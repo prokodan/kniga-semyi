@@ -2,7 +2,7 @@
 // на голос → «Слова деда» → последняя страница. Формат A5, колонтитул с названием, номера страниц.
 import { Document, Image, Page, Path, StyleSheet, Svg, Text, View } from "@react-pdf/renderer";
 import QRCode from "qrcode";
-import type { BookChapter, BookModel, BookTree, BookTreePerson, SecondLang } from "./model";
+import type { BookChapter, BookModel, BookTreePerson, BookTreeRow, SecondLang } from "./model";
 import { paragraphs } from "./model";
 import { FAMILY_KO, FAMILY_RU } from "./fonts";
 import { COLOR, PAGE, TYPE } from "./theme";
@@ -263,58 +263,120 @@ function Toc({ book, pages }: { book: BookModel; pages: PageMap }) {
   );
 }
 
-// ---------------- #235 древо семьи ----------------
+// ---------------- #235 / #277 древо семьи ----------------
+// Ряды поколений сверху вниз с подписью (RU + второй язык книги), пары — капсулой, фото кружком. Ряд шире
+// страницы переносится внутри ряда; имена переносятся по словам и не обрезаются.
 
-function TreePerson({ p, ko }: { p: BookTreePerson; ko: boolean }) {
+const TREE = { card: 70, photo: 24, couple: 4, capsule: 3 };
+/** Плотнее, когда на странице больше 10 человек (большая семья): уже карточка, мельче фото и шрифт */
+const TREE_DENSE = { card: 58, photo: 18, couple: 3, capsule: 2.5 };
+
+function TreePerson({ p, ko, dense }: { p: BookTreePerson; ko: boolean; dense: boolean }) {
+  const T = dense ? TREE_DENSE : TREE;
+  const k = dense ? 0.88 : 1;
+  const initial = (p.name.trim()[0] ?? "·").toUpperCase();
   return (
     <View
       style={{
-        width: 70,
+        width: T.card,
         paddingVertical: 5,
         paddingHorizontal: 3,
         borderWidth: p.viewer ? 1.2 : 0.75,
         borderColor: p.viewer ? COLOR.seal : COLOR.line,
-        backgroundColor: p.viewer ? COLOR.paperDeep : COLOR.paper,
+        backgroundColor: COLOR.paper,
         borderRadius: 4,
         alignItems: "center",
-        marginVertical: 3,
       }}
     >
-      <Text style={{ fontSize: 8, fontWeight: 700, lineHeight: 1.2, textAlign: "center" }}>{p.name}</Text>
-      {ko && p.nameKo && <Text style={{ fontFamily: FAMILY_KO, fontSize: 6.5, color: COLOR.inkSoft, lineHeight: 1.3, textAlign: "center" }}>{p.nameKo}</Text>}
-      {p.years && <Text style={{ fontSize: 6.5, color: COLOR.muted, lineHeight: 1.3 }}>{p.years}</Text>}
-      {p.label && <Text style={{ fontSize: 5.8, color: COLOR.seal, letterSpacing: 0.4, lineHeight: 1.3, textTransform: "uppercase", textAlign: "center" }}>{p.label}</Text>}
+      {p.photo ? (
+        // eslint-disable-next-line jsx-a11y/alt-text -- Image из react-pdf, не <img>
+        <Image src={p.photo} style={{ width: T.photo, height: T.photo, borderRadius: T.photo / 2, objectFit: "cover", marginBottom: 3 }} />
+      ) : (
+        <View
+          style={{
+            width: T.photo,
+            height: T.photo,
+            borderRadius: T.photo / 2,
+            backgroundColor: p.viewer ? COLOR.seal : COLOR.paperDeep,
+            alignItems: "center",
+            justifyContent: "center",
+            marginBottom: 3,
+          }}
+        >
+          <Text style={{ fontSize: 10 * k, lineHeight: 1, color: p.viewer ? COLOR.paper : COLOR.seal }}>{initial}</Text>
+        </View>
+      )}
+      <Text style={{ fontSize: 7.5 * k, fontWeight: 700, lineHeight: 1.2, textAlign: "center" }}>{p.name}</Text>
+      {ko && p.nameKo && <Text style={{ fontFamily: FAMILY_KO, fontSize: 6.5 * k, color: COLOR.inkSoft, lineHeight: 1.3, textAlign: "center" }}>{p.nameKo}</Text>}
+      {p.years && <Text style={{ fontSize: 6.3 * k, color: COLOR.muted, lineHeight: 1.3 }}>{p.years}</Text>}
+      {(p.viewer || p.label) && (
+        <Text style={{ fontSize: 5.6 * k, color: p.viewer ? COLOR.seal : COLOR.inkSoft, letterSpacing: 0.4, lineHeight: 1.3, textTransform: "uppercase", textAlign: "center" }}>
+          {p.viewer ? "книга" : p.label}
+        </Text>
+      )}
     </View>
   );
 }
 
-function TreePage({ tree, ko }: { tree: BookTree; ko: boolean }) {
+function TreeUnit({ unit, ko, dense }: { unit: BookTreePerson[]; ko: boolean; dense: boolean }) {
+  const T = dense ? TREE_DENSE : TREE;
+  const pair = unit.length > 1;
+  return (
+    <View
+      style={{
+        flexDirection: "row",
+        alignItems: "stretch",
+        padding: pair ? T.capsule : 0,
+        borderRadius: 7,
+        backgroundColor: pair ? COLOR.paperDeep : undefined,
+        borderWidth: pair ? 0.6 : 0,
+        borderColor: COLOR.line,
+        margin: dense ? 2.5 : 3,
+      }}
+    >
+      {unit.map((p, i) => (
+        <View key={i} style={{ marginLeft: i ? T.couple : 0 }}>
+          <TreePerson p={p} ko={ko} dense={dense} />
+        </View>
+      ))}
+    </View>
+  );
+}
+
+function TreePage({ rows, second, part, parts }: { rows: BookTreeRow[]; second: SecondLang | null; part: number; parts: number }) {
+  const ko = second === "ko";
+  const dense = rows.reduce((a, r) => a + r.units.flat().length, 0) > 10;
   return (
     <View>
-      <Text style={s.kicker}>Древо семьи</Text>
-      <Text style={s.h1}>Древо семьи</Text>
+      {/* fixed: большая семья перетекает на следующую страницу — подпись повторяется и там */}
+      <Text style={s.kicker} fixed>
+        Древо семьи{parts > 1 ? ` · ${part} из ${parts}` : ""}
+      </Text>
+      <Text style={s.h1}>{parts > 1 ? (part === 1 ? "Старшие поколения" : "Рассказчик и потомки") : "Древо семьи"}</Text>
       {ko && <Text style={s.h1ko}>가계도</Text>}
       <View style={s.rule} />
-      {tree.rows.map((row, i) => (
-        <View key={i} wrap={false}>
-          {i > 0 && <View style={{ width: 1, height: 10, backgroundColor: COLOR.gold, alignSelf: "center" }} />}
-          <View style={{ flexDirection: "row", flexWrap: "wrap", justifyContent: "center", alignItems: "center" }}>
-            {row.map((p, j) => (
-              <View key={j} style={{ flexDirection: "row", alignItems: "center" }}>
-                <TreePerson p={p} ko={ko} />
-                {p.spouseOfNext && j < row.length - 1 ? (
-                  <View style={{ width: 8, height: 1.2, backgroundColor: COLOR.seal }} />
-                ) : (
-                  j < row.length - 1 && <View style={{ width: 6 }} />
-                )}
+      {rows.map((row, i) => (
+        // ряд может продолжиться на следующей странице (пары не разрываются); подпись — не одна внизу страницы
+        <View key={i} style={{ marginBottom: 4 }}>
+          {i > 0 && <View style={{ width: 1, height: 8, backgroundColor: COLOR.gold, alignSelf: "center" }} />}
+          {row.title && (
+            <Text minPresenceAhead={90} style={{ fontSize: 6.5, letterSpacing: 1.2, color: COLOR.muted, textTransform: "uppercase", textAlign: "center", marginBottom: 2 }}>
+              {row.title}
+              {row.second && <Text style={{ fontFamily: secondFont(second), letterSpacing: 0.4, textTransform: "none" }}>{` · ${row.second}`}</Text>}
+            </Text>
+          )}
+          <View style={{ flexDirection: "row", flexWrap: "wrap", justifyContent: "center", alignItems: "flex-start" }}>
+            {row.units.map((u, j) => (
+              <View key={j} wrap={false}>
+                <TreeUnit unit={u} ko={ko} dense={dense} />
               </View>
             ))}
           </View>
         </View>
       ))}
-      <Text style={{ fontSize: 7.5, color: COLOR.muted, marginTop: 16, textAlign: "center" }}>
-        Древо собрано из рассказов книги и поправлено семьёй.
-      </Text>
+      {part === parts && (
+        <Text style={{ fontSize: 7.5, color: COLOR.muted, marginTop: 14, textAlign: "center" }}>Древо собрано из рассказов книги и поправлено семьёй.</Text>
+      )}
     </View>
   );
 }
@@ -487,11 +549,11 @@ export function BookDocument({ book, pages = {}, collect }: BookDocumentProps) {
       <BookPage title={book.title} collect={collect} ko={ko}>
         <Toc book={book} pages={pages} />
       </BookPage>
-      {book.tree && (
-        <BookPage title={book.title} collect={collect}>
-          <TreePage tree={book.tree} ko={ko} />
+      {book.tree?.pages.map((rows, i, all) => (
+        <BookPage key={`tree-${i}`} title={book.title} collect={collect} ko={ko}>
+          <TreePage rows={rows} second={second} part={i + 1} parts={all.length} />
         </BookPage>
-      )}
+      ))}
       {regular.map((ch) => (
         <Chapter key={ch.id} ch={ch} legacy={false} title={book.title} her={her} second={second} collect={collect} />
       ))}
