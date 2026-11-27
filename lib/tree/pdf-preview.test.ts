@@ -20,8 +20,9 @@ function treePages(pdf: Uint8Array, name: string) {
   const pages: { n: number; text: string }[] = [];
   for (let i = 0; i < doc.countPages(); i++) {
     const page = doc.loadPage(i);
-    const text = page.toStructuredText("preserve-whitespace").asText();
-    if (!/ДРЕВО СЕМЬИ|Древо семьи/.test(text) || /ОГЛАВЛЕНИЕ|Оглавление/.test(text)) continue;
+    // разрядка (letterSpacing) и переносы дают пробелы и «-» внутри слов — сравниваем без них
+    const text = page.toStructuredText("preserve-whitespace").asText().replace(/[\s\u00ad-]+/g, "");
+    if (!/ДРЕВОСЕМЬИ|Древосемьи/i.test(text) || /ОГЛАВЛЕНИЕ/i.test(text)) continue;
     pages.push({ n: i + 1, text });
     if (OUT) {
       mkdirSync(OUT, { recursive: true });
@@ -44,9 +45,9 @@ describe("#277 PDF древа большой семьи", () => {
       const book = await renderBook({ ...DEMO_BOOK, voiceUrl, langs: [...langs], tree: treeForBook(model, langs) });
       const pages = treePages(book.pdf, `big-40-${langs.join("-")}`);
       expect(pages.length).toBeGreaterThanOrEqual(2);
-      const text = pages.map((p) => p.text).join("\n").replace(/\s+/g, " ");
+      const text = pages.map((p) => p.text).join("");
       for (const name of ["Нурмагамбетова Динара Кайратовна", "Цой Владислав Константинович", "Ахметжанов Нурсултан Бауыржанович", "Ли Алиса"]) {
-        expect(text, name).toContain(name);
+        expect(text, name).toContain(name.replace(/\s+/g, ""));
       }
       expect(text).toContain(langs[1] === "ko" ? "조부모" : "Ата-әже");
     }, 60_000);
