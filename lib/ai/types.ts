@@ -149,13 +149,11 @@ export const inputSchemas = {
   }),
   judge: z
     .object({
-      storytellerName: z.string().default(""),
+      storytellerName: z.string(),
       /** Манера речи рассказчика (из персонажа) — эталон «голоса» */
-      manner: z.string().default(""),
-      chapters: z
-        .array(z.object({ id: z.string(), transcript: z.string().min(1), text_ru: z.string().min(1) }))
-        .max(20)
-        .default([]),
+      manner: z.string(),
+      /** Главы для оценки голоса; пусто — только при `golden` (#256) */
+      chapters: z.array(z.object({ id: z.string(), transcript: z.string().min(1), text_ru: z.string().min(1) })).max(20),
       /**
        * #256: сверка с золотым набором носителей — какой перевод ближе по смыслу к правке носителя (промпт
        * eval/judge.golden.md). x / y — два перевода абзаца в случайном порядке (один — тот, что правил носитель,

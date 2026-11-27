@@ -46,7 +46,7 @@ export async function goldenCheck(opts: { ai: Pick<AiRouter, "run">; dir?: strin
     let verdicts = checked.map((c) => c.v);
     if (checked.length && opts.judge !== false) {
       try {
-        const out = await opts.ai.run("judge", { golden: { pair, items: checked.map((c) => goldenJudgeItem(c.e, c.fresh)) } });
+        const out = await opts.ai.run("judge", { storytellerName: "", manner: "", chapters: [], golden: { pair, items: checked.map((c) => goldenJudgeItem(c.e, c.fresh)) } });
         const byId = new Map((out.golden ?? []).map((s) => [s.id, s]));
         verdicts = checked.map((c) => {
           const s = byId.get(c.e.key);
