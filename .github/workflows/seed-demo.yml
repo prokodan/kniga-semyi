@@ -6,6 +6,8 @@ name: seed-demo
 # #211: target=staging — база превью (секреты STAGING_SUPABASE_URL / STAGING_SUPABASE_SERVICE_ROLE_KEY), всегда без ИИ.
 # Книгу PDF собирает сайт: для staging — только если задан секрет STAGING_URL и его /api/health показывает ref базы
 # staging (иначе превью ещё смотрит в прод — собрать книгу там значило бы тронуть демо прода → --skip-book).
+# #222: target=staging — после сида настройки ИИ staging = прод (ai_routes, ai_providers; scripts/ai-config-sync.mjs).
+#   Бюджеты staging свои: вход ai_budgets → переменная репозитория STAGING_AI_BUDGETS → как сейчас в staging.
 on:
   workflow_dispatch:
     inputs:
@@ -18,6 +20,10 @@ on:
         description: "Нарисовать недостающие «золотые» картинки сказки через ИИ (OpenAI, ~4 картинки)"
         type: boolean
         default: false
+      ai_budgets:
+        description: "Только staging: бюджеты ИИ превью, $/день / $/мес — например gemini=5/10,openai=2/5; same = как в проде; пусто — переменная STAGING_AI_BUDGETS или как сейчас"
+        type: string
+        default: ""
 
 concurrency:
   group: seed-demo-${{ inputs.target || 'prod' }}
@@ -92,6 +98,12 @@ jobs:
 
       - name: npm run seed:demo (${{ inputs.target || 'prod' }})
         run: npm run seed:demo -- ${{ steps.pick.outputs.flags }}
+
+      - name: Настройки ИИ staging = прод (#222)
+        if: env.TARGET == 'staging'
+        env:
+          STAGING_AI_BUDGETS: ${{ inputs.ai_budgets || vars.STAGING_AI_BUDGETS }}
+        run: node scripts/ai-config-sync.mjs
 
       - name: Telegram — демо пересоздано
         if: success()

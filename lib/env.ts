@@ -56,7 +56,7 @@ export const env = {
   /** #211: production | preview | development (VERCEL_ENV; локально и в CI — development). */
   vercelEnv: getVercelEnv,
   /**
-   * #211: общий секрет «превью → прод» для расхода ИИ (POST /api/ai/usage, GET /api/ai/usage/summary).
+   * #211: общий секрет «превью → прод» для расхода ИИ (POST /api/ai/usage — отчёт; #218: бюджет у превью свой).
    * Нет секрета → отправка расхода выключена, прод работает как до #211.
    */
   aiUsageSecret: () => read("AI_USAGE_SECRET"),
