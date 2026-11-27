@@ -10,6 +10,19 @@ export type UsageStatus = "ok" | "error" | "rate_limited" | "timeout" | "cache_h
 /** Неудачи, после которых модель «остывает» (503 / прочие ошибки — нет: перегрузка обычно секундная). */
 export const COOLDOWN_STATUSES: UsageStatus[] = ["rate_limited", "timeout"];
 
+/**
+ * #218: строки другого окружения, которые прод хранит только для отчёта /admin/ai. Превью (staging) шлёт свои строки
+ * в прод (env='staging') — их нельзя учитывать в квотах, «остывании» и бюджете прода: у превью свои ключи ИИ и
+ * свой бюджет. В базе staging строк прода нет, поэтому превью считает всё по своей базе.
+ */
+export const FOREIGN_USAGE_ENVS = ["staging"] as const;
+
+/** Учитывать ли строку в квотах / остывании / бюджете этого окружения (env пустой = старая строка = prod). */
+export function isOwnUsage(rowEnv: string | null | undefined, storeEnv: "prod" | "staging" | undefined): boolean {
+  if (storeEnv === "staging") return true;
+  return !(FOREIGN_USAGE_ENVS as readonly string[]).includes(rowEnv ?? "prod");
+}
+
 export interface UsageRow {
   step: AiStep;
   provider: string;
@@ -37,7 +50,6 @@ export interface AiStore {
   countCalls(provider: string, model: string, since: Date): Promise<number>;
   /** Сумма cost_usd провайдера начиная с since */
   spend(provider: string, since: Date): Promise<number>;
-  /** Был ли 429 / таймаут у модели начиная с since (провайдер «остывает») */
   /** Была ли у модели неудача из `statuses` (по умолчанию 429 и таймаут) с момента `since` — для «остывания». */
   hadFailureSince(provider: string, model: string, since: Date, statuses?: UsageStatus[]): Promise<boolean>;
   recordUsage(row: UsageRow): Promise<void>;
@@ -53,6 +65,8 @@ export class MemoryStore implements AiStore {
   routes: Partial<Record<AiStep, Route>> = {};
   providers: Partial<Record<AiProviderName, ProviderSettings>> = {};
   now: () => Date = () => new Date();
+  /** #218: как у SupabaseStore — undefined / 'prod' = прод (строки staging не считаются), 'staging' = своя база */
+  env: "prod" | "staging" | undefined = undefined;
 
   async getRoute(step: AiStep) {
     return this.routes[step] ?? DEFAULT_ROUTES[step];
@@ -61,7 +75,7 @@ export class MemoryStore implements AiStore {
     return this.providers[provider] ?? DEFAULT_PROVIDERS[provider];
   }
   private since(rows: typeof this.usage, since: Date) {
-    return rows.filter((r) => new Date(r.created_at) >= since);
+    return rows.filter((r) => new Date(r.created_at) >= since && isOwnUsage(r.env, this.env));
   }
   async countCalls(provider: string, model: string, since: Date) {
     return this.since(this.usage, since).filter(
@@ -121,35 +135,50 @@ export class SupabaseStore implements AiStore {
     };
   }
 
+  /**
+   * #218: прод не учитывает строки staging (их присылает превью — только для отчёта). Колонка env — not null default
+   * 'prod', поэтому `env not in (staging)` берёт и старые строки. Превью считает всё в своей базе.
+   */
+  private ownEnv<Q extends { not(column: "env", op: "in", value: string): Q }>(query: Q): Q {
+    if (this.env === "staging") return query;
+    return query.not("env", "in", `(${FOREIGN_USAGE_ENVS.join(",")})`);
+  }
+
   async countCalls(provider: string, model: string, since: Date) {
-    const { count } = await this.db
-      .from("ai_usage")
-      .select("id", { count: "exact", head: true })
-      .eq("provider", provider)
-      .eq("model", model)
-      .in("status", ["ok", "error"])
-      .gte("created_at", since.toISOString());
+    const { count } = await this.ownEnv(
+      this.db
+        .from("ai_usage")
+        .select("id", { count: "exact", head: true })
+        .eq("provider", provider)
+        .eq("model", model)
+        .in("status", ["ok", "error"])
+        .gte("created_at", since.toISOString()),
+    );
     return count ?? 0;
   }
 
   async spend(provider: string, since: Date) {
-    const { data } = await this.db
-      .from("ai_usage")
-      .select("cost_usd")
-      .eq("provider", provider)
-      .gt("cost_usd", 0)
-      .gte("created_at", since.toISOString());
+    const { data } = await this.ownEnv(
+      this.db
+        .from("ai_usage")
+        .select("cost_usd")
+        .eq("provider", provider)
+        .gt("cost_usd", 0)
+        .gte("created_at", since.toISOString()),
+    );
     return (data ?? []).reduce((s, r) => s + Number(r.cost_usd), 0);
   }
 
   async hadFailureSince(provider: string, model: string, since: Date, statuses: UsageStatus[] = COOLDOWN_STATUSES) {
-    const { count } = await this.db
-      .from("ai_usage")
-      .select("id", { count: "exact", head: true })
-      .eq("provider", provider)
-      .eq("model", model)
-      .in("status", statuses)
-      .gte("created_at", since.toISOString());
+    const { count } = await this.ownEnv(
+      this.db
+        .from("ai_usage")
+        .select("id", { count: "exact", head: true })
+        .eq("provider", provider)
+        .eq("model", model)
+        .in("status", statuses)
+        .gte("created_at", since.toISOString()),
+    );
     return (count ?? 0) > 0;
   }
 

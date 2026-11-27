@@ -1,20 +1,15 @@
-// #211: общий расход ИИ прода и превью (staging). Ключи Gemini / OpenAI одни → бюджеты $/день и $/мес общие.
-//   Превью (VERCEL_ENV=preview, заданы AI_USAGE_SECRET и PROD_URL): каждую строку ai_usage пишет у себя (env=staging)
-//   и отправляет в прод POST {PROD_URL}/api/ai/usage; бюджет берёт из сводки прода GET …/api/ai/usage/summary
-//   (кэш 60 с), прод недоступен — считает по своей базе. Сбой отправки шаг не роняет (лог + локальная строка).
-//   Прод: принимает строки (env=staging, без story_id — таких историй в проде нет) и считает бюджет по всем строкам.
-// Квоты моделей (вызовы в сутки) и «остывание» — пока локально на каждой стороне (см. заметки PR #211).
+// #211 → #218: расход ИИ превью (staging) — в отчёт прода.
+//   С #218 у превью свои ключи Gemini / OpenAI (#237) → свои квоты, «остывание» и бюджет: превью считает всё по своей
+//   базе (env=staging). Каждую строку ai_usage превью пишет у себя и отправляет в прод POST {PROD_URL}/api/ai/usage —
+//   только для общего отчёта /admin/ai (строка «Превью (staging)»). Прод эти строки в квотах / остывании / бюджете
+//   не учитывает (lib/ai/store.ts, isOwnUsage). Сбой отправки шаг не роняет (лог + локальная строка).
 // Без server-only: чистые функции и классы, тестируются в vitest; подключается из lib/ai/index.ts.
 import { createHash, timingSafeEqual } from "node:crypto";
 import { z } from "zod";
 import type { AiStore, UsageRow, UsageStatus } from "./store";
-import { AI_PROVIDERS, type AiStep } from "./types";
-import { startOfDayInTz, startOfUtcMonth } from "./util";
+import type { AiStep } from "./types";
 
 export const AI_USAGE_HEADER = "x-ai-usage-secret";
-export const SUMMARY_CACHE_MS = 60_000;
-/** После неудачной сводки не дёргаем прод ещё столько — считаем локально */
-export const SUMMARY_RETRY_MS = 30_000;
 export const SINK_TIMEOUT_MS = 2_500;
 
 /** Секрет в постоянном времени (sha256 обеих сторон → одинаковая длина). Нет секрета на сервере → false. */
@@ -73,28 +68,6 @@ export function toProdRow(input: RemoteUsage, now: Date = new Date()): UsageRow 
   };
 }
 
-export interface UsageSummary {
-  day_start: string;
-  month_start: string;
-  /** Расход по провайдерам, $ — все окружения вместе (так считает бюджет роутер прода) */
-  spend: Record<string, { day: number; month: number }>;
-}
-
-/** Сводка для превью: те же окна, что у роутера (сутки и месяц UTC), по тому же store.spend. */
-export async function buildUsageSummary(store: Pick<AiStore, "spend">, now: Date = new Date()): Promise<UsageSummary> {
-  const day = startOfDayInTz("UTC", now);
-  const month = startOfUtcMonth(now);
-  const spend: UsageSummary["spend"] = {};
-  for (const p of AI_PROVIDERS) {
-    if (p === "mock") continue;
-    const [d, m] = await Promise.all([store.spend(p, day), store.spend(p, month)]);
-    spend[p] = { day: round(d), month: round(m) };
-  }
-  return { day_start: day.toISOString(), month_start: month.toISOString(), spend };
-}
-
-const round = (v: number) => Math.round(v * 1e6) / 1e6;
-
 export interface SharedUsageOptions {
   /** Боевой адрес без «/» на конце */
   prodUrl: string;
@@ -102,20 +75,15 @@ export interface SharedUsageOptions {
   /** Полный ref своего Supabase — прод по нему отличает «та же база» */
   sourceRef?: string;
   fetch?: typeof fetch;
-  now?: () => number;
   log?: (message: string) => void;
 }
 
 /**
- * Хранилище превью: всё как у локального, но расход уходит и в прод, а бюджет $ — общий (сводка прода).
+ * Хранилище превью: всё — как у локального (своя база staging, свои ключи и бюджет); каждая строка расхода
+ * дополнительно уходит в прод для отчёта.
  */
 export class SharedUsageStore implements AiStore {
-  private summary: { value: UsageSummary | null; at: number } | null = null;
-  private inflight: Promise<UsageSummary | null> | null = null;
-  /** Расход, отправленный после последней сводки, — чтобы кэш в 60 с не «прятал» свежие траты */
-  private sentSince: Record<string, number> = {};
   private readonly fetchImpl: typeof fetch;
-  private readonly now: () => number;
   private readonly log: (message: string) => void;
 
   constructor(
@@ -123,13 +91,13 @@ export class SharedUsageStore implements AiStore {
     private opts: SharedUsageOptions,
   ) {
     this.fetchImpl = opts.fetch ?? fetch;
-    this.now = opts.now ?? Date.now;
     this.log = opts.log ?? ((m) => console.warn(m));
   }
 
   getRoute: AiStore["getRoute"] = (step) => this.local.getRoute(step);
   getProviderSettings: AiStore["getProviderSettings"] = (p) => this.local.getProviderSettings(p);
   countCalls: AiStore["countCalls"] = (p, m, since) => this.local.countCalls(p, m, since);
+  spend: AiStore["spend"] = (p, since) => this.local.spend(p, since);
   hadFailureSince: AiStore["hadFailureSince"] = (p, m, since, st) => this.local.hadFailureSince(p, m, since, st);
   cacheGet: AiStore["cacheGet"] = (h) => this.local.cacheGet(h);
   cacheSet: AiStore["cacheSet"] = (h, s, p, m, o) => this.local.cacheSet(h, s, p, m, o);
@@ -139,19 +107,7 @@ export class SharedUsageStore implements AiStore {
     await this.send(row);
   }
 
-  async spend(provider: string, since: Date): Promise<number> {
-    const s = await this.getSummary();
-    if (s) {
-      const t = since.getTime();
-      const p = s.spend[provider];
-      const extra = this.sentSince[provider] ?? 0;
-      if (t === Date.parse(s.day_start)) return round((p?.day ?? 0) + extra);
-      if (t === Date.parse(s.month_start)) return round((p?.month ?? 0) + extra);
-    }
-    return this.local.spend(provider, since);
-  }
-
-  /** Отправить строку в прод. Ошибка — только лог: шаг ИИ не падает. */
+  /** Отправить строку в прод (для отчёта). Ошибка — только лог: шаг ИИ не падает. */
   async send(row: UsageRow): Promise<boolean> {
     // #204: семьи staging в проде нет — family_id, как и story_id, не отправляем.
     const { story_id: _s, family_id: _f, env: _e, ...rest } = row;
@@ -170,46 +126,10 @@ export class SharedUsageStore implements AiStore {
         this.log(`[ai] расход не отправлен в прод: HTTP ${res.status}`);
         return false;
       }
-      if (row.cost_usd > 0) this.sentSince[row.provider] = (this.sentSince[row.provider] ?? 0) + row.cost_usd;
       return true;
     } catch (e) {
       this.log(`[ai] расход не отправлен в прод: ${e instanceof Error ? e.name : "error"}`);
       return false;
     }
-  }
-
-  private async getSummary(): Promise<UsageSummary | null> {
-    const t = this.now();
-    if (this.summary) {
-      const ttl = this.summary.value ? SUMMARY_CACHE_MS : SUMMARY_RETRY_MS;
-      if (t - this.summary.at < ttl) return this.summary.value;
-    }
-    this.inflight ??= this.fetchSummary().finally(() => {
-      this.inflight = null;
-    });
-    return this.inflight;
-  }
-
-  private async fetchSummary(): Promise<UsageSummary | null> {
-    let value: UsageSummary | null = null;
-    try {
-      const res = await this.fetchImpl(`${this.opts.prodUrl}/api/ai/usage/summary`, {
-        headers: { [AI_USAGE_HEADER]: this.opts.secret },
-        signal: AbortSignal.timeout(SINK_TIMEOUT_MS),
-        cache: "no-store",
-      });
-      if (res.ok) {
-        const body = (await res.json()) as Partial<UsageSummary>;
-        if (body && typeof body.day_start === "string" && typeof body.month_start === "string" && body.spend) {
-          value = { day_start: body.day_start, month_start: body.month_start, spend: body.spend };
-        }
-      }
-      if (!value) this.log(`[ai] сводка расхода прода недоступна: HTTP ${res.status} — бюджет считаю локально`);
-    } catch (e) {
-      this.log(`[ai] сводка расхода прода недоступна: ${e instanceof Error ? e.name : "error"} — бюджет считаю локально`);
-    }
-    this.summary = { value, at: this.now() };
-    if (value) this.sentSince = {};
-    return value;
   }
 }

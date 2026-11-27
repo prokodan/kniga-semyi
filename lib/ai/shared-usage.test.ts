@@ -1,16 +1,8 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { summarize } from "@/app/admin/ai/_lib/stats";
 import { getVercelEnv, env, isAiUsageSinkEnabled, supabaseRef, usageEnv } from "@/lib/env";
-import {
-  AI_USAGE_HEADER,
-  buildUsageSummary,
-  remoteUsageSchema,
-  SharedUsageStore,
-  SUMMARY_CACHE_MS,
-  toProdRow,
-  usageSecretOk,
-} from "./shared-usage";
-import { MemoryStore, type UsageRow } from "./store";
+import { AI_USAGE_HEADER, remoteUsageSchema, SharedUsageStore, toProdRow, usageSecretOk } from "./shared-usage";
+import { isOwnUsage, MemoryStore, type UsageRow } from "./store";
 
 const NOW = new Date("2026-11-27T12:00:00Z");
 const row = (over: Partial<UsageRow> = {}): UsageRow => ({
@@ -23,19 +15,12 @@ const row = (over: Partial<UsageRow> = {}): UsageRow => ({
   ...over,
 });
 
-function fakeProd(summary = { day: 0.5, month: 3 }) {
+function fakeProd() {
   const calls: { url: string; init?: RequestInit }[] = [];
   let down = false;
   const fetchImpl = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
     calls.push({ url: String(url), init });
     if (down) throw new TypeError("fetch failed");
-    if (String(url).endsWith("/summary")) {
-      return Response.json({
-        day_start: "2026-11-27T00:00:00.000Z",
-        month_start: "2026-11-01T00:00:00.000Z",
-        spend: { openai: summary, gemini: { day: 0, month: 0 } },
-      });
-    }
     return Response.json({ ok: true, stored: true });
   }) as unknown as typeof fetch;
   return { fetchImpl, calls, setDown: (v: boolean) => (down = v) };
@@ -64,39 +49,34 @@ describe("#211 SharedUsageStore (превью → прод)", () => {
 
   it("сбой прода не роняет шаг: строка остаётся локально, бюджет — по локальной базе", async () => {
     const local = new MemoryStore();
+    local.env = "staging";
     local.now = () => NOW;
     const prod = fakeProd();
     prod.setDown(true);
     const logs: string[] = [];
-    const store = new SharedUsageStore(local, { prodUrl: "https://p", secret: "s", fetch: prod.fetchImpl, log: (m) => logs.push(m), now: () => NOW.getTime() });
+    const store = new SharedUsageStore(local, { prodUrl: "https://p", secret: "s", fetch: prod.fetchImpl, log: (m) => logs.push(m) });
     await expect(store.recordUsage(row({ cost_usd: 0.2 }))).resolves.toBeUndefined();
     expect(local.usage).toHaveLength(1);
     expect(await store.spend("openai", new Date("2026-11-27T00:00:00Z"))).toBeCloseTo(0.2);
     expect(logs.join(" ")).toMatch(/не отправлен/);
   });
 
-  it("бюджет дня и месяца — из сводки прода (общий), кэш 60 с + отправленное после сводки", async () => {
+  it("#218: бюджет — по своей базе, сводку прода не спрашивает", async () => {
     const local = new MemoryStore();
-    let t = NOW.getTime();
-    const prod = fakeProd({ day: 0.5, month: 3 });
-    const store = new SharedUsageStore(local, { prodUrl: "https://p", secret: "s", fetch: prod.fetchImpl, now: () => t });
-    const day = new Date("2026-11-27T00:00:00Z");
-    const month = new Date("2026-11-01T00:00:00Z");
-    expect(await store.spend("openai", day)).toBeCloseTo(0.5);
-    expect(await store.spend("openai", month)).toBeCloseTo(3);
+    local.env = "staging";
+    local.now = () => NOW;
+    const prod = fakeProd();
+    const store = new SharedUsageStore(local, { prodUrl: "https://p", secret: "s", fetch: prod.fetchImpl });
     await store.recordUsage(row({ cost_usd: 0.1 }));
-    expect(await store.spend("openai", day)).toBeCloseTo(0.6);
-    const summaryCalls = () => prod.calls.filter((c) => c.url.endsWith("/summary")).length;
-    expect(summaryCalls()).toBe(1);
-    t += SUMMARY_CACHE_MS + 1;
-    expect(await store.spend("openai", day)).toBeCloseTo(0.5); // свежая сводка уже включает отправленное
-    expect(summaryCalls()).toBe(2);
-    // Окно не совпало со сводкой (например, полночь) — считаем локально
-    expect(await store.spend("openai", new Date("2026-11-26T00:00:00Z"))).toBeCloseTo(0.1);
+    await store.recordUsage(row({ cost_usd: 0.2 }));
+    expect(await store.spend("openai", new Date("2026-11-27T00:00:00Z"))).toBeCloseTo(0.3);
+    expect(prod.calls.every((c) => c.url === "https://p/api/ai/usage")).toBe(true);
+    expect(prod.calls).toHaveLength(2);
   });
 
   it("квоты и остывание — локальные", async () => {
     const local = new MemoryStore();
+    local.env = "staging";
     local.now = () => NOW;
     const store = new SharedUsageStore(local, { prodUrl: "https://p", secret: "s", fetch: fakeProd().fetchImpl });
     await store.recordUsage(row({ status: "rate_limited", provider: "gemini", model: "g" }));
@@ -126,29 +106,75 @@ describe("#211 приём в проде", () => {
     expect(remoteUsageSchema.safeParse({ row: { ...row(), status: "free" } }).success).toBe(false);
   });
 
-  it("сводка — сутки и месяц UTC по всем строкам (prod + staging)", async () => {
+});
+
+describe("#218 прод не учитывает строки staging", () => {
+  const since = new Date(NOW.getTime() - 60 * 60_000);
+
+  function prodWithStagingRows() {
+    const m = new MemoryStore(); // env не задан = прод
+    m.now = () => NOW;
+    return m;
+  }
+
+  it("таймаут / 429 на staging не «замораживает» модель в проде", async () => {
+    const m = prodWithStagingRows();
+    // так прод сохраняет строку, присланную превью (POST /api/ai/usage)
+    await m.recordUsage(toProdRow(remoteUsageSchema.parse({ row: row({ provider: "gemini", model: "g", status: "timeout" }) }), NOW));
+    await m.recordUsage(row({ provider: "gemini", model: "g", status: "rate_limited", env: "staging" }));
+    expect(await m.hadFailureSince("gemini", "g", since)).toBe(false);
+    await m.recordUsage(row({ provider: "gemini", model: "g", status: "timeout" }));
+    expect(await m.hadFailureSince("gemini", "g", since)).toBe(true);
+  });
+
+  it("расход и вызовы staging не тратят бюджет и квоты прода; старые строки без env — прод", async () => {
+    const m = prodWithStagingRows();
+    await m.recordUsage(row({ cost_usd: 0.4, env: "staging" }));
+    await m.recordUsage(row({ cost_usd: 0.1 }));
+    await m.recordUsage(row({ cost_usd: 0.2, env: "prod" }));
+    expect(await m.spend("openai", since)).toBeCloseTo(0.3);
+    expect(await m.countCalls("openai", "gpt-5.4-mini", since)).toBe(2);
+  });
+
+  it("превью (своя база) считает все строки", async () => {
     const m = new MemoryStore();
-    await m.recordUsage(row({ cost_usd: 0.3 }));
-    await m.recordUsage(row({ cost_usd: 0.2, env: "staging" }));
-    await m.recordUsage(row({ cost_usd: 1, created_at: "2026-11-05T00:00:00Z" }));
-    const s = await buildUsageSummary(m, NOW);
-    expect(s.day_start).toBe("2026-11-27T00:00:00.000Z");
-    expect(s.spend.openai!.day).toBeCloseTo(0.5);
-    expect(s.spend.openai!.month).toBeCloseTo(1.5);
-    expect(s.spend.mock).toBeUndefined();
+    m.env = "staging";
+    m.now = () => NOW;
+    await m.recordUsage(row({ cost_usd: 0.4, env: "staging" }));
+    await m.recordUsage(row({ cost_usd: 0.1 }));
+    expect(await m.spend("openai", since)).toBeCloseTo(0.5);
+  });
+
+  it("isOwnUsage", () => {
+    expect(isOwnUsage("staging", undefined)).toBe(false);
+    expect(isOwnUsage("staging", "prod")).toBe(false);
+    expect(isOwnUsage(null, undefined)).toBe(true);
+    expect(isOwnUsage("prod", "prod")).toBe(true);
+    expect(isOwnUsage("prod", "staging")).toBe(true);
   });
 });
 
 describe("#211 /admin/ai — расход по окружениям", () => {
-  it("делит по env, строки без env — prod; итог общий", () => {
+  it("делит по env, строки без env — prod; #218: итог, бюджеты и остывание прода — без staging", () => {
     const rows = [
       { ...row({ cost_usd: 0.3 }), env: null },
       { ...row({ cost_usd: 0.2 }), env: "staging" },
+      { ...row({ cost_usd: 0, provider: "gemini", model: "g", status: "timeout" }), env: "staging" },
     ].map((r) => ({ ...r, created_at: r.created_at! }));
-    const s = summarize({ rows, routes: [], providers: [], now: NOW });
+    const routes = [{ step: "edit", providers: [{ provider: "gemini", model: "g" }] }] as unknown as Parameters<typeof summarize>[0]["routes"];
+    const providers = [
+      { provider: "gemini", enabled: true, paid: true, daily_budget_usd: 5, monthly_budget_usd: 10, cooldown_minutes: 10 },
+    ] as Parameters<typeof summarize>[0]["providers"];
+    const s = summarize({ rows, routes, providers, now: NOW });
+    expect(s.scope).toBe("prod");
     expect(s.byEnv.find((e) => e.env === "prod")?.today).toBeCloseTo(0.3);
     expect(s.byEnv.find((e) => e.env === "staging")?.today).toBeCloseTo(0.2);
-    expect(s.totals.today).toBeCloseTo(0.5);
+    expect(s.totals.today).toBeCloseTo(0.3);
+    expect(s.cooling).toHaveLength(0);
+    // На превью (своя база) — всё
+    const stg = summarize({ rows, routes, providers, now: NOW, scope: "staging" });
+    expect(stg.totals.today).toBeCloseTo(0.5);
+    expect(stg.cooling).toHaveLength(1);
   });
 });
 

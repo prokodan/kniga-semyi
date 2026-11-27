@@ -3,6 +3,7 @@ import "server-only";
 import { getAiStore } from "@/lib/ai";
 import { MemoryStore } from "@/lib/ai/store";
 import { getDbOrNull } from "@/lib/db";
+import { usageEnv } from "@/lib/env";
 import { getFamilyStore, type MemoryFamilyStore } from "@/lib/db/access";
 import { bookCost, type BookCostEnv } from "./book-cost";
 import { SupabaseSource, MemorySource, type AdminSource } from "./source";
@@ -42,7 +43,7 @@ export async function loadAdminData(now: Date = new Date()): Promise<AdminData> 
   }
   return {
     source: source.kind,
-    summary: summarize({ rows, routes, providers, errors, now }),
+    summary: summarize({ rows, routes, providers, errors, now, scope: usageEnv() }),
     routes,
     providers,
     bookCost: bookCost(costRows),
