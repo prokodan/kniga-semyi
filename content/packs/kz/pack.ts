@@ -23,6 +23,14 @@ export const KZ_HINTS_RU: string[] = [
   ...KZ_GLOSSARY.filter((t) => t.section === "place").map((t) => t.meaning.replace(/\s*\(.*\)$/, "")),
 ];
 
+/**
+ * #300 (флаг spoken_kk): подсказки расшифровке рассказа с казахским (ru+kk, kk) — казахские написания из глоссария:
+ * родство, быт и праздники, топонимы (әже, ата, апа, нағашы, той, дастарқан, Үштөбе). Советские реалии не берём:
+ * русское «война» / «школа» в русской речи должно остаться русским (это перевод, а не написание).
+ * Для русской речи без казахского — KZ_HINTS_RU (как сейчас). TODO(контент Влада, #281): проверить носителем.
+ */
+export const KZ_HINTS_KK: string[] = [...new Set(KZ_GLOSSARY.filter((t) => t.section !== "soviet").map((t) => t.kk))];
+
 export const KZ_PACK: CulturePack = {
   id: "kz",
   title: "Казахская",

@@ -22,13 +22,23 @@ export const SPOKEN_CHOICES = [
   { id: "ru,koryo", langs: ["ru", "koryo"], label: "По-русски, иногда на корё мар", pack: "koryo" },
   { id: "ru", langs: ["ru"], label: "По-русски" },
   { id: "ru,kk", langs: ["ru", "kk"], label: "По-русски, с казахскими словами", pack: "kz" },
-  // #234 (spoken_kk): озвучка и показ вопроса по-казахски — позже; пока вопросы звучат по-русски
+  // #300: только с флагом spoken_kk (spokenChoices); озвучка и показ вопроса по-казахски — #234, пока вопросы звучат по-русски
   { id: "kk", langs: ["kk"], label: "По-казахски", hint: "вопросы пока звучат по-русски", pack: "kz" },
 ] as const satisfies readonly { id: string; langs: readonly SpokenLang[]; label: string; hint?: string; pack?: string }[];
 
-/** Языки рассказа, уместные для выбранных пакетов: корё мар — с корё-сарам, казахский — с казахской. */
-export function spokenChoices(packs: readonly string[]): Choice[] {
-  return SPOKEN_CHOICES.filter((c) => !("pack" in c) || packs.includes(c.pack)).map((c) => ({ id: c.id, label: c.label, ...("hint" in c ? { hint: c.hint } : {}) }));
+/** «По-казахски» (рассказ целиком на kk) — только с флагом spoken_kk (#300): расшифровка kk не проверена на живых записях (#238). */
+const SPOKEN_KK_ONLY = "kk";
+
+/**
+ * Языки рассказа, уместные для выбранных пакетов: корё мар — с корё-сарам, казахский — с казахской.
+ * «По-казахски» — только при `spokenKkOn` (флаг spoken_kk); «По-русски, с казахскими словами» — как было.
+ */
+export function spokenChoices(packs: readonly string[], spokenKkOn = false): Choice[] {
+  return SPOKEN_CHOICES.filter((c) => (!("pack" in c) || packs.includes(c.pack)) && (spokenKkOn || c.id !== SPOKEN_KK_ONLY)).map((c) => ({
+    id: c.id,
+    label: c.label,
+    ...("hint" in c ? { hint: c.hint } : {}),
+  }));
 }
 
 /** Языки книги: казахский — только с флагом lang_kk (#231). */
@@ -50,18 +60,22 @@ export class StartChoiceError extends Error {}
 
 /**
  * Разбор ответа формы: packs (несколько значений), spoken, book. Неизвестное — ошибка (форма их не шлёт).
+ * `spokenKkOn` — флаг spoken_kk (#300): без него «По-казахски» — ошибка.
  * Ничего не выбрано в «Кто ваша семья?» — общий костяк.
  */
 export function parseStartChoices(
   input: { packs: string[]; spoken?: string | null; book?: string | null },
   kkOn: boolean,
+  spokenKkOn = false,
 ): { culture_packs: string[]; spoken_langs: SpokenLang[]; book_langs: BookLang[] } {
   const known = new Set(["general", ...Object.keys(CULTURE_PACKS)]);
   const bad = input.packs.find((p) => !known.has(p));
   if (bad) throw new StartChoiceError("Такого варианта «Кто ваша семья?» нет — обновите страницу");
   const culture_packs = normalizePacks(input.packs);
   const defaults = defaultsFor(culture_packs, kkOn);
-  const spoken = SPOKEN_CHOICES.find((c) => c.id === (input.spoken || defaults.spoken));
+  const spokenId = input.spoken || defaults.spoken;
+  // #300: «По-казахски» без флага spoken_kk не принимаем (на форме его нет)
+  const spoken = spokenId === SPOKEN_KK_ONLY && !spokenKkOn ? undefined : SPOKEN_CHOICES.find((c) => c.id === spokenId);
   if (!spoken) throw new StartChoiceError("Выберите, на каком языке удобнее рассказывать");
   const book = bookChoices(kkOn).find((c) => c.id === (input.book || defaults.book));
   if (!book) throw new StartChoiceError("Выберите, на каких языках будет книга");

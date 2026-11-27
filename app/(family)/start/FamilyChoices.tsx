@@ -14,7 +14,8 @@ function Hint({ c }: { c: Choice }) {
 }
 
 /** `onPacks` — форма прячет «Имя по-корейски», когда корё-сарам не выбраны. */
-export function FamilyChoices({ kkOn, onPacks }: { kkOn: boolean; onPacks?: (packs: string[]) => void }) {
+/** `spokenKkOn` — флаг spoken_kk (#300): вариант «По-казахски». */
+export function FamilyChoices({ kkOn, spokenKkOn = false, onPacks }: { kkOn: boolean; spokenKkOn?: boolean; onPacks?: (packs: string[]) => void }) {
   const layers = packChoices();
   const [packs, setPacksState] = useState<string[]>(START_DEFAULT_PACKS);
   const setPacks = (v: string[]) => {
@@ -27,7 +28,7 @@ export function FamilyChoices({ kkOn, onPacks }: { kkOn: boolean; onPacks?: (pac
   const general = packs.length === 0;
   const effective = general ? ["general"] : packs;
   const defaults = defaultsFor(effective, kkOn);
-  const spokenOpts = spokenChoices(effective);
+  const spokenOpts = spokenChoices(effective, spokenKkOn);
   const bookOpts = bookChoices(kkOn);
   // выбор семьи, если он ещё уместен для пакетов; иначе — предложение по умолчанию
   const spokenValue = spoken && spokenOpts.some((c) => c.id === spoken) ? spoken : defaults.spoken;

@@ -66,9 +66,14 @@ export const inputSchemas = {
     audioBase64: z.string().min(1),
     mimeType: z.string(),
     durationSec: z.number().positive().max(600),
-    languageHint: z.enum(["ru", "ko", "mixed"]).default("ru"),
+    languageHint: z.enum(["ru", "ko", "kk", "mixed"]).default("ru"),
     /** Имена, места и слова корё мар, которые могут прозвучать (карточка семьи, прошлые главы, docs/glossary.md) */
     hints: z.array(z.string().max(80)).max(150).optional(),
+    /**
+     * #300 (флаг spoken_kk): язык рассказа (storytellers.spoken_langs), только если в нём есть kk → промпт
+     * prompts/transcribe.kk.md. Не задан — вход, промпт и ключ кэша как до #300 (ru + корё мар).
+     */
+    spokenLangs: z.array(z.enum(["ru", "kk", "koryo"])).min(1).optional(),
   }),
   edit: z.object({
     transcript: z.string().min(1),
