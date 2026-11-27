@@ -9,7 +9,12 @@
 //  - #183: готовая глава, где в абзаце с 손주 / 손자 / 손녀 / 얘들아 есть 해요체 (правило #154: к внукам — 해라체),
 //    → пересборка только с translate: транскрипт и edit не трогаются. Промпт translate новый → вход другой →
 //    это ПЛАТНЫЙ вызов (≈ 1 на главу). Детектор — тот же, что флажок style:grandkids в kr-check (eval/kr-check.ts).
-// Фильтр причин — REPAIR_REASONS (failed, edit, cyrillic, grandkids; пусто / all — все).
+//  - #298 (флаг lang_kk): готовая глава книги RU + KZ, где в казахском переводе ИИ (story_texts, origin ai) латиница /
+//    хангыль (`kk-script`) или к внукам и «сендер», и «сіздер» в одном абзаце (`kk-style`) → пересборка с translate:
+//    промпт translate.kk.md новый → платный вызов (≈ 1 на главу); защиты lib/pipeline/kk.ts применятся сами.
+//    Только семьи, у которых kk в book_langs и lang_kk в labs (в проде флаг выключен — иначе translate ушёл бы в KR).
+//    Правки людей (origin family / proofread) не трогаем. Детекторы — те же, что флажки kk-check (eval/kk-check.ts).
+// Фильтр причин — REPAIR_REASONS (failed, edit, cyrillic, grandkids, kk-script, kk-style; пусто / all — все).
 // Предохранители apply: больше REPAIR_MAX_CHAPTERS глав (30) или OpenAI за сегодня (UTC, как бюджет роутера)
 // дороже REPAIR_MAX_OPENAI_USD ($1) — ничего не пересобирает, только план. Демо-семья не трогается никогда.
 // Вызывает прод POST /api/stories/:id/process с токеном семьи из базы. Токены, имена и тексты в лог не пишет.
@@ -18,6 +23,7 @@ import { appendFileSync } from "node:fs";
 import type { Story } from "@/lib/types";
 import { grandkidsHaeyo } from "@/eval/kr-check";
 import { hasCyrillic } from "@/lib/pipeline/cyrillic";
+import { kkProblems } from "@/lib/pipeline/kk";
 import { attachChildren, dropRepeats, fullSource } from "@/lib/pipeline/sources";
 
 const SB = (process.env.NEXT_PUBLIC_SUPABASE_URL ?? "").replace(/\/+$/, "");
@@ -27,10 +33,11 @@ const RAW_FAMILIES = (process.env.REPAIR_FAMILIES ?? "").trim();
 const ALL_FAMILIES = RAW_FAMILIES.toLowerCase() === "all";
 const SEL = ALL_FAMILIES ? ["all"] : RAW_FAMILIES.split(",").map((s) => s.trim()).filter((s) => /^[0-9a-f]{6,36}$/.test(s));
 const APPLY = process.env.REPAIR_APPLY === "1";
-type Reason = "failed" | "edit" | "cyrillic" | "grandkids";
+const ALL_REASONS = ["failed", "edit", "cyrillic", "grandkids", "kk-script", "kk-style"] as const;
+type Reason = (typeof ALL_REASONS)[number];
 const REASONS_RAW = (process.env.REPAIR_REASONS ?? "").split(",").map((s) => s.trim()).filter(Boolean);
 const REASONS = new Set<Reason>(
-  REASONS_RAW.length === 0 || REASONS_RAW.includes("all") ? ["failed", "edit", "cyrillic", "grandkids"] : (REASONS_RAW as Reason[]),
+  REASONS_RAW.length === 0 || REASONS_RAW.includes("all") ? [...ALL_REASONS] : (REASONS_RAW as Reason[]),
 );
 const MAX_CHAPTERS = Number(process.env.REPAIR_MAX_CHAPTERS || 30);
 const MAX_OPENAI_USD = Number(process.env.REPAIR_MAX_OPENAI_USD || 1);
@@ -80,7 +87,8 @@ async function drive(id: string, token: string, first: Record<string, unknown>):
 
 // tsx запускает .ts как CommonJS — без top-level await
 async function main() {
-  const all = await rest<{ id: string; is_demo: boolean }[]>("families?select=id,is_demo&is_demo=eq.false&limit=1000");
+  // "*": book_langs / labs появились миграциями — до migrate запрос не должен падать
+  const all = await rest<{ id: string; is_demo: boolean; book_langs?: string[] | null; labs?: string[] | null }[]>("families?select=*&is_demo=eq.false&limit=1000");
   // демо-семья отсеяна уже запросом (is_demo=false) — её не трогаем ни при каком выборе
   const families = ALL_FAMILIES ? all : all.filter((f) => SEL.some((s) => f.id.startsWith(s)));
   log(`# repair-chapters · ${new Date().toISOString()} · ${APPLY ? "ПЕРЕСБОРКА" : "dry run"} · семей: ${families.length} (без демо) · причины: ${[...REASONS].join(", ")}`);
@@ -94,6 +102,9 @@ async function main() {
       `stories?select=id,storyteller_id,parent_story_id,question_id,status,error,transcript,text_ru,text_ko,title_ko,quote_ko,followups,created_at&family_id=eq.${fam.id}&order=created_at.asc&limit=1000`,
     );
     const plan: Plan[] = [];
+    // #298: казахские переводы ИИ — только семьям с kk в книге и флагом lang_kk (иначе translate переведёт на KR)
+    const kkOn = (fam.book_langs ?? []).includes("kk") && (fam.labs ?? []).includes("lang_kk");
+    const kkTexts = kkOn && (REASONS.has("kk-script") || REASONS.has("kk-style")) ? await kkRows(rows.map((r) => r.id)) : new Map<string, KkRow>();
     for (const s of rows) {
       if (s.parent_story_id || s.status === "skipped") continue;
       if (s.status === "failed") {
@@ -120,6 +131,19 @@ async function main() {
           .filter(Boolean)
           .join("; ");
         plan.push({ id: s.id, q: s.question_id, why: whyT, body: { from: "translate" }, paid: gk.length > 0 });
+        continue;
+      }
+      // #298: казахский перевод — алфавит / обращение к внукам (в лог — только правило и номера абзацев, без текста)
+      const kt = kkTexts.get(s.id);
+      if (kt) {
+        const p = kkProblems(kt, s.text_ru);
+        const whyK = [
+          REASONS.has("kk-script") && p.script.length ? `не по алфавиту в казахском (#298): ${p.script.length} сл.` : "",
+          REASONS.has("kk-style") && p.style.length ? `к внукам «сендер» и «сіздер» (#298), абз. ${p.style.map((m) => m.paragraph).join(", ")}` : "",
+        ]
+          .filter(Boolean)
+          .join("; ");
+        if (whyK) plan.push({ id: s.id, q: s.question_id, why: whyK, body: { from: "translate" }, paid: true });
       }
     }
     plans.push({ fam: fam.id, token, plan });
@@ -155,6 +179,25 @@ async function main() {
   } else log(stop ? "Ничего не менял." : "Dry run: ничего не менял. Запустите с apply = true.");
   if (process.env.GITHUB_STEP_SUMMARY) appendFileSync(process.env.GITHUB_STEP_SUMMARY, out.join("\n") + "\n");
   if (stop) process.exit(2);
+}
+
+type KkRow = { text: string | null; title: string | null; quote: string | null };
+
+/** #298: казахские переводы ИИ глав семьи (story_texts lang=kk, origin=ai); нет таблицы до migrate — пусто. */
+async function kkRows(ids: string[]): Promise<Map<string, KkRow>> {
+  const out = new Map<string, KkRow>();
+  for (let i = 0; i < ids.length; i += 100) {
+    const part = ids.slice(i, i + 100);
+    try {
+      const rows = await rest<(KkRow & { story_id: string })[]>(
+        `story_texts?select=story_id,text,title,quote&lang=eq.kk&origin=eq.ai&story_id=in.(${part.join(",")})`,
+      );
+      for (const r of rows) if (r.text) out.set(r.story_id, r);
+    } catch {
+      return out;
+    }
+  }
+  return out;
 }
 
 /** Сумма cost_usd OpenAI с начала суток UTC — тот же день, что daily_budget_usd в роутере. */

@@ -54,6 +54,8 @@ export interface PipelineRepo {
   updateTree?(story: Story): Promise<void>;
   /** #121 #124: запомнить корейское написание (только где name_ko ещё пусто — первая глава задаёт его для всей книги). */
   saveSpellings?(story: Story, spellings: { id: string; name_ko: string }[]): Promise<void>;
+  /** #298: то же для казахского — family_entities.name_kk (только где пусто; до migrate колонки нет — ошибка, глава не падает). */
+  saveSpellingsKk?(story: Story, spellings: { id: string; name_kk: string }[]): Promise<void>;
   /**
    * #231: языки книги семьи (с учётом флага lang_kk) и языки, на которые глава уже переведена (строки story_texts).
    * Нет реализации — как до #231: перевод на корейский, пока нет text_ko.
@@ -183,6 +185,13 @@ export class MemoryPipelineRepo implements PipelineRepo {
     for (const sp of spellings) {
       const e = this.entities.find((x) => x.id === sp.id && x.family_id === story.family_id);
       if (e && !e.name_ko?.trim()) Object.assign(e, { name_ko: sp.name_ko, updated_at: now });
+    }
+  }
+  async saveSpellingsKk(story: Story, spellings: { id: string; name_kk: string }[]) {
+    const now = new Date().toISOString();
+    for (const sp of spellings) {
+      const e = this.entities.find((x) => x.id === sp.id && x.family_id === story.family_id) as (FamilyEntity & { name_kk?: string | null }) | undefined;
+      if (e && !e.name_kk?.trim()) Object.assign(e, { name_kk: sp.name_kk, updated_at: now });
     }
   }
   async saveEntities(story: Story, drafts: EntityDraft[]) {
@@ -331,6 +340,12 @@ export class SupabasePipelineRepo implements PipelineRepo {
       // только пустое написание: соседняя глава могла успеть раньше — тогда её вариант и остаётся
       const { error } = await this.db.from("family_entities").update({ name_ko: sp.name_ko }).eq("id", sp.id).eq("family_id", story.family_id).is("name_ko", null);
       if (error) throw new Error(`словарь семьи: ${error.message}`);
+    }
+  }
+  async saveSpellingsKk(story: Story, spellings: { id: string; name_kk: string }[]) {
+    for (const sp of spellings) {
+      const { error } = await this.db.from("family_entities").update({ name_kk: sp.name_kk }).eq("id", sp.id).eq("family_id", story.family_id).is("name_kk", null);
+      if (error) throw new Error(`словарь семьи (kk): ${error.message}`);
     }
   }
   async saveEntities(story: Story, drafts: EntityDraft[]) {
