@@ -5,13 +5,15 @@
 // Пишет eval/reports/<дата>.md и <дата>.json (или --out / --json). Как читать — eval/README.md.
 // Реальный режим: GEMINI_API_KEY в .env.local и AI_MODE=gemini|auto. Лимит — --max-calls запросов на прогон
 // (по умолчанию 24) и --total-max на весь запуск (по умолчанию 150): квота Gemini ~500/сутки общая с продом.
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { parseArgs } from "node:util";
 import { DEFAULT_MAX_CALLS } from "@/eval/sim/budget";
 import { BEHAVIORS, listPersonas, loadPersona, resolveBehavior } from "@/eval/sim/persona";
 import { REPORTS_DIR } from "@/eval/sim/report";
 import { runSimulation } from "@/eval/sim/run";
+import type { ReviewSetFile } from "@/eval/reviews/format";
+import { goldenCheck } from "@/eval/reviews/golden-check";
 import { EvalStore } from "@/eval/store";
 import { chooseBackMode, parseGlossary } from "@/eval/kr-check";
 import { evaluateRun, instrument, QUALITY_CALLS, renderEvalReport, renderPrComment, summarize, type EvalSummary, type RunMetrics } from "@/eval/quality";
@@ -39,6 +41,7 @@ function usage(msg?: string): never {
       "Использование: npm run eval -- [--personas kim,pak,tsoi] [--behaviors default|all|<профиль,…>] [--questions N]",
       "                               [--max-calls N] [--total-max N] [--out file.md] [--json file.json]",
       "                               [--compare before.json] [--label текст] [--comment file.md] [--link url]",
+      "                               [--review-set eval/reviews/sets/<имя>.json]   # #232: главы → набор для носителей",
       `Персонажи: ${listPersonas().join(", ")}`,
       `Профили: default (у каждого персонажа свои), all (все по очереди, только mock), ${BEHAVIORS.join(", ")}`,
     ].join("\n"),
@@ -76,6 +79,8 @@ async function main() {
       label: { type: "string", default: "" },
       comment: { type: "string" },
       link: { type: "string" },
+      // #232: главы прогона → набор для ссылок носителей (eval/reviews/sets/<имя>.json)
+      "review-set": { type: "string" },
       help: { type: "boolean", short: "h", default: false },
     },
     strict: true,
@@ -121,6 +126,8 @@ async function main() {
   const glossary = existsSync("docs/glossary.md") ? parseGlossary(readFileSync("docs/glossary.md", "utf8")) : undefined;
 
   const runs: RunMetrics[] = [];
+  const reviewItems: ReviewSetFile["items"] = [];
+  const translateVersion = promptVersions().translate ?? "?";
   for (const key of personas) {
     const persona = loadPersona(key);
     for (const bk of behaviorKeys) {
@@ -134,6 +141,10 @@ async function main() {
         ai: inst.ai,
         mode,
       });
+      for (const c of sim.chapters) {
+        if (c.error || !c.text_ru || !c.text_ko) continue;
+        reviewItems.push({ persona: persona.key, title: c.title ?? "", source: c.text_ru, model: c.text_ko, prompt_version: `translate ${translateVersion}` });
+      }
       const m = await evaluateRun({ sim, ai: inst.ai, models: inst.models, mock: !real, wallMs: 0, glossary, backAi });
       m.wallMs = performance.now() - t0;
       runs.push(m);
@@ -163,7 +174,20 @@ async function main() {
   mkdirSync(path.dirname(json), { recursive: true });
   writeFileSync(out, renderEvalReport(summary, before), "utf8");
   writeFileSync(json, JSON.stringify(summary, null, 2), "utf8");
-  if (values.comment) writeFileSync(values.comment, renderPrComment(summary, before, { link: values.link }), "utf8");
+  if (values.comment) {
+    writeFileSync(values.comment, renderPrComment(summary, before, { link: values.link }), "utf8");
+    // #232: строка «Носители: ближе N / дальше M» — сверка с золотым набором eval/golden (только в прогоне «после»)
+    const golden = real ? await goldenCheck({ ai: inst.ai }) : [];
+    if (golden.length) appendFileSync(values.comment, `\n${golden.join("\n")}\n`, "utf8");
+    for (const l of golden) console.log(l);
+  }
+  if (values["review-set"]) {
+    const file = values["review-set"];
+    const set: ReviewSetFile = { name: path.basename(file).replace(/\.json$/, ""), pair: "ru-ko", created: date, items: reviewItems };
+    mkdirSync(path.dirname(file), { recursive: true });
+    writeFileSync(file, JSON.stringify(set, null, 2) + "\n", "utf8");
+    console.log(`Набор для носителей: ${reviewItems.length} глав → ${file} (добавьте импорт в eval/reviews/sets/index.ts)${real ? "" : " — mock, тексты заглушки!"}`);
+  }
 
   const t = summary.totals;
   console.log(

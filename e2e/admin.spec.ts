@@ -53,3 +53,48 @@ test("флаги #223: demo_flag в /api/health, список флагов и в
   await expect(page.getByText(`demo_flag: выключен семье ${DEMO_FAMILY.id.slice(0, 8)}`)).toBeVisible();
   await expect(kim).not.toContainText("labs:");
 });
+
+test("носители #232: ссылка в /admin/reviews → правка и оценка с телефона → отозвать", async ({ page }) => {
+  await adminLogin(page, "/admin");
+  await page.getByRole("link", { name: "Носители: ссылки на проверку перевода →" }).click();
+  await page.waitForURL(/\/admin\/reviews/);
+  await expect(page.getByRole("heading", { name: "Носители языка" })).toBeVisible();
+  await page.getByLabel("Проверяющий — только инициалы").fill("Тест Евал");
+  await page.getByRole("button", { name: "Создать ссылку" }).click();
+  const created = page.getByTestId("review-new-link");
+  await expect(created).toContainText("Ссылка для Т. Е. (ru-ko");
+  const href = await created.getByRole("link").getAttribute("href");
+  expect(href).toMatch(/\/review\/[A-Za-z0-9_-]{32}$/);
+  const reviewPath = new URL(href!).pathname;
+
+  await page.goto(reviewPath);
+  await expect(page.getByRole("heading", { name: /번역 검토/ })).toBeVisible();
+  await page.getByRole("button", { name: "고치려면 누르세요: 1" }).click();
+  await page.getByRole("textbox", { name: "고치기" }).fill("검토자가 고친 문장입니다.");
+  await page.getByRole("button", { name: /^저장/ }).click();
+  const first = page.locator('[data-paragraph="0"]');
+  await expect(first).toContainText("검토자가 고친 문장입니다.");
+  await expect(first).toContainText("수정됨");
+  await page.getByRole("button", { name: "의미 4" }).click();
+  await expect(page.getByRole("button", { name: "의미 4" })).toHaveAttribute("aria-pressed", "true");
+  await expect(page.getByText("✓ 저장됨")).toBeVisible();
+
+  // сохранено на сервере: после перезагрузки — то же
+  await page.reload();
+  // открывается первый непроверенный текст — первый уже проверен, возвращаемся к нему
+  await expect(page.getByTestId("review-progress")).toContainText("1개 확인");
+  await page.getByRole("button", { name: /이전/ }).click();
+  await expect(page.locator('[data-paragraph="0"]')).toContainText("검토자가 고친 문장입니다.");
+  await expect(page.getByRole("button", { name: "의미 4" })).toHaveAttribute("aria-pressed", "true");
+
+  await page.goto("/admin/reviews");
+  const card = page.locator("[data-review-link]").filter({ hasText: "Т. Е." }).first();
+  await expect(card).toContainText("Проверено 1 из");
+  await expect(card).toContainText("правок абзацев 1");
+  await expect(card).toContainText("смысл 4.0");
+  await card.getByRole("button", { name: "Отозвать" }).click();
+  await expect(card).toContainText("отозвана");
+
+  await page.goto(reviewPath);
+  await expect(page.getByTestId("review-closed")).toBeVisible();
+});
