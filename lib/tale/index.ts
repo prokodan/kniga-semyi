@@ -326,7 +326,7 @@ export async function writeTale(familyId: string, opts: { childName?: unknown; a
     const tale = await ai.run(
       "tale",
       { storytellerName, ...(childName ? { childName } : {}), stories: taleInputStories(stories) },
-      { noCache: Boolean(opts.again) },
+      { noCache: Boolean(opts.again), familyId },
     );
     let pages = tale.pages
       .filter((p) => p.text.trim())
@@ -387,7 +387,11 @@ export async function illustratePage(
   if (existing && (!opts.regenerate || opts.fallback)) return { page, image: existing.url, fallback: existing.fallback, notice: null };
   if (!opts.fallback) {
     try {
-      const img = await ai.run("illustrate", { prompt: p.illustrationPrompt, style: data.style }, { noCache: Boolean(opts.regenerate) });
+      const img = await ai.run(
+        "illustrate",
+        { prompt: p.illustrationPrompt, style: data.style },
+        { noCache: Boolean(opts.regenerate), familyId },
+      );
       return { page, image: await storeImage(extra, page, img), fallback: false, notice: null };
     } catch (e) {
       // AiUnavailableError перечисляет модели и причины (403 «organization must be verified», 429, timeout…)

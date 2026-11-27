@@ -27,7 +27,7 @@ export const transcribe: StepFn = async ({ story, ai, repo, deadline }) => {
   const out = await ai.run(
     "transcribe",
     { audioBase64: audio.base64, mimeType: audio.mimeType, durationSec, languageHint: "ru", ...(hints?.length ? { hints } : {}) },
-    { storyId: story.id, deadline },
+    { storyId: story.id, familyId: story.family_id, deadline },
   );
   const heard = out.text.trim();
   if (!heard) throw new StepError("В записи не удалось разобрать речь — попробуйте записать ближе к телефону");

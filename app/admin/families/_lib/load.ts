@@ -27,6 +27,30 @@ async function all<T>(db: SupabaseClient, table: string, columns: string, notNul
   return out;
 }
 
+/**
+ * Расход ИИ на семью (#204): строки с family_id (сказка, картинки, next_question) или story_id.
+ * До workflow migrate колонки family_id нет — читаем как раньше, только по story_id.
+ */
+async function loadUsage(db: SupabaseClient): Promise<UsagePick[]> {
+  const probe = await db.from("ai_usage").select("family_id").limit(1);
+  if (probe.error) return all<UsagePick>(db, "ai_usage", "story_id, cost_usd", "story_id");
+  const out: UsagePick[] = [];
+  for (let page = 0; page < MAX_PAGES; page++) {
+    const { data, error } = await db
+      .from("ai_usage")
+      .select("story_id, family_id, cost_usd")
+      .or("story_id.not.is.null,family_id.not.is.null")
+      .gt("cost_usd", 0)
+      .order("created_at", { ascending: true })
+      .range(page * PAGE, page * PAGE + PAGE - 1);
+    if (error) throw new Error(`ai_usage: ${error.message}`);
+    const rows = (data ?? []) as UsagePick[];
+    out.push(...rows);
+    if (rows.length < PAGE) break;
+  }
+  return out;
+}
+
 type MemoryGlobals = {
   __bookMemory?: Map<string, { book: Book }>;
   __demoOrderStore?: { orders: OrderPick[] };
@@ -54,8 +78,7 @@ export async function loadAdminFamilyRows(): Promise<{ source: "supabase" | "mem
     all<StoryPick>(db, "stories", "id, family_id, status, parent_story_id"),
     all<BookPick>(db, "books", "family_id, status, page_count, created_at"),
     all<OrderPick>(db, "demo_orders", "family_id, product, amount_kzt, extras, status, created_at"),
-    // расход ИИ на семью — через story_id (шаги без истории, например сказка, сюда не попадают)
-    all<UsagePick>(db, "ai_usage", "story_id, cost_usd", "story_id"),
+    loadUsage(db),
   ]);
   return { source: "supabase", rows: { families, stories, books, orders, usage } };
 }

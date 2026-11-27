@@ -85,6 +85,18 @@ export async function toggleProvider(fd: FormData) {
   });
 }
 
+/** #194: «платный» — роутер считает $ по ценам (lib/ai/config.ts PRICING) и соблюдает бюджеты дня / месяца. */
+export async function toggleProviderPaid(fd: FormData) {
+  const provider = str(fd, "provider");
+  const paid = str(fd, "paid") === "true";
+  return guarded(`provider-${provider}`, async () => {
+    await getAdminSource().saveProvider(provider, { paid });
+    return paid
+      ? `${provider}: платный — расход считается в $, действуют бюджеты.`
+      : `${provider}: бесплатный — расход $0, бюджеты не действуют.`;
+  });
+}
+
 export async function saveProviderLimits(fd: FormData) {
   const provider = str(fd, "provider");
   return guarded(`provider-${provider}`, async () => {

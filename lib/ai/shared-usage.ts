@@ -153,8 +153,10 @@ export class SharedUsageStore implements AiStore {
 
   /** Отправить строку в прод. Ошибка — только лог: шаг ИИ не падает. */
   async send(row: UsageRow): Promise<boolean> {
-    const { story_id: _s, env: _e, ...rest } = row;
+    // #204: семьи staging в проде нет — family_id, как и story_id, не отправляем.
+    const { story_id: _s, family_id: _f, env: _e, ...rest } = row;
     void _s;
+    void _f;
     void _e;
     try {
       const res = await this.fetchImpl(`${this.opts.prodUrl}/api/ai/usage`, {

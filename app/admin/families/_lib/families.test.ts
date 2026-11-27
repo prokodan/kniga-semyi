@@ -34,6 +34,8 @@ function rows(): AdminFamilyRows {
       { story_id: "s5", cost_usd: 0.001 },
       { story_id: null, cost_usd: 5 },
       { story_id: "чужая", cost_usd: 1 },
+      // #204: сказка и картинки — без истории, но с семьёй
+      { story_id: null, family_id: "aaaaaaaa-1", cost_usd: 0.05 },
     ],
   };
 }
@@ -62,9 +64,9 @@ describe("админка «Семьи»", () => {
     expect(priceOfOrder({ product: "print", extras: [], amount_kzt: 39_900, status: "paid_demo" }).plan).toBe("Печатная · Стандарт");
   });
 
-  it("расход ИИ — по story_id своих историй; ссылки с токеном (экранирован)", () => {
+  it("расход ИИ — по family_id или story_id своих историй (#204); ссылки с токеном (экранирован)", () => {
     const [li, kim] = buildAdminFamilies(rows());
-    expect(kim!.aiUsd).toBe(0.015);
+    expect(kim!.aiUsd).toBe(0.065);
     expect(li!.aiUsd).toBe(0.001);
     expect(kim!.links).toEqual({ family: "/f/tok%2Fa", book: "/book/tok%2Fa", names: "/f/tok%2Fa/names" });
   });

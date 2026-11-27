@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { FALLBACK_PRICING, PRICING } from "./config";
+import { priceOf } from "./config";
 import type { AiUsageMetrics } from "./types";
 
 /** JSON с отсортированными ключами — одинаковый вход даёт одинаковый хэш. */
@@ -36,9 +36,9 @@ export function startOfUtcMonth(now: Date = new Date()): Date {
   return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));
 }
 
-export function estimateCostUsd(model: string, paid: boolean, usage: AiUsageMetrics): number {
+export function estimateCostUsd(model: string, paid: boolean, usage: AiUsageMetrics, at: Date = new Date()): number {
   if (!paid) return 0;
-  const p = PRICING[model] ?? FALLBACK_PRICING;
+  const p = priceOf(model, at);
   const cost =
     ((usage.inputTokens ?? 0) / 1e6) * (p.inPerM ?? 0) +
     ((usage.outputTokens ?? 0) / 1e6) * (p.outPerM ?? 0) +

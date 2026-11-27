@@ -4,9 +4,10 @@
 // 2. Тестовый запрос к каждой — тем же телом, что lib/ai/providers/gemini.ts (JSON-ответ, thinkingLevel low).
 // 3. gpt-5.4-mini — проверка, если задан OPENAI_API_KEY, иначе «не проверено» (#105: gpt-5-mini устаревает;
 //    если gpt-5.4-mini не ответила, а gpt-5-mini ответила — резервом остаётся gpt-5-mini, с предупреждением).
-// 4. Пишет SQL для ai_routes (OUT_SQL) и таблицу в summary запуска ($GITHUB_STEP_SUMMARY).
+// 4. Пишет SQL для ai_routes (OUT_SQL; при платном Gemini — без квот, #194, scripts/ai-models-sql.mjs) и таблицу в summary запуска ($GITHUB_STEP_SUMMARY).
 // Ключи не печатаются. Зависимостей нет — Node 22 (fetch). Запуск: node scripts/ai-models.mjs
 import { appendFileSync, readFileSync, writeFileSync } from "node:fs";
+import { routesSql } from "./ai-models-sql.mjs";
 
 const GEMINI_KEY = process.env.GEMINI_API_KEY?.trim();
 const OPENAI_KEY = process.env.OPENAI_API_KEY?.trim();
@@ -332,17 +333,7 @@ const geminiWorks = Boolean(FL || F);
 // и переписал прод. Теперь при любом 429 / 503 у кандидатов маршруты не меняются — только отчёт.
 const unstable = busy.length > 0;
 
-const esc = (s) => s.replace(/'/g, "''");
-const sql = [
-  "-- Сгенерировано scripts/ai-models.mjs. Меняет только providers (порядок моделей); pinned_provider, timeout_ms и enabled не трогает.",
-  "begin;",
-  ...Object.entries(routes).map(
-    ([step, list]) =>
-      `insert into ai_routes (step, providers, timeout_ms) values ('${step}', '${esc(JSON.stringify(list))}'::jsonb, ${TIMEOUTS[step]})\n  on conflict (step) do update set providers = excluded.providers, updated_at = now();`,
-  ),
-  "commit;",
-  "select step, jsonb_path_query_array(providers, '$[*].model') as models from ai_routes order by step;",
-].join("\n");
+const sql = routesSql(routes, TIMEOUTS);
 writeFileSync(
   OUT_SQL,
   (unstable
@@ -377,7 +368,7 @@ for (const [step, list] of Object.entries(routes)) md(`| \`${step}\` | ${list.ma
 if (transcribeModel && !USE_T) md(`| | \`${transcribeModel}\` проверена, но в transcribe не включена (флаг use_transcribe_model, #52) |`);
 md("| `illustrate` | без изменений (`gpt-image-2` → `gpt-image-1.5`) |");
 md();
-md(`Квоты в сутки: Flash-Lite ${LIMIT_FL}, Flash ${LIMIT_F} (порог 90%). Фактические лимиты — AI Studio → Rate limits.`);
+md(`Квоты в сутки: Flash-Lite ${LIMIT_FL}, Flash ${LIMIT_F} (порог 90%) — только если Gemini в базе бесплатный; при \`ai_providers.gemini.paid = true\` (#194) квоты Gemini не пишутся, действует бюджет $. Фактические лимиты — AI Studio → Rate limits.`);
 md();
 md(
   `<details><summary>Gemini в models.list: ${models.length}</summary>\n\nFlash-Lite: ${fl.map((m) => m.id).join(", ") || "—"}\n\nFlash: ${fla.map((m) => m.id).join(", ") || "—"}\n</details>`,
