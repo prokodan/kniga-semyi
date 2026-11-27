@@ -246,6 +246,14 @@ describe("evalRoute", () => {
     expect(r.providers.map((p) => p.model)).toEqual(["gemini-3-flash", "gpt-5.4-mini", "gemini-3-flash-lite"]);
     expect(evalRoute("back_translate", null).providers[0]!.model).toMatch(/flash(?!-lite)/);
   });
+  it("#276: обратный перевод kk → ru (translate) — модели своего провайдера, не Flash-Lite прямого перевода", () => {
+    expect(evalRoute("translate", prod, undefined, "openai").providers).toEqual([{ provider: "openai", model: "gpt-5.4-mini" }]);
+    // в прод-маршруте нет OpenAI — модель из lib/ai/config.ts, а не пустой список («ИИ недоступен»)
+    const fromConfig = evalRoute("translate", [prod[0]!], undefined, "openai").providers;
+    expect(fromConfig.length).toBeGreaterThan(0);
+    expect(fromConfig.every((p) => p.provider === "openai")).toBe(true);
+    expect(evalRoute("translate", prod, "gemini-x", "gemini").providers.map((p) => p.model)).toEqual(["gemini-3-flash", "gemini-3-flash-lite"]);
+  });
   it("нет строк judge / back_translate в проде — модели берутся из translate прода", () => {
     const d = deriveEvalSteps({ translate: prod });
     expect(d.judge).toEqual(prod);

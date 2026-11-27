@@ -2,6 +2,7 @@
 // набор глав прогона eval для ссылок (eval/reviews/sets/*.json). Чистые функции — скрипт выгрузки, eval и тесты.
 import { createHash } from "node:crypto";
 import { alignParagraphs, isRealEdit, labelSlug } from "@/app/admin/reviews/_lib/core";
+import type { Chapter } from "@/eval/sim/run";
 import { REVIEW_AXES, type ReviewAxis, type ReviewFeedback, type ReviewItem, type ReviewLink } from "@/lib/types";
 
 // ---------------- набор глав прогона eval ----------------
@@ -14,6 +15,22 @@ export interface ReviewSetFile {
   /** Дата прогона (YYYY-MM-DD) */
   created: string;
   items: { persona: string; title: string; source: string; model: string; prompt_version: string }[];
+}
+
+/**
+ * #257: главы прогона → тексты набора для носителей. ru-ko — русская глава и её корейский перевод; ru-kk — только
+ * главы, где казахский — перевод ИИ с русского (рассказ по-казахски — оригинал, носителю его править не нужно).
+ */
+export function reviewSetItems(persona: string, chapters: Pick<Chapter, "title" | "text_ru" | "text_ko" | "text_kk" | "original" | "error">[], pair: string, versions: Record<string, string>): ReviewSetFile["items"] {
+  const out: ReviewSetFile["items"] = [];
+  for (const c of chapters) {
+    if (c.error || !c.text_ru) continue;
+    if (pair === "ru-kk") {
+      if (c.original !== "ru" || !c.text_kk) continue;
+      out.push({ persona, title: c.title ?? "", source: c.text_ru, model: c.text_kk, prompt_version: `translate.kk ${versions["translate.kk"] ?? "?"}` });
+    } else if (c.text_ko) out.push({ persona, title: c.title ?? "", source: c.text_ru, model: c.text_ko, prompt_version: `translate ${versions.translate ?? "?"}` });
+  }
+  return out;
 }
 
 // ---------------- выгрузка ----------------
@@ -260,6 +277,10 @@ export interface GoldenVerdict {
   after: number;
   verdict: "closer" | "same" | "farther";
   missing: string[];
+  /** #256: чем решили «ближе / дальше» — судья ИИ (по смыслу) или chrF (судья недоступен / mock) */
+  method: "judge" | "chrF";
+  /** #256: оценки судьи по смыслу к правке носителя (1–5): old — перевод, который правил носитель, new — новый */
+  judge?: { old: number; new: number; lost: string[]; comment: string };
 }
 
 export const GOLDEN_EPS = 0.02;
@@ -268,15 +289,65 @@ export function judgeGolden(e: GoldenEntry, fresh: string): GoldenVerdict {
   const before = chrF(e.model, e.gold);
   const after = chrF(fresh, e.gold);
   const verdict = after > before + GOLDEN_EPS ? "closer" : after < before - GOLDEN_EPS ? "farther" : "same";
-  return { key: e.key, persona: e.persona, before, after, verdict, missing: missingNumbers(e.gold, fresh) };
+  return { key: e.key, persona: e.persona, before, after, verdict, missing: missingNumbers(e.gold, fresh), method: "chrF" };
 }
 
-/** Строка в комментарий eval: «Носители (ru-ko): ближе N / дальше M / как было K»; потерянные числа — 🔴. */
+// ---------------- судья ИИ (#256) ----------------
+
+/**
+ * Порядок переводов для судьи: x / y — какой из них новый. Детерминированно по ключу абзаца (повтор = тот же вход =
+ * кэш), но в половине абзацев новый перевод идёт первым — чтобы судья не тянул к одной позиции.
+ */
+export function goldenNewIsX(key: string): boolean {
+  return parseInt(createHash("sha256").update(`order:${key}`).digest("hex").slice(0, 2), 16) % 2 === 0;
+}
+
+export interface GoldenJudgeItem {
+  id: string;
+  source: string;
+  gold: string;
+  x: string;
+  y: string;
+}
+
+export function goldenJudgeItem(e: GoldenEntry, fresh: string): GoldenJudgeItem {
+  const newIsX = goldenNewIsX(e.key);
+  return { id: e.key, source: e.source, gold: e.gold, x: newIsX ? fresh : e.model, y: newIsX ? e.model : fresh };
+}
+
+export interface GoldenJudgeScore {
+  id: string;
+  x: number;
+  y: number;
+  lost_x?: string[];
+  lost_y?: string[];
+  comment?: string;
+}
+
+/**
+ * Ответ судьи → вердикт «ближе / дальше» по смыслу. Новый перевод ниже по смыслу, чем тот, что правил носитель, или
+ * потерял факт правки, который старый сохранял, — «дальше» и 🔴 по фактам (`missing`). chrF остаётся для справки.
+ */
+export function applyJudge(v: GoldenVerdict, s: GoldenJudgeScore): GoldenVerdict {
+  const newIsX = goldenNewIsX(v.key);
+  const now = newIsX ? s.x : s.y;
+  const old = newIsX ? s.y : s.x;
+  const lostNew = (newIsX ? s.lost_x : s.lost_y) ?? [];
+  const lostOld = new Set(((newIsX ? s.lost_y : s.lost_x) ?? []).map((l) => l.trim().toLowerCase()));
+  const lost = lostNew.map((l) => l.trim()).filter((l) => l && !lostOld.has(l.toLowerCase()));
+  const verdict = now > old ? "closer" : now < old ? "farther" : "same";
+  const missing = [...v.missing, ...(verdict === "farther" ? [`смысл ${now} < ${old}`] : []), ...lost];
+  return { ...v, verdict, missing: [...new Set(missing)], method: "judge", judge: { old, new: now, lost, comment: s.comment ?? "" } };
+}
+
+/** Строка в комментарий eval: «Носители (ru-ko): ближе N / дальше M / как было K»; потерянные факты и «хуже по смыслу» — 🔴. */
 export function goldenLine(pair: string, verdicts: GoldenVerdict[], skipped = 0): string {
   if (!verdicts.length) return `- **Носители (${pair}):** ${skipped ? `не проверено (${skipped} абзацев пропущено)` : "золотой набор пуст"}`;
   const c = (v: GoldenVerdict["verdict"]) => verdicts.filter((x) => x.verdict === v).length;
   const facts = verdicts.filter((v) => v.missing.length);
   const mark = facts.length ? "🔴" : c("farther") > c("closer") ? "🟡" : "🟢";
-  const tail = facts.length ? ` · 🔴 по фактам: ${facts.map((f) => `${f.persona} (нет ${f.missing.join(", ")})`).join("; ")}` : "";
-  return `- ${mark} **Носители (${pair}):** ближе ${c("closer")} / дальше ${c("farther")} / как было ${c("same")} из ${verdicts.length}${skipped ? ` (+${skipped} не проверено)` : ""}${tail}`;
+  const judged = verdicts.filter((v) => v.method === "judge").length;
+  const how = judged === verdicts.length ? "судья ИИ по смыслу" : judged ? `судья ИИ ${judged}, chrF ${verdicts.length - judged}` : "chrF — судья недоступен";
+  const tail = facts.length ? ` · 🔴 по фактам: ${facts.map((f) => `${f.persona} (${f.missing.map((m) => (/^\d+$/.test(m) ? `нет ${m}` : m)).join(", ")})`).join("; ")}` : "";
+  return `- ${mark} **Носители (${pair}):** ближе ${c("closer")} / дальше ${c("farther")} / как было ${c("same")} из ${verdicts.length}${skipped ? ` (+${skipped} не проверено)` : ""} · ${how}${tail}`;
 }
