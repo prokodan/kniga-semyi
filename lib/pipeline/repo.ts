@@ -162,6 +162,8 @@ export class MemoryPipelineRepo implements PipelineRepo {
     return nameHints({ storytellerName: this.names.get(story.storyteller_id), entities });
   }
   entities: FamilyEntity[] = [];
+  /** #265: тесты кладут сюда сборку древа; нет — древо не трогаем */
+  updateTree?: (story: Story) => Promise<void>;
   async familyEntities(story: Story) {
     return this.entities.filter((e) => e.family_id === story.family_id).map((e) => structuredClone(e));
   }

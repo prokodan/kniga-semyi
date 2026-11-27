@@ -37,7 +37,10 @@ export default async function TreePage({
   const everyone = [...model.nodes, ...model.hidden, ...model.others];
   const urls = await photoUrls(everyone.map((n) => n.photo)).catch(() => ({}) as Record<string, string>);
   const photos: Record<string, string> = {};
-  for (const n of everyone) if (n.photo && urls[n.photo]) photos[n.id] = urls[n.photo];
+  for (const n of everyone) {
+    const url = n.photo ? urls[n.photo] : undefined;
+    if (url) photos[n.id] = url;
+  }
 
   const titles = new Map(stories.map((s) => [s.id, s.title?.trim() || "Глава без названия"]));
   const chapterTitles: Record<string, string> = {};
