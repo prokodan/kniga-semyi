@@ -89,7 +89,7 @@ test("книга RU + KZ: глава RU | KZ из story_texts, без корей
 });
 
 test("демо RU + KR: разворот RU | KR как раньше", async ({ page }) => {
-  const story = DEMO_STORY_SEEDS[0];
+  const story = DEMO_STORY_SEEDS.at(0)!;
   await page.goto(`/chapter/${story.id}?token=${DEMO_FAMILY.access_token}`);
   await expect(page.getByRole("tab", { name: "한국어" })).toBeVisible();
   await expect(page.getByRole("tab", { name: "Қазақша" })).toHaveCount(0);
