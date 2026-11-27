@@ -289,6 +289,7 @@ function TreePerson({ p, ko, dense }: { p: BookTreePerson; ko: boolean; dense: b
       }}
     >
       {p.photo ? (
+        // eslint-disable-next-line jsx-a11y/alt-text -- Image из react-pdf, не <img>
         <Image src={p.photo} style={{ width: T.photo, height: T.photo, borderRadius: T.photo / 2, objectFit: "cover", marginBottom: 3 }} />
       ) : (
         <View

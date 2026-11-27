@@ -37,7 +37,7 @@ async function snap(page: Page, name: string, opts: { full?: boolean } = {}) {
   expect.soft(scroll, `${name}: горизонтальная прокрутка страницы (${scroll} > ${width})`).toBeLessThanOrEqual(width);
   const small = await page.evaluate(() =>
     [...document.querySelectorAll("button, a")]
-      .filter((b) => !b.closest('[data-testid="tree"]') || b.closest("[data-no-pan]")) // карточки в окне масштабируются
+      .filter((b) => !b.closest('[data-testid="tree"]')) // карточки в окне древа масштабируются (щипок, «Всё древо»)
       .map((b) => ({ t: (b.textContent ?? "").trim().slice(0, 30), r: b.getBoundingClientRect() }))
       .filter(({ r }) => r.width > 0 && r.height > 0 && r.height < 47.5)
       .map(({ t, r }) => `«${t}» ${Math.round(r.height)} px`),
@@ -209,7 +209,9 @@ test("древо 2.0: синтетическая семья на 40 челове
   await snap(page, "big40-390x844-03-sheet");
   await page.getByRole("dialog").getByRole("button", { name: "Закрыть" }).click();
 
-  // «+ ещё» — ветка разворачивается и встаёт в центр
+  // «+ ещё» — ветка разворачивается и встаёт в центр (чипы — под тётями, сбоку: сначала всё древо)
+  await page.getByRole("button", { name: "Всё древо" }).click();
+  await page.waitForTimeout(400);
   const more = page.getByTestId("tree-more").first();
   const before = await page.getByTestId("tree-person").count();
   await more.click();

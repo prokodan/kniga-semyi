@@ -7,12 +7,12 @@ import { isKinOnlyName } from "./kinship";
 import { kinPaths, labelFor, type KinLabel } from "./labels";
 
 /**
- * Размеры (px). Карточка 128 × 156: фото 44, имя до 2 строк, имя по-корейски, годы, роль — с запасом по высоте
+ * Размеры (px). Карточка 128 × 164: фото 40, имя до 2 строк (длинное — до 3 строк мельче), имя по-корейски, годы, роль — с запасом по высоте
  * (Safari центрирует содержимое кнопки по вертикали: не влезло — режется и сверху, #277).
  * couple — зазор внутри пары, capsule — поле капсулы вокруг пары, gapX — между капсулами / людьми ряда,
  * label — полоса подписи ряда над карточками, gapY — от низа ряда до полосы подписи следующего.
  */
-export const CARD = { w: 128, h: 156, couple: 10, capsule: 6, gapX: 22, gapY: 76, label: 30, pad: 16, chipW: 112, chipH: 48 };
+export const CARD = { w: 128, h: 164, couple: 10, capsule: 6, gapX: 22, gapY: 76, label: 30, pad: 16, chipW: 112, chipH: 48 };
 
 /** Сколько людей показываем сразу; больше — ветки «сбоку» сворачиваются (#277). */
 export const COLLAPSE_AT = 24;
@@ -101,8 +101,8 @@ export interface TreeModel {
   height: number;
   /** Рамка капсулы смотрящего — «⌖ к рассказчику» ставит её в центр */
   focus: { x: number; y: number; w: number; h: number } | null;
-  /** Пара рассказчика с рядами родителей и детей (по высоте) — при открытии, если влезает в окно */
-  home: { x: number; y: number; w: number; h: number } | null;
+  /** Пара рассказчика с родителями и детьми, потом только с родителями — при открытии берём первую, что влезает в окно */
+  homes: { x: number; y: number; w: number; h: number }[];
   /** Люди из рассказов без родства («учительница», «соседка») — не на древе */
   others: TreeNode[];
   /** Супруги, стоящие рядом (левый, правый) */
@@ -310,7 +310,11 @@ export function layoutTree(src: TreeSource, claims: Claim[], viewerStorytellerId
       const q = [...start];
       while (q.length) {
         const id = q.shift()!;
-        for (const n of next(id)) if (!seen.has(n)) (seen.add(n), q.push(n));
+        for (const n of next(id)) {
+          if (seen.has(n)) continue;
+          seen.add(n);
+          q.push(n);
+        }
       }
       return seen;
     };
@@ -417,12 +421,30 @@ export function layoutTree(src: TreeSource, claims: Claim[], viewerStorytellerId
     return xs.length ? mean(xs) : null;
   };
 
+  // предки встают над своим ребёнком на прямой линии (родители — над рассказчиком, а не над серединой всех детей)
+  const lineUp = new Set<string>();
+  if (rootGen !== null) {
+    const q = [root!];
+    while (q.length) {
+      for (const p of parentsOf(q.shift()!)) {
+        if (lineUp.has(p)) continue;
+        lineUp.add(p);
+        q.push(p);
+      }
+    }
+  }
+  const wantUp = (u: string[]) => {
+    const kids = u.flatMap(childrenOf).filter((id) => left.has(id));
+    const line = u.some((id) => lineUp.has(id)) ? kids.filter((id) => id === root || lineUp.has(id)) : [];
+    const use = line.length ? line : kids;
+    return use.length ? mean(use.map(center)) : null;
+  };
   if (rootGen !== null) {
     packCentered(rootGen, rows.get(rootGen)!.find((u) => u.includes(root!)));
-    for (const g of gens.filter((x) => x < rootGen).reverse()) arrange(g, wantFrom(childrenOf));
+    for (const g of gens.filter((x) => x < rootGen).reverse()) arrange(g, wantUp);
     for (const g of gens.filter((x) => x > rootGen)) arrange(g, wantFrom(parentsOf));
     // предки ещё раз — по детям, которые теперь стоят на своих местах (тёти рядом с двоюродными)
-    for (const g of gens.filter((x) => x < rootGen).reverse()) arrange(g, wantFrom(childrenOf));
+    for (const g of gens.filter((x) => x < rootGen).reverse()) arrange(g, wantUp);
   } else if (gens.length) {
     packCentered(gens[0]!);
     for (const g of gens.slice(1)) arrange(g, wantFrom(parentsOf));
@@ -528,18 +550,23 @@ export function layoutTree(src: TreeSource, claims: Claim[], viewerStorytellerId
       })()
     : null;
 
-  // «дом» при открытии: пара рассказчика + его родители и дети (если влезают в окно — показываем вместе)
-  const home = (() => {
-    if (!focus || !root) return null;
-    const near = [...parentsOf(root), ...childrenOf(root), ...spouses(root).flatMap(parentsOf)].map((id) => node.get(id)!).filter(Boolean);
+  // «дом» при открытии: пара рассказчика + родители (+ дети) — показываем вместе, если влезают в окно
+  const around = (ids: string[]) => {
+    if (!focus) return null;
+    const near = ids.map((id) => node.get(id)).filter((n): n is TreeNode => !!n);
+    if (!near.length) return null;
+    const xs = [focus.x, focus.x + focus.w, ...near.flatMap((n) => [n.x - CARD.capsule, n.x + CARD.w + CARD.capsule])];
     const ys = [focus.y, focus.y + focus.h, ...near.flatMap((n) => [n.y - CARD.label, n.y + CARD.h + CARD.capsule])];
-    const top = Math.min(...ys);
-    return { x: focus.x, y: top, w: focus.w, h: Math.max(...ys) - top };
-  })();
+    const x = Math.min(...xs);
+    const y = Math.min(...ys);
+    return { x, y, w: Math.max(...xs) - x, h: Math.max(...ys) - y };
+  };
+  const up = root ? [...parentsOf(root), ...spouses(root).flatMap(parentsOf)] : [];
+  const homes = [around([...up, ...(root ? childrenOf(root) : [])]), around(up)].filter((b): b is NonNullable<typeof b> => !!b);
 
   return {
     viewer: root,
-    home,
+    homes,
     nodes: placed,
     hidden,
     chips,

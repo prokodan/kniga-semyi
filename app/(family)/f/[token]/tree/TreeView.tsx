@@ -15,7 +15,8 @@ const field = "w-full rounded-card border border-line bg-paper px-4 py-3 text-lg
 const primary = "min-h-12 rounded-button bg-seal px-6 py-3 text-lg font-semibold text-paper active:bg-seal-dark disabled:opacity-50";
 const secondary = "min-h-12 rounded-button border border-line bg-paper px-4 py-3 text-lg text-ink disabled:opacity-50";
 const linkRow = "flex min-h-12 items-center justify-between gap-3 rounded-card px-4 py-3";
-const round = "flex size-12 items-center justify-center rounded-button border border-line bg-paper text-xl text-ink shadow-card active:bg-paper-deep";
+const round = "flex size-12 items-center justify-center rounded-button border border-line bg-paper text-2xl text-ink active:bg-paper-deep";
+const tool = "inline-flex min-h-12 items-center gap-2 rounded-button border border-line bg-paper px-4 text-base text-ink active:bg-paper-deep";
 
 type Mode = "view" | "edit" | "merge" | "place";
 type Xform = { x: number; y: number; s: number };
@@ -89,7 +90,7 @@ async function squarePhoto(file: File): Promise<Blob> {
 }
 
 function Avatar({ n, photo, size }: { n: TreeNode; photo?: string; size: "card" | "list" | "sheet" }) {
-  const cls = size === "card" ? "size-11 text-xl" : size === "list" ? "size-12 text-xl" : "size-18 text-3xl";
+  const cls = size === "card" ? "size-10 text-lg" : size === "list" ? "size-12 text-xl" : "size-18 text-3xl";
   if (photo) {
     // eslint-disable-next-line @next/next/no-img-element -- подписанная ссылка Storage, next/image не нужен
     return <img src={photo} alt="" className={`${cls} shrink-0 rounded-full object-cover`} draggable={false} />;
@@ -371,8 +372,10 @@ function TreeCanvas({
     if (!f) return fitAll(anim);
     const { W, H } = size();
     const s = clamp(Math.min(1, (W - 24) / f.w, (H - 24) / f.h), minScale(), MAX_SCALE);
-    const h = model.home && model.home.h * s <= H - 24 ? model.home : f;
-    go({ s, x: W / 2 - (f.x + f.w / 2) * s, y: H / 2 - (h.y + h.h / 2) * s }, anim);
+    // родители (и дети) — тоже в окне, если влезают; по ширине — середина «дома», если влез и он, иначе пара
+    const h = model.homes.find((b) => b.h * s <= H - 24) ?? f;
+    const cx = h.w * s <= W - 24 ? h.x + h.w / 2 : f.x + f.w / 2;
+    go({ s, x: W / 2 - cx * s, y: H / 2 - (h.y + h.h / 2) * s }, anim);
   };
   const fitAll = (anim = true) => {
     const { W, H } = size();
@@ -388,13 +391,17 @@ function TreeCanvas({
   };
 
   // при открытии и после «+ ещё»: рассказчик с парой (или развёрнутая ветка) — в центре окна
+  // (в следующем кадре: окно уже измерено; до этого древо скрыто — без «прыжка»)
   useLayoutEffect(() => {
-    const f = focusId ? boxOf(focusId) : null;
-    if (f) {
-      const kids = model.nodes.filter((n) => n.y > f.y && Math.abs(n.x + CARD.w / 2 - (f.x + f.w / 2)) < 600);
-      const { W } = size();
-      centerOn({ ...f, h: f.h + (kids.length ? CARD.h + CARD.gapY + CARD.label : 0) }, Math.min(1, W / 420), false);
-    } else toViewer(false);
+    const id = requestAnimationFrame(() => {
+      const f = focusId ? boxOf(focusId) : null;
+      if (f) {
+        const kids = model.nodes.some((n) => n.y > f.y && Math.abs(n.x + CARD.w / 2 - (f.x + f.w / 2)) < 600);
+        const { W } = size();
+        centerOn({ ...f, h: f.h + (kids ? CARD.h + CARD.gapY + CARD.label : 0) }, Math.min(1, W / 420), false);
+      } else toViewer(false);
+    });
+    return () => cancelAnimationFrame(id);
     // eslint-disable-next-line react-hooks/exhaustive-deps -- только при новой раскладке
   }, [model, focusId]);
 
@@ -437,7 +444,6 @@ function TreeCanvas({
   };
   const onDown = (e: React.PointerEvent) => {
     if (e.pointerType === "mouse" && e.button !== 0) return;
-    if ((e.target as HTMLElement).closest("[data-no-pan]")) return;
     pointers.current.set(e.pointerId, local(e));
     if (pointers.current.size === 1) gesture.current = null;
     if (animate) setAnimate(false);
@@ -497,6 +503,7 @@ function TreeCanvas({
   const H = viewH || 2000;
 
   return (
+    <div className="flex flex-col gap-3">
     <div
       ref={vp}
       data-testid="tree"
@@ -575,7 +582,7 @@ function TreeCanvas({
       {t &&
         model.rows.map((r) => {
           const title = rowTitle(r.rel, rowLang, viewerFemale);
-          if (!title) return null;
+          if (!title || t.s < 0.5) return null; // мелко — подпись закрыла бы карточки
           const y = t.y + r.y * t.s + Math.max(0, (CARD.label * t.s - 24) / 2);
           if (y < -24 || y > H) return null;
           return (
@@ -596,18 +603,19 @@ function TreeCanvas({
           );
         })}
 
-      <div className="absolute right-3 bottom-3 flex flex-col gap-2" data-no-pan>
-        <button type="button" className={round} onClick={() => zoom(1.25)} aria-label="Крупнее">
-          +
-        </button>
+    </div>
+      <div className="flex flex-wrap items-center gap-2" aria-label="Масштаб древа">
         <button type="button" className={round} onClick={() => zoom(0.8)} aria-label="Мельче">
           −
         </button>
-        <button type="button" className={round} onClick={() => toViewer()} aria-label="К рассказчику" title="К рассказчику">
-          ⌖
+        <button type="button" className={round} onClick={() => zoom(1.25)} aria-label="Крупнее">
+          +
         </button>
-        <button type="button" className={round} onClick={() => fitAll()} aria-label="Всё древо" title="Всё древо">
-          ⤢
+        <button type="button" className={tool} onClick={() => toViewer()} aria-label="К рассказчику">
+          <span aria-hidden>⌖</span> К рассказчику
+        </button>
+        <button type="button" className={tool} onClick={() => fitAll()} aria-label="Всё древо">
+          <span aria-hidden>⤢</span> Всё древо
         </button>
       </div>
     </div>
@@ -616,6 +624,8 @@ function TreeCanvas({
 
 function PersonCard({ n, photo, showKo, active, onOpen }: { n: TreeNode; photo?: string; showKo: boolean; active: boolean; onOpen: () => void }) {
   const border = n.isViewer ? "border-2 border-seal" : n.loose ? "border border-dashed border-muted" : "border border-line";
+  // длинное имя (ФИО) — до 3 строк мельче, короткое — до 2; длиннее — «…», целиком — в листе по нажатию
+  const long = n.name.length > 16 && n.name.trim().split(/\s+/).length >= 2;
   return (
     <button
       type="button"
@@ -628,7 +638,11 @@ function PersonCard({ n, photo, showKo, active, onOpen }: { n: TreeNode; photo?:
       {/* содержимое прижато к верху: Safari центрирует содержимое кнопки — так ничего не уходит вверх (#277) */}
       <span className="flex h-full w-full flex-col items-center justify-start gap-1 px-2 pt-2.5 pb-2">
         <Avatar n={n} photo={photo} size="card" />
-        <span lang="ru" data-testid="tree-name" className="line-clamp-2 w-full font-serif text-[14px] leading-[1.2] break-words hyphens-auto text-ink">
+        <span
+          lang="ru"
+          data-testid="tree-name"
+          className={`w-full font-serif break-words hyphens-auto text-ink ${long ? "line-clamp-3 text-[13px] leading-[1.15]" : "line-clamp-2 text-[14px] leading-[1.2]"}`}
+        >
           {n.name}
         </span>
         {showKo && n.nameKo && (
@@ -788,7 +802,7 @@ function PersonSheet({
               </span>
             )}
           </p>
-          <p className="text-ink-soft">{[n.isViewer ? "📖 у него своя книга" : n.label?.ru, n.years].filter(Boolean).join(" · ")}</p>
+          <p className="text-ink-soft">{[n.isViewer ? "📖 своя книга" : n.label?.ru, n.years].filter(Boolean).join(" · ")}</p>
           {n.place && (
             <p className="text-ink-soft">
               {born} {n.place}
