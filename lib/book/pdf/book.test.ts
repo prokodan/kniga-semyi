@@ -46,6 +46,26 @@ describe("модель книги", () => {
     expect(book.legacy).toEqual(expect.objectContaining({ ru: "Слова бабушки", ko: "할머니의 말씀" }));
   });
 
+  it("#230: языки книги по умолчанию = ru, ko — модель та же, что при явных [ru, ko]", () => {
+    const builtAt = new Date("2026-11-27T00:00:00Z");
+    const dflt = composeBook({ ...DEMO_BOOK, voiceUrl, builtAt });
+    expect(dflt.langs).toEqual(["ru", "ko"]);
+    expect(dflt.second).toBe("ko");
+    expect(composeBook({ ...DEMO_BOOK, voiceUrl, builtAt, langs: ["ru", "ko"] })).toEqual(dflt);
+    expect(dflt.chapters.every((c) => c.textKo && c.titleKo)).toBe(true);
+  });
+
+  it("#230: книга на одном языке — без корейского текста, названий и подписей", () => {
+    const book = composeBook({ ...DEMO_BOOK, voiceUrl, langs: ["ru"] });
+    expect(book.second).toBeNull();
+    expect(book.chapters.map((c) => c.textRu)).toEqual(composeBook({ ...DEMO_BOOK, voiceUrl }).chapters.map((c) => c.textRu));
+    for (const c of book.chapters) expect([c.textKo, c.titleKo, c.quoteKo, c.blockKo]).toEqual([null, null, null, ""]);
+    expect(book.groups.every((g) => g.ko === "")).toBe(true);
+    expect(book.legacy.ko).toBe("");
+    // второй язык, для которого ещё нет вёрстки (kk — #231), печатается как одна книга на основном языке
+    expect(composeBook({ ...DEMO_BOOK, voiceUrl, langs: ["ru", "kk"] }).second).toBeNull();
+  });
+
   it("абзацы", () => {
     expect(paragraphs("Раз.\n\n  Два  три.\nЧетыре")).toEqual(["Раз.", "Два три.", "Четыре"]);
     expect(paragraphs(null)).toEqual([]);
@@ -87,6 +107,15 @@ describe("PDF", () => {
     expect(r.missingKorean).toEqual([]);
     expect(composeBook({ ...DEMO_KIOSK_BOOK, voiceUrl }).legacy.ru).toBe("Слова бабушки");
     console.info(`[book] киоск: ${r.pageCount} стр., ${Math.round(r.pdf.length / 1024)} КБ, ${r.ms} мс`);
+  }, 60_000);
+
+  it("#230: книга на одном языке — сплошной текст, страниц меньше, чем в RU | KR", async () => {
+    const two = await renderBook({ ...DEMO_BOOK, voiceUrl });
+    const one = await renderBook({ ...DEMO_BOOK, voiceUrl, langs: ["ru"] });
+    expect(one.chapters).toBe(7);
+    expect(one.pageCount).toBe(countPages(one.pdf));
+    expect(one.pageCount).toBeLessThan(two.pageCount);
+    expect(one.pageCount).toBeGreaterThanOrEqual(1 + 1 + 7);
   }, 60_000);
 
   it("без готовых глав — понятная ошибка", async () => {

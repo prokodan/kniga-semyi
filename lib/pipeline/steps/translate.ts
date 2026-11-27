@@ -1,4 +1,6 @@
-// Шаг 3: перевод главы на корейский → text_ko, title_ko, quote_ko.
+// Шаг 3: перевод главы на корейский → text_ko, title_ko, quote_ko (в базе — ещё и story_texts lang=ko, зеркалом).
+// #230: шаг вызывается с парой языков (translateInput). L0 — только ru → ko, как до v2; перевод по families.book_langs — #231.
+import { translateInput } from "@/lib/ai/types";
 import { fixCyrillic } from "../cyrillic";
 import { namesForTranslate } from "../entities";
 import { applySpellings, learnSpellings, requiredSpellings } from "../names";
@@ -12,7 +14,7 @@ export const translate: StepFn = async ({ story, ai, repo, deadline }) => {
   const names = namesForTranslate(entities);
   const raw = await ai.run(
     "translate",
-    { text_ru: story.text_ru, title: story.title ?? "", quote: story.quote ?? "", ...(names.length ? { names } : {}) },
+    translateInput("ru", "ko", { text_ru: story.text_ru, title: story.title ?? "", quote: story.quote ?? "", ...(names.length ? { names } : {}) }),
     { storyId: story.id, familyId: story.family_id, deadline },
   );
   // #124: переводчик всё же написал имя по-своему — его вариант меняем на словарный (правка семьи важнее)

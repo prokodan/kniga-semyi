@@ -152,11 +152,13 @@ function Cover({ book }: { book: BookModel }) {
     <Page size={PAGE.size} style={{ backgroundColor: COLOR.paperDeep, color: COLOR.ink, fontFamily: FAMILY_RU, padding: 44 }}>
       <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center" }}>
         <Text style={{ fontSize: 8.5, letterSpacing: 2, color: COLOR.muted }}>КНИГА СЕМЬИ</Text>
-        {/* красная печать-тоджан */}
+        {/* красная печать-тоджан (в книге без корейского — пустая печать) */}
         <View style={{ width: 34, height: 34, backgroundColor: COLOR.seal, borderRadius: 3, alignItems: "center", justifyContent: "center" }}>
-          <Text style={{ fontFamily: FAMILY_KO, fontWeight: 700, fontSize: 9.5, color: COLOR.paper, lineHeight: 1.1, textAlign: "center" }}>
-            {"우리\n이야기"}
-          </Text>
+          {book.second === "ko" && (
+            <Text style={{ fontFamily: FAMILY_KO, fontWeight: 700, fontSize: 9.5, color: COLOR.paper, lineHeight: 1.1, textAlign: "center" }}>
+              {"우리\n이야기"}
+            </Text>
+          )}
         </View>
       </View>
 
@@ -170,7 +172,7 @@ function Cover({ book }: { book: BookModel }) {
           <View style={{ width: 54, height: 1.5, backgroundColor: COLOR.gold, marginBottom: 34 }} />
         )}
         <Text style={{ fontSize: 28, fontWeight: 700, textAlign: "center", lineHeight: 1.2 }}>{st.name}</Text>
-        {st.name_ko && (
+        {book.second === "ko" && st.name_ko && (
           <Text style={{ fontFamily: FAMILY_KO, fontSize: 17, color: COLOR.inkSoft, marginTop: 6, textAlign: "center" }}>{st.name_ko}</Text>
         )}
         {meta && <Text style={{ fontSize: 10.5, color: COLOR.muted, marginTop: 10, textAlign: "center" }}>{meta}</Text>}
@@ -178,7 +180,7 @@ function Cover({ book }: { book: BookModel }) {
 
       <View style={{ alignItems: "center", borderTopWidth: 0.75, borderTopColor: COLOR.gold, paddingTop: 14 }}>
         <Text style={{ fontSize: 14, textAlign: "center" }}>{book.title}</Text>
-        <Text style={{ fontFamily: FAMILY_KO, fontSize: 10, color: COLOR.inkSoft, marginTop: 4 }}>우리 가족 이야기</Text>
+        {book.second === "ko" && <Text style={{ fontFamily: FAMILY_KO, fontSize: 10, color: COLOR.inkSoft, marginTop: 4 }}>우리 가족 이야기</Text>}
       </View>
     </Page>
   );
@@ -200,13 +202,25 @@ function Toc({ book, pages }: { book: BookModel; pages: PageMap }) {
   return (
     <View>
       <Text style={s.kicker}>
-        СОДЕРЖАНИЕ <Text style={{ fontFamily: FAMILY_KO }}>· 차례</Text>
+        {book.second === "ko" ? (
+          <>
+            СОДЕРЖАНИЕ <Text style={{ fontFamily: FAMILY_KO }}>· 차례</Text>
+          </>
+        ) : (
+          "СОДЕРЖАНИЕ"
+        )}
       </Text>
       <View style={s.rule} />
       {book.groups.map((g) => (
         <View key={g.ru} style={{ marginBottom: 7 }}>
           <Text style={{ fontSize: 7.5, letterSpacing: 1.2, color: COLOR.seal, marginBottom: 2, lineHeight: 1.3 }}>
-            {g.ru.toUpperCase()} <Text style={{ fontFamily: FAMILY_KO }}>· {g.ko}</Text>
+            {g.ko ? (
+              <>
+                {g.ru.toUpperCase()} <Text style={{ fontFamily: FAMILY_KO }}>· {g.ko}</Text>
+              </>
+            ) : (
+              g.ru.toUpperCase()
+            )}
           </Text>
           {g.chapters.map((ch) => (
             <TocLine key={ch.id} ch={ch} page={pages[ch.id]} />
@@ -216,7 +230,13 @@ function Toc({ book, pages }: { book: BookModel; pages: PageMap }) {
       {book.legacy.chapters.length > 0 && (
         <View style={{ marginTop: 6, borderTopWidth: 0.5, borderTopColor: COLOR.line, paddingTop: 10 }}>
           <Text style={{ fontSize: 8, letterSpacing: 1.2, color: COLOR.seal, marginBottom: 4 }}>
-            {book.legacy.ru.toUpperCase()} <Text style={{ fontFamily: FAMILY_KO }}>· {book.legacy.ko}</Text>
+            {book.legacy.ko ? (
+              <>
+                {book.legacy.ru.toUpperCase()} <Text style={{ fontFamily: FAMILY_KO }}>· {book.legacy.ko}</Text>
+              </>
+            ) : (
+              book.legacy.ru.toUpperCase()
+            )}
           </Text>
           {book.legacy.chapters.map((ch) => (
             <TocLine key={ch.id} ch={ch} page={pages[ch.id]} />
@@ -256,7 +276,22 @@ function BookPage({ title, collect, children }: { title: string; collect?: BookD
   );
 }
 
-function Chapter({ ch, legacy, title, her, collect }: { ch: BookChapter; legacy: boolean; title: string; her: boolean; collect?: BookDocumentProps["collect"] }) {
+function Chapter({
+  ch,
+  legacy,
+  title,
+  her,
+  ko,
+  collect,
+}: {
+  ch: BookChapter;
+  legacy: boolean;
+  title: string;
+  her: boolean;
+  /** #230: в книге есть корейский (book.second === "ko") — как сейчас; нет — сплошной русский текст */
+  ko: boolean;
+  collect?: BookDocumentProps["collect"];
+}) {
   const paraRu = paragraphs(ch.textRu);
   const paraKo = paragraphs(ch.textKo);
   return (
@@ -264,7 +299,15 @@ function Chapter({ ch, legacy, title, her, collect }: { ch: BookChapter; legacy:
       <PageMark id={ch.id} collect={collect} />
       <View>
         <Text style={s.kicker}>
-          {legacy ? "Наказ" : ch.blockRu} <Text style={{ fontFamily: FAMILY_KO }}>· {legacy ? "당부" : ch.blockKo}</Text>
+          {ko ? (
+            <>
+              {legacy ? "Наказ" : ch.blockRu} <Text style={{ fontFamily: FAMILY_KO }}>· {legacy ? "당부" : ch.blockKo}</Text>
+            </>
+          ) : legacy ? (
+            "Наказ"
+          ) : (
+            ch.blockRu
+          )}
         </Text>
         <Text style={s.h1}>{ch.title}</Text>
         {ch.titleKo && <Text style={s.h1ko}>{ch.titleKo}</Text>}
@@ -315,7 +358,7 @@ function LegacyDivider({ book }: { book: BookModel }) {
     <View style={{ alignItems: "center", paddingTop: 120 }}>
       <View style={{ width: 40, height: 40, backgroundColor: COLOR.seal, borderRadius: 3, marginBottom: 22 }} />
       <Text style={{ fontSize: 24, fontWeight: 700, textAlign: "center", lineHeight: 1.3 }}>{book.legacy.ru}</Text>
-      <Text style={{ fontFamily: FAMILY_KO, fontSize: 15, color: COLOR.inkSoft, marginTop: 8, lineHeight: 1.4 }}>{book.legacy.ko}</Text>
+      {book.legacy.ko && <Text style={{ fontFamily: FAMILY_KO, fontSize: 15, color: COLOR.inkSoft, marginTop: 8, lineHeight: 1.4 }}>{book.legacy.ko}</Text>}
       <View style={{ ...s.rule, marginVertical: 18 }} />
       <Text style={{ fontSize: 10.5, color: COLOR.inkSoft, textAlign: "center", maxWidth: 240 }}>
         То, что {book.storyteller.name} просит передать детям и внукам.
@@ -330,12 +373,16 @@ function Colophon({ book }: { book: BookModel }) {
     <View style={{ paddingTop: 300 }}>
       <View style={s.rule} />
       <Text style={{ fontSize: 9.5, color: COLOR.inkSoft, lineHeight: 1.6 }}>
-        Эту книгу {book.elder === "grandmother" ? "рассказала" : "рассказал"} {book.storyteller.name} — своим голосом, для своей семьи. Каждая глава записана на диктофон
-        телефона, бережно отредактирована без переписывания и переведена на корейский язык.
+        Эту книгу {book.elder === "grandmother" ? "рассказала" : "рассказал"} {book.storyteller.name}
+        {book.second === "ko"
+          ? " — своим голосом, для своей семьи. Каждая глава записана на диктофон телефона, бережно отредактирована без переписывания и переведена на корейский язык."
+          : " — своим голосом, для своей семьи. Каждая глава записана на диктофон телефона и бережно отредактирована без переписывания."}
       </Text>
-      <Text style={{ fontFamily: FAMILY_KO, fontSize: 8.5, color: COLOR.muted, lineHeight: 1.7, marginTop: 6 }}>
-        이 책은 가족을 위해 직접 목소리로 들려준 이야기를 담았습니다.
-      </Text>
+      {book.second === "ko" && (
+        <Text style={{ fontFamily: FAMILY_KO, fontSize: 8.5, color: COLOR.muted, lineHeight: 1.7, marginTop: 6 }}>
+          이 책은 가족을 위해 직접 목소리로 들려준 이야기를 담았습니다.
+        </Text>
+      )}
       <Text style={{ fontSize: 8, color: COLOR.muted, marginTop: 14 }}>
         {book.title} · собрано {date} · «Книга семьи», Алматы
       </Text>
@@ -346,14 +393,15 @@ function Colophon({ book }: { book: BookModel }) {
 export function BookDocument({ book, pages = {}, collect }: BookDocumentProps) {
   const regular = book.chapters.filter((c) => c.block !== "legacy");
   const her = book.elder === "grandmother";
+  const ko = book.second === "ko";
   return (
-    <Document title={book.title} author={book.storyteller.name} subject="Книга семьи · 우리 이야기" creator="Книга семьи" producer="Книга семьи" language="ru">
+    <Document title={book.title} author={book.storyteller.name} subject={ko ? "Книга семьи · 우리 이야기" : "Книга семьи"} creator="Книга семьи" producer="Книга семьи" language="ru">
       <Cover book={book} />
       <BookPage title={book.title} collect={collect}>
         <Toc book={book} pages={pages} />
       </BookPage>
       {regular.map((ch) => (
-        <Chapter key={ch.id} ch={ch} legacy={false} title={book.title} her={her} collect={collect} />
+        <Chapter key={ch.id} ch={ch} legacy={false} title={book.title} her={her} ko={ko} collect={collect} />
       ))}
       {book.legacy.chapters.length > 0 && (
         <BookPage title={book.title} collect={collect}>
@@ -361,7 +409,7 @@ export function BookDocument({ book, pages = {}, collect }: BookDocumentProps) {
         </BookPage>
       )}
       {book.legacy.chapters.map((ch) => (
-        <Chapter key={ch.id} ch={ch} legacy title={book.title} her={her} collect={collect} />
+        <Chapter key={ch.id} ch={ch} legacy title={book.title} her={her} ko={ko} collect={collect} />
       ))}
       <BookPage title={book.title} collect={collect}>
         <Colophon book={book} />

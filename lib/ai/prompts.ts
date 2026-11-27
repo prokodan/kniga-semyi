@@ -1,3 +1,4 @@
+import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import type { AiStep } from "./types";
@@ -10,8 +11,20 @@ import { sha256 } from "./util";
 /** Шаги, чьи промпты живут в eval/ (оценка качества, в продуктовый конвейер не входят). */
 export const EVAL_PROMPT_STEPS: readonly AiStep[] = ["judge", "back_translate"];
 
-export function promptPath(step: AiStep, root = process.cwd()): string {
+/**
+ * #230: перевод — свой промпт на каждый язык книги: prompts/translate.<to>.md (ru → ko — translate.ko.md, бывший
+ * translate.md без изменений текста, поэтому версия и кэш прежние). Роутер пока берёт перевод на корейский
+ * (единственная пара L0); выбор промпта по `to` из входа — #231 (L1), вместе с правкой роутера.
+ * Нет translate.<to>.md (дерево «до» в eval собрано из промптов базовой ветки) — prompts/translate.md.
+ */
+export const DEFAULT_TRANSLATE_TO = "ko";
+
+export function promptPath(step: AiStep, root = process.cwd(), translateTo: string = DEFAULT_TRANSLATE_TO): string {
   const dir = EVAL_PROMPT_STEPS.includes(step) ? "eval" : "prompts";
+  if (step === "translate") {
+    const byLang = path.join(root, dir, `translate.${translateTo}.md`);
+    if (existsSync(byLang)) return byLang;
+  }
   return path.join(root, dir, `${step}.md`);
 }
 

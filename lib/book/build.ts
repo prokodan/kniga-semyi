@@ -10,6 +10,7 @@ import { listenUrl } from "./qr";
 import { DEMO_BOOK } from "./pdf/demo";
 import { isBookChapter, type Elder } from "./pdf/model";
 import { renderBook } from "./pdf/render";
+import { bookLangs, loadStoryTexts, withStoryTexts } from "./texts";
 
 /** Минимум глав, с которого книга «как настоящая» (собрать можно и раньше — экран предупредит). */
 export const BOOK_MIN_CHAPTERS = 5;
@@ -47,7 +48,7 @@ export class BookBusyError extends Error {
 // ---------------- данные семьи ----------------
 
 interface BookSource {
-  family: Pick<Family, "id" | "name">;
+  family: Pick<Family, "id" | "name" | "book_langs">;
   storyteller: Storyteller | null;
   stories: Story[];
 }
@@ -62,10 +63,11 @@ async function loadSource(familyId: string): Promise<BookSource | null> {
       .filter((s) => s.family_id === familyId)
       .sort((a, b) => a.created_at.localeCompare(b.created_at));
     const stories = [...(store.stories?.values() ?? [])].filter((s) => s.family_id === familyId);
-    return structuredClone({ family: { id: family.id, name: family.name }, storyteller: storytellers[0] ?? null, stories });
+    return structuredClone({ family: { id: family.id, name: family.name, book_langs: family.book_langs }, storyteller: storytellers[0] ?? null, stories });
   }
   const [fam, st, stories] = await Promise.all([
-    db.from("families").select("id, name").eq("id", familyId).maybeSingle(),
+    // "*", а не список колонок: book_langs (#230) появится только после migrate — запрос не должен падать до него
+    db.from("families").select("*").eq("id", familyId).maybeSingle(),
     db.from("storytellers").select("*").eq("family_id", familyId).order("created_at", { ascending: true }).limit(1),
     db.from("stories").select("*").eq("family_id", familyId).eq("status", "ready").is("parent_story_id", null),
   ]);
@@ -73,7 +75,15 @@ async function loadSource(familyId: string): Promise<BookSource | null> {
   if (!fam.data) return null;
   if (st.error) throw new Error(`рассказчик: ${st.error.message}`);
   if (stories.error) throw new Error(`главы: ${stories.error.message}`);
-  return { family: fam.data as BookSource["family"], storyteller: (st.data?.[0] as Storyteller) ?? null, stories: (stories.data ?? []) as Story[] };
+  // #230: тексты глав — из story_texts, если строка есть, иначе старые колонки
+  const list = (stories.data ?? []) as Story[];
+  const texts = await loadStoryTexts(db, list.map((s) => s.id));
+  const f = fam.data as Family;
+  return {
+    family: { id: f.id, name: f.name, book_langs: f.book_langs },
+    storyteller: (st.data?.[0] as Storyteller) ?? null,
+    stories: list.map((s) => withStoryTexts(s, texts)),
+  };
 }
 
 // ---------------- строка books ----------------
@@ -210,6 +220,7 @@ export async function buildBook(familyId: string, opts: { origin: string }): Pro
       stories: src.stories,
       voiceUrl: (id) => listenUrl(origin, id),
       elder,
+      langs: bookLangs(src.family),
     });
     if (rendered.missingKorean.length) console.warn(`[book] ${familyId}: нет в шрифте слогов ${rendered.missingKorean.join("")}`);
 
