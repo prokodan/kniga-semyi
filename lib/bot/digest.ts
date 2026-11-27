@@ -70,9 +70,12 @@ export function aiLine(s: DigestStats): string {
     envs.length > 1 ? ` (${envs.map(([env, v]) => `${e(env)} ${usd(Number(v[k] ?? 0))}`).join(" + ")})` : "";
   const month = sum("month");
   const budget = s.budget?.month ? Number(s.budget.month) : null;
-  const share = budget ? month / budget : null;
+  // #218: у превью свои ключи и бюджет — бюджет прода сравниваем только с расходом прода
+  const prodMonth = envs.length > 1 ? Number(s.ai.prod?.month ?? 0) : month;
+  const share = budget ? prodMonth / budget : null;
   const icon = share !== null && share >= 0.8 ? "🟠" : "🤖";
-  return `${icon} ИИ: вчера ${usd(sum("yesterday"))}${split("yesterday")} · месяц ${usd(month)}${split("month")}${budget ? ` из ${usd(budget)} (${Math.round(share! * 100)}%)` : ""}`;
+  const of = !budget ? "" : envs.length > 1 ? ` · прод ${Math.round(share! * 100)}% из ${usd(budget)}` : ` из ${usd(budget)} (${Math.round(share! * 100)}%)`;
+  return `${icon} ИИ: вчера ${usd(sum("yesterday"))}${split("yesterday")} · месяц ${usd(month)}${split("month")}${of}`;
 }
 
 export type DigestInput = {

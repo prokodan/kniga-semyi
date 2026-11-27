@@ -288,6 +288,9 @@ export default async function AdminPage({ searchParams }: { searchParams: Search
       <Link href="/admin/ai" className="flex min-h-12 items-center justify-center rounded-button border border-line bg-paper px-4">
         ИИ: расход и провайдеры →
       </Link>
+      <Link href="/admin/reviews" className="flex min-h-12 items-center justify-center rounded-button border border-line bg-paper px-4">
+        Носители: ссылки на проверку перевода →
+      </Link>
     </Shell>
   );
 }

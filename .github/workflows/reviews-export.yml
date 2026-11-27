@@ -1,0 +1,84 @@
+name: reviews-export
+
+# #232 (docs/v2/LANGUAGES.md §3.2): отзывы носителей из /review/<токен> → PR с eval/reviews/<дата>-<пара>-<инициалы>.md
+# и пополнением золотого набора eval/golden/<пара>.jsonl (scripts/reviews-export.ts). Только вручную.
+# Тексты — вымышленные (eval-персонажи, демо, вопросы банка); проверяющий — только инициалы; токены ссылок не читаются.
+# PR открывает GITHUB_TOKEN: проверки ci / e2e / flag-line на нём сами не стартуют — их запускает следующий коммит
+# в ветку (агент, который разбирает отзывы, всё равно коммитит туда правки промптов).
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "Какая база — staging (превью) или prod"
+        type: choice
+        options: [staging, prod]
+        default: staging
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: reviews-export
+  cancel-in-progress: false
+
+jobs:
+  export:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      TARGET: ${{ inputs.target || 'staging' }}
+      PROD_SB_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
+      PROD_SB_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+      STG_SB_URL: ${{ secrets.STAGING_SUPABASE_URL }}
+      STG_SB_KEY: ${{ secrets.STAGING_SUPABASE_SERVICE_ROLE_KEY }}
+    steps:
+      - uses: actions/checkout@v7
+      - name: Выбор базы
+        run: |
+          if [ "$TARGET" = "staging" ]; then url="$STG_SB_URL"; key="$STG_SB_KEY"; else url="$PROD_SB_URL"; key="$PROD_SB_KEY"; fi
+          if [ -z "$url" ] || [ -z "$key" ]; then echo "::error::Нет секретов Supabase для $TARGET"; exit 1; fi
+          echo "::add-mask::$key"
+          { echo "NEXT_PUBLIC_SUPABASE_URL=$url"; echo "SUPABASE_SERVICE_ROLE_KEY=$key"; } >> "$GITHUB_ENV"
+          echo "### reviews-export: база $TARGET" >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Выгрузка
+        run: npx tsx scripts/reviews-export.ts
+      - name: PR с отзывами
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if [ -z "$(git status --porcelain -- eval/reviews eval/golden)" ]; then
+            echo "Новых отзывов нет — PR не нужен." | tee -a "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          day=$(TZ=Asia/Almaty date +%F)
+          branch="z2/reviews-${day}-${TARGET}-${GITHUB_RUN_NUMBER}"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git checkout -b "$branch"
+          git add eval/reviews eval/golden
+          git commit -q -m "eval: отзывы носителей ${day} (${TARGET}) — reviews-export #232"
+          git push -q origin "$branch"
+          body=$(printf '%s\n' \
+            "Выгрузка отзывов носителей (#232), база **${TARGET}**, запуск ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}." \
+            "" \
+            "- \`eval/reviews/*.md\` — оригинал, перевод модели, правка носителя (diff), оценки, комментарии." \
+            "- \`eval/golden/<пара>.jsonl\` — правки абзацев; слияние PR = правки приняты в золотой набор." \
+            "" \
+            "Дальше: агенту «разбери отзывы eval/reviews/…» → правки \`prompts/translate*.md\`, глоссария, проверок — коммитом в эту ветку (он же запустит ci / e2e / flag-line)." \
+            "" \
+            "## 📝 Заметки для команды" \
+            "- Тексты вымышленные; проверяющий — только инициалы." \
+            "" \
+            "Флаг: не нужен — данные eval (отзывы носителей), поведение сайта не меняется")
+          if url=$(gh api "repos/${GITHUB_REPOSITORY}/pulls" -f title="eval: отзывы носителей ${day} (${TARGET})" -f head="$branch" -f base=main -f body="$body" --jq .html_url 2>/dev/null); then
+            echo "PR: $url" | tee -a "$GITHUB_STEP_SUMMARY"
+          else
+            echo "::warning::PR открыть не удалось (Actions не может создавать PR?) — ветка $branch запушена, откройте PR руками: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/compare/${branch}?expand=1"
+            echo "Ветка \`$branch\` — PR открыть руками: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/compare/${branch}?expand=1" >> "$GITHUB_STEP_SUMMARY"
+          fi

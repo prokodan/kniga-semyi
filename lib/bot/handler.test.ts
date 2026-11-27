@@ -364,9 +364,11 @@ describe("сводка: части (#212)", () => {
     expect(r.fixed).toEqual(["ci"]);
   });
 
-  it("расход ИИ: прод + staging, когда в ai_usage появится env (#211)", () => {
+  it("расход ИИ: прод + staging (#211); #218 — бюджет прода только против расхода прода", () => {
     const line = aiLine({ ...STATS, ai: { staging: { yesterday: 0.05, today: 0, month: 0.5 }, prod: { yesterday: 0.25, today: 0, month: 8 } } });
-    expect(line).toBe("🟠 ИИ: вчера $0.30 (prod $0.25 + staging $0.05) · месяц $8.50 (prod $8.00 + staging $0.50) из $10 (85%)");
+    expect(line).toBe("🟠 ИИ: вчера $0.30 (prod $0.25 + staging $0.05) · месяц $8.50 (prod $8.00 + staging $0.50) · прод 80% из $10");
+    const calm = aiLine({ ...STATS, ai: { staging: { yesterday: 0, today: 0, month: 5 }, prod: { yesterday: 0, today: 0, month: 3 } } });
+    expect(calm.startsWith("🤖")).toBe(true);
   });
 
   it("пусто — «всё спокойно»; зависшие главы и новые семьи — числом", () => {

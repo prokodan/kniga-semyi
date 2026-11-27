@@ -4,6 +4,8 @@ name: staging-sync
 # https://kniga-semyi-git-staging-kniga-semyi-team.vercel.app (секрет STAGING_URL для smoke / seed-demo staging),
 # смотрит в базу kniga-semyi-staging (#211). При каждом push в main ветка `staging` перезаписывается на main
 # (force: своих коммитов в staging не делаем). Vercel собирает превью сам по push в ветку.
+# #222: после этого настройки ИИ staging = прод (ai_routes, ai_providers; бюджеты staging — свои,
+#   переменная репозитория STAGING_AI_BUDGETS, см. scripts/ai-config-sync.mjs). Нет секретов баз — шаг пропускается.
 # Вручную: Actions → staging-sync → Run workflow.
 on:
   push:
@@ -30,6 +32,19 @@ jobs:
           before=$(git ls-remote origin refs/heads/staging | cut -c1-7)
           git push --force origin "HEAD:refs/heads/staging"
           echo "staging: ${before:-нет} → ${GITHUB_SHA:0:7}" | tee -a "$GITHUB_STEP_SUMMARY"
+      - name: Настройки ИИ staging = прод (#222)
+        env:
+          PROD_SB_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
+          PROD_SB_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          STG_SB_URL: ${{ secrets.STAGING_SUPABASE_URL }}
+          STG_SB_KEY: ${{ secrets.STAGING_SUPABASE_SERVICE_ROLE_KEY }}
+          STAGING_AI_BUDGETS: ${{ vars.STAGING_AI_BUDGETS }}
+        run: |
+          if [ -z "$PROD_SB_URL" ] || [ -z "$PROD_SB_KEY" ] || [ -z "$STG_SB_URL" ] || [ -z "$STG_SB_KEY" ]; then
+            echo "::notice::нет секретов баз прода / staging — настройки ИИ не копирую"
+            exit 0
+          fi
+          node scripts/ai-config-sync.mjs
       - name: Telegram — staging не обновился
         if: failure()
         uses: ./.github/actions/telegram
