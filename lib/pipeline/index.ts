@@ -29,6 +29,8 @@ function getRepo(): PipelineRepo {
       async (f) => {
         if (flag("family_tree", { familyId: f.id, labs: f.labs })) await loadTree(f.id, { write: true });
       },
+      // #300: расшифровка по языку рассказа (ru+kk, kk) — только семьям с флагом spoken_kk
+      (f) => flag("spoken_kk", { familyId: f.id, labs: f.labs }),
     );
   }
   g.__interviewMemoryRepo ??= new MemoryInterviewRepo();

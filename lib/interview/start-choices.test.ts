@@ -10,7 +10,16 @@ describe("анкета /start (#233)", () => {
   it("язык рассказа: корё мар — только с корё-сарам, казахский — только с казахской", () => {
     expect(spokenChoices(["general"]).map((c) => c.id)).toEqual(["ru"]);
     expect(spokenChoices(["general", "koryo"]).map((c) => c.id)).toEqual(["ru,koryo", "ru"]);
-    expect(spokenChoices(["general", "kz", "koryo"]).map((c) => c.id)).toEqual(["ru,koryo", "ru", "ru,kk", "kk"]);
+    expect(spokenChoices(["general", "kz", "koryo"], true).map((c) => c.id)).toEqual(["ru,koryo", "ru", "ru,kk", "kk"]);
+  });
+
+  it("#300: «По-казахски» — только с флагом spoken_kk; «По-русски, с казахскими словами» — всегда с казахской", () => {
+    expect(spokenChoices(["general", "kz"]).map((c) => c.id)).toEqual(["ru", "ru,kk"]);
+    expect(spokenChoices(["general", "kz"], false).map((c) => c.id)).toEqual(["ru", "ru,kk"]);
+    expect(spokenChoices(["general", "kz"], true).map((c) => c.id)).toEqual(["ru", "ru,kk", "kk"]);
+    expect(() => parseStartChoices({ packs: ["kz"], spoken: "kk", book: "ru" }, true)).toThrow(/языке/);
+    expect(parseStartChoices({ packs: ["kz"], spoken: "kk", book: "ru" }, true, true).spoken_langs).toEqual(["kk"]);
+    expect(parseStartChoices({ packs: ["kz"], spoken: "ru,kk", book: "ru" }, true).spoken_langs).toEqual(["ru", "kk"]);
   });
 
   it("книга RU + KZ — только с флагом lang_kk", () => {

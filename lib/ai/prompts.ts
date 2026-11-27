@@ -21,10 +21,12 @@ export const DEFAULT_TRANSLATE_TO = "ko";
 
 /**
  * Вариант промпта по входу шага: перевод — язык `to` (нет — ko, как до v2); completeness с `next` (#105 п. 1,
- * флаг lang_kk) — completeness.next.md; judge с `golden` (#256) — eval/judge.golden.md. undefined — обычный prompts/<step>.md (версия и кэш как раньше).
+ * флаг lang_kk) — completeness.next.md; transcribe с kk в `spokenLangs` (#300) — transcribe.kk.md; judge с `golden` (#256) — eval/judge.golden.md. undefined — обычный prompts/<step>.md (версия и кэш как раньше).
  */
 export function promptVariant(step: AiStep, input: unknown): string | undefined {
-  const o = (input && typeof input === "object" ? input : {}) as { to?: unknown; next?: unknown; golden?: unknown };
+  const o = (input && typeof input === "object" ? input : {}) as { to?: unknown; next?: unknown; golden?: unknown; spokenLangs?: unknown };
+  // #300 (флаг spoken_kk): рассказ с казахским — prompts/transcribe.kk.md; ru + корё мар — transcribe.md, как раньше
+  if (step === "transcribe" && Array.isArray(o.spokenLangs) && o.spokenLangs.includes("kk")) return "kk";
   if (step === "translate") return typeof o.to === "string" ? o.to : DEFAULT_TRANSLATE_TO;
   if (step === "completeness" && o.next) return "next";
   if (step === "judge" && o.golden) return "golden"; // #256: eval/judge.golden.md

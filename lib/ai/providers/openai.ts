@@ -33,7 +33,9 @@ export const openaiProvider: AiProvider = {
       if (input.languageHint !== "mixed") form.append("language", input.languageHint);
       // prompt у моделей расшифровки — словарь: имена и места семьи пишутся так (≈ 200 токенов максимум)
       const vocab = (input.hints ?? []).slice(0, 45).join(", ");
-      form.append("prompt", `Пожилой рассказчик вспоминает жизнь. Возможны слова на корё мар.${vocab ? ` Имена и места: ${vocab}.` : ""}`);
+      // #300 (флаг spoken_kk): рассказ с казахским — свой словарь-подсказка; без spokenLangs — как раньше
+      const about = input.spokenLangs?.includes("kk") ? "Возможны казахские слова и фразы — казахскими буквами." : "Возможны слова на корё мар.";
+      form.append("prompt", `Пожилой рассказчик вспоминает жизнь. ${about}${vocab ? ` Имена и места: ${vocab}.` : ""}`);
       const json = (await fetchJson("openai", `${BASE}/audio/transcriptions`, {
         method: "POST",
         headers: { authorization: auth() },
