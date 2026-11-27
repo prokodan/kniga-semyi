@@ -4,14 +4,14 @@ import type { BotConfig } from "./config";
 import { GithubReadOnlyError, type GithubApi } from "./github";
 import { BACK, HEALTH, MENU, prefsKeyboard, queueKeyboard, ROLE } from "./keyboards";
 import { decide, formatEvent, PREF_LABELS, type NotifyEvent, type Prefs } from "./notify";
-import { buildPrompt, roleForOwner } from "./prompts";
+import { buildDigest, type DigestStats } from "./digest";
+import { buildPrompt, HANDOFF_PATH, roleForOwner, templateFromHandoff } from "./prompts";
 import type { BotStore, BotUser, Role } from "./store";
-import { buildProgress, buildQueue, buildTasks, findTask, IN_PROGRESS_LABEL, progressBar, type GhIssue, type Task } from "./tasks";
+import { buildOverview, buildQueue, buildTasks, findTask, IN_PROGRESS_LABEL, type GhIssue, type Task } from "./tasks";
 import { escapeHtml as e, type Keyboard, type TelegramApi, type TgUpdate, type TgUser } from "./telegram";
 import {
   ASK_ROLE,
   askLogin,
-  countdown,
   healthText,
   HELP_COMMANDS,
   instructionDanil,
@@ -22,7 +22,9 @@ import {
   queueText,
   READ_ONLY_TAKE,
   whoName,
+  type DemoFamily,
   type HealthResult,
+  type LinksExtra,
 } from "./texts";
 
 export type BotDeps = {
@@ -32,9 +34,21 @@ export type BotDeps = {
   store: BotStore;
   now?: () => Date;
   fetchHealth?: () => Promise<HealthResult | null>;
+  /** /api/health любого адреса (превью) — для «Ссылок». */
+  fetchUrlHealth?: (url: string) => Promise<HealthResult | null>;
+  /** Данные из базы (service-ключ): цифры сводки и демо-семьи. Без базы — null / []. */
+  ops?: { stats(): Promise<DigestStats | null>; demoFamilies(): Promise<DemoFamily[]> };
 };
 
-type Ctx = { chatId: number; messageId?: number; callbackId?: string; from: TgUser; user: BotUser | null };
+type Ctx = {
+  chatId: number;
+  messageId?: number;
+  callbackId?: string;
+  from: TgUser;
+  user: BotUser | null;
+  /** Личка участника (не группа) — только здесь ссылки с токеном демо. */
+  privateChat: boolean;
+};
 
 export type NotifyResult = { delivered: boolean; silent?: boolean; reason?: string };
 
@@ -58,8 +72,33 @@ export function createBot(deps: BotDeps) {
   }
 
   async function progressView(): Promise<string> {
-    const [{ tasks }, pulls, users] = await Promise.all([loadTasks(), gh.listPulls(), store.listUsers()]);
-    return progressText(buildProgress(tasks, pulls, cfg.milestone), users, cfg, now());
+    const [issues, pulls, users] = await Promise.all([gh.listIssues(), gh.listPulls(), store.listUsers()]);
+    return progressText(buildOverview(issues, pulls, now()), users, cfg, now());
+  }
+
+  /** Шаблон промпта из docs/HANDOFF.md §7 в main; не прочитался — запасная копия. */
+  async function promptTemplate(): Promise<string | undefined> {
+    return templateFromHandoff(await gh.readFile(HANDOFF_PATH).catch(() => null)) ?? undefined;
+  }
+
+  /** Превью / staging (#211): BOT_STAGING_URL или последнее превью, если его /api/health уже знает env (#211 слит). */
+  async function previewLink(): Promise<LinksExtra["preview"]> {
+    if (cfg.stagingUrl) return { url: cfg.stagingUrl, note: "staging (BOT_STAGING_URL)" };
+    const pv = await gh.latestPreview().catch(() => null);
+    if (!pv) return null;
+    const h = deps.fetchUrlHealth ? await deps.fetchUrlHealth(pv.url).catch(() => null) : null;
+    const env = h?.json?.env;
+    if (typeof env !== "string") return null; // до #211 превью смотрит в боевую базу — не показываем
+    return { url: pv.url, note: `${env} · ветка ${pv.ref} · ${pv.sha.slice(0, 7)}` };
+  }
+
+  async function linksView(ctx: Ctx) {
+    const canSeeTokens = ctx.privateChat && Boolean(ctx.user?.role);
+    const [demo, preview] = await Promise.all([
+      canSeeTokens && deps.ops ? deps.ops.demoFamilies().catch(() => []) : Promise.resolve([]),
+      previewLink(),
+    ]);
+    await show(ctx, linksText(cfg, { privateChat: canSeeTokens, demo, preview }), BACK);
   }
 
   async function queueView(ctx: Ctx) {
@@ -78,8 +117,9 @@ export function createBot(deps: BotDeps) {
     await show(ctx, healthText(h), HEALTH);
   }
 
-  function promptMessage(task: Task, role: Role, all: Task[], body: string | null, header: string): string {
-    return `${header}\n<pre>${e(buildPrompt(role, task, all, body, cfg.repo))}</pre>`;
+  async function promptMessage(task: Task, role: Role, all: Task[], body: string | null, header: string): Promise<string> {
+    const tpl = await promptTemplate();
+    return `${header}\n<pre>${e(buildPrompt(role, task, all, body, cfg.repo, tpl))}</pre>`;
   }
 
   async function take(ctx: Ctx, ref: string) {
@@ -109,8 +149,8 @@ export function createBot(deps: BotDeps) {
     await gh.addLabel(task.number, IN_PROGRESS_LABEL);
     const role = user.role ?? roleForOwner(task.owner);
     const body = issues.find((i) => i.number === task.number)?.body ?? null;
-    const header = `✋ <b>${e(user.name)}</b> взял(а) <a href="${e(task.url)}">${e(task.code ?? `#${task.number}`)}</a> ${e(task.name)}\nПромпт для ${role === "danil" ? "Claude" : "Codex"} — нажмите, чтобы скопировать:`;
-    await tg.send(ctx.chatId, promptMessage(task, role, tasks, body, header));
+    const header = `✋ <b>${e(user.name)}</b> взял(а) <a href="${e(task.url)}">#${task.number}</a> ${e(task.name)}\nПромпт для нового чата Claude — нажмите, чтобы скопировать:`;
+    await tg.send(ctx.chatId, await promptMessage(task, role, tasks, body, header));
   }
 
   async function release(ctx: Ctx, ref: string) {
@@ -132,7 +172,7 @@ export function createBot(deps: BotDeps) {
     if (!task) return tg.send(ctx.chatId, `Не нашёл задачу «${e(ref)}». Пример: <code>/prompt I5</code>`);
     const role = ctx.user?.role ?? roleForOwner(task.owner);
     const body = issues.find((i) => i.number === task.number)?.body ?? null;
-    await tg.send(ctx.chatId, promptMessage(task, role, tasks, body, `📝 Промпт ${e(task.code ?? `#${task.number}`)} для ${role === "danil" ? "Claude" : "Codex"}:`));
+    await tg.send(ctx.chatId, await promptMessage(task, role, tasks, body, `📝 Промпт #${task.number} для нового чата Claude:`));
   }
 
   async function iam(ctx: Ctx, login: string) {
@@ -194,7 +234,7 @@ export function createBot(deps: BotDeps) {
       case "queue":
         return queueView(ctx);
       case "links":
-        return show(ctx, linksText(cfg), BACK);
+        return linksView(ctx);
       case "health":
         return healthView(ctx);
       case "help":
@@ -237,7 +277,14 @@ export function createBot(deps: BotDeps) {
     const allowed = isGroup(chat.id) || (chat.type === "private" && user !== null);
     if (!allowed) return;
 
-    const ctx: Ctx = { chatId: chat.id, from, user, messageId: cb?.message?.message_id, callbackId: cb?.id };
+    const ctx: Ctx = {
+      chatId: chat.id,
+      from,
+      user,
+      messageId: cb?.message?.message_id,
+      callbackId: cb?.id,
+      privateChat: chat.type === "private" && !isGroup(chat.id),
+    };
     try {
       if (cb?.data) await onCallback(ctx, cb.data);
       else if (msg?.text?.startsWith("/")) await onCommand(ctx, msg.text);
@@ -250,23 +297,24 @@ export function createBot(deps: BotDeps) {
   }
 
   async function digestText(): Promise<string> {
-    const [{ tasks }, pulls] = await Promise.all([loadTasks(), gh.listPulls()]);
-    const p = buildProgress(tasks, pulls, cfg.milestone);
-    const q = buildQueue(tasks);
-    const users = await store.listUsers();
     const n = now();
-    const code = (t: Task) => e(t.code ?? `#${t.number}`);
-    return [
-      "☀️ <b>Доброе утро! Сводка «Книги семьи»</b>",
-      `<code>${progressBar(p.done.length, p.total)}</code>`,
-      `⏳ Заморозка через ${countdown(n, cfg.freezeAt)} · 🎤 питч через ${countdown(n, cfg.pitchAt)}`,
-      p.inProgress.length ? `🛠 В работе: ${p.inProgress.map(({ task, who }) => `${code(task)} (${who.map((w) => whoName(w, users)).join(", ") || "—"})`).join(", ")}` : "🛠 В работе: ничего",
-      p.openPulls.length ? `👀 Открытых PR: ${p.openPulls.length}` : null,
-      q.groups[0]?.length ? `🧭 Можно брать параллельно: ${q.groups[0].map(code).join(", ")}` : "🧭 Свободных задач нет",
-      "Пульт — /menu",
-    ]
-      .filter(Boolean)
-      .join("\n");
+    const since = new Date(n.getTime() - 86_400_000).toISOString();
+    const [issues, pulls, users, runs, stats] = await Promise.all([
+      gh.listIssues(),
+      gh.listPulls(),
+      store.listUsers(),
+      gh.listMainRuns(since).catch(() => null),
+      deps.ops ? deps.ops.stats().catch(() => null) : Promise.resolve(null),
+    ]);
+    return buildDigest({
+      now: n,
+      milestones: cfg.milestones,
+      overview: buildOverview(issues, pulls, n),
+      runs,
+      stats,
+      repo: cfg.repo,
+      who: (login) => whoName(login, users),
+    });
   }
 
   async function handleNotify(ev: NotifyEvent): Promise<NotifyResult> {
@@ -279,7 +327,7 @@ export function createBot(deps: BotDeps) {
     return { delivered: true, silent: d.silent };
   }
 
-  return { handleUpdate, handleNotify };
+  return { handleUpdate, handleNotify, digestText };
 }
 
 function displayName(u: TgUser): string {

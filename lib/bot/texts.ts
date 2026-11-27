@@ -1,19 +1,13 @@
 // Тексты бота (HTML-разметка Telegram). Всё, что пришло извне, экранируется.
 import type { BotConfig } from "./config";
-import type { Progress, Queue, Task } from "./tasks";
-import { progressBar } from "./tasks";
+import { milestoneLine } from "./digest";
+import type { Overview, Queue, Task } from "./tasks";
 import { escapeHtml as e } from "./telegram";
 import type { BotUser } from "./store";
 
 const ROLE_NAME = { danil: "Данил", vlad: "Влад" } as const;
 
-export function countdown(now: Date, to: Date): string {
-  const ms = to.getTime() - now.getTime();
-  if (ms <= 0) return "уже прошло";
-  const h = Math.floor(ms / 3_600_000);
-  const d = Math.floor(h / 24);
-  return d > 0 ? `${d} дн ${h % 24} ч` : `${h} ч ${Math.floor((ms % 3_600_000) / 60_000)} мин`;
-}
+export { countdown } from "./digest";
 
 function code(t: Task): string {
   return t.code ?? `#${t.number}`;
@@ -29,24 +23,24 @@ export function whoName(login: string | null | undefined, users: BotUser[]): str
   return e(u?.role ? ROLE_NAME[u.role] : u?.name ?? login);
 }
 
-export function progressText(p: Progress, users: BotUser[], cfg: BotConfig, now: Date): string {
+/** «📊 Прогресс» по открытым issues (#212): что в работе, дела людей, зоны, PR. */
+export function progressText(o: Overview, users: BotUser[], cfg: BotConfig, now: Date): string {
+  const gh = `https://github.com/${cfg.repo}`;
   const lines = [
-    `<b>📊 Прогресс · ${e(cfg.milestone)}</b>`,
-    `<code>${progressBar(p.done.length, p.total)}</code>`,
-    `⏳ До заморозки (ср 25.11 14:00): <b>${countdown(now, cfg.freezeAt)}</b>`,
-    `🎤 До питча (пт 27.11): <b>${countdown(now, cfg.pitchAt)}</b>`,
+    "<b>📊 Прогресс · открытые задачи</b>",
+    milestoneLine(cfg.milestones, now),
+    `Открыто: <b>${o.open}</b> (без срока, «после питча» / v2: ${o.later}) · закрыто за неделю: <b>${o.closedWeek}</b>`,
+    o.byZone.length ? `По зонам: ${o.byZone.map((z) => `${e(z.zone)} ${z.count}`).join(" · ")}` : "",
     "",
-    `<b>✅ Готово (${p.done.length})</b>`,
-    ...p.done.map(({ task, who }) => `• ${link(task)} ${e(task.name)} — ${whoName(who, users)}`),
+    `<b>🛠 В работе (${o.inProgress.length})</b>`,
+    ...o.inProgress.map((t) => `• ${link(t)} ${e(t.name)} — ${t.assignees.map((w) => whoName(w, users)).join(", ") || "метка in-progress"}`),
+    ...o.openPulls.map(({ pull, hours }) => `• PR <a href="${e(pull.html_url)}">#${pull.number}</a>${pull.draft ? " (черновик)" : ""} ${e(pull.title)}${hours !== null ? ` · ${hours} ч` : ""}`),
     "",
-    `<b>🛠 В работе (${p.inProgress.length + p.openPulls.length})</b>`,
-    ...p.inProgress.map(({ task, who }) => `• ${link(task)} ${e(task.name)} — ${who.map((w) => whoName(w, users)).join(", ") || "метка in-progress"}`),
-    ...p.openPulls.map((pr) => `• PR <a href="${e(pr.html_url)}">#${pr.number}</a>${pr.draft ? " (черновик)" : ""} ${e(pr.title)}`),
-    "",
-    `<b>📋 Осталось (${p.left.length})</b>`,
-    ...p.left.map((t) => `• ${link(t)} ${e(t.name)}${t.openDeps.length ? ` ⛓ ждёт ${t.openDeps.join(", ")}` : ""}`),
+    `<b>🙋 Дела людей — owner:human (${o.human.length})</b>`,
+    ...o.human.slice(0, 10).map((t) => `• ${link(t)} ${e(t.name)}`),
+    `<a href="${e(`${gh}/issues?q=is%3Aopen+label%3Aowner%3Ahuman`)}">все дела людей</a> · <a href="${e(`${gh}/issues`)}">все issues</a>`,
   ];
-  return lines.join("\n");
+  return lines.filter((l, i, arr) => l !== "" || arr[i - 1] !== "").join("\n");
 }
 
 export function queueText(q: Queue): string {
@@ -69,24 +63,75 @@ export function queueText(q: Queue): string {
   return lines.join("\n").trim();
 }
 
-export function linksText(cfg: BotConfig): string {
+export type DemoFamily = { name: string; token: string; source: string };
+
+export type LinksExtra = {
+  /** Личка участника с ролью — можно показать ссылки с токеном демо. */
+  privateChat: boolean;
+  demo: DemoFamily[];
+  /** Адрес staging / превью, если включено (#211), и откуда он. */
+  preview: { url: string; note: string } | null;
+};
+
+function supabaseDashboard(url: string | undefined): string | null {
+  const ref = /^https:\/\/([a-z0-9]+)\.supabase\.co/i.exec(url ?? "")?.[1];
+  return ref ? `https://supabase.com/dashboard/project/${ref}` : null;
+}
+
+/** «🔗 Ссылки» группами (#212). Токены демо-семей — только в личке Данила / Влада. */
+export function linksText(cfg: BotConfig, x: LinksExtra = { privateChat: false, demo: [], preview: null }): string {
   const gh = `https://github.com/${cfg.repo}`;
-  const ref = /^https:\/\/([a-z0-9]+)\.supabase\.co/i.exec(cfg.supabaseUrl ?? "")?.[1];
-  const supa = ref ? `https://supabase.com/dashboard/project/${ref}` : "https://supabase.com/dashboard";
+  const blob = (f: string) => `${gh}/blob/main/${f}`;
   const a = (href: string, text: string) => `<a href="${e(href)}">${e(text)}</a>`;
+  const p = cfg.prodUrl;
+  const at = (path: string, text = path) => (p ? a(`${p}${path}`, text) : e(text));
+  const isProject = /^https:\/\/vercel\.com\/[^/]+\/[^/]+$/.test(cfg.vercelUrl);
+  const supaProd = supabaseDashboard(cfg.supabaseUrl) ?? "https://supabase.com/dashboard/projects";
+  const supaStaging = supabaseDashboard(cfg.stagingSupabaseUrl);
+
+  const demo: string[] = [];
+  if (x.privateChat) {
+    for (const f of x.demo) {
+      const t = encodeURIComponent(f.token);
+      demo.push(
+        f.source === "kiosk"
+          ? `• Демо киоска «${e(f.name)}»: ${at(`/f/${t}`, "семья")} · ${at(`/book/${t}`, "книга")}`
+          : `• Демо «${e(f.name)}»: ${at(`/f/${t}`, "семья")} · ${at(`/book/${t}`, "книга")} · ${at(`/f/${t}/names`, "словарь имён")} · ${at(`/extras/${t}/tale`, "сказка")}`,
+      );
+    }
+    if (!x.demo.length) demo.push("• Демо-семьи не найдены — Actions → seed-demo");
+  } else {
+    demo.push("• 🔒 Ссылки демо-семей (с токеном) — в личке бота: /menu → 🔗 Ссылки");
+  }
+
   return [
     "<b>🔗 Ссылки</b>",
-    cfg.prodUrl ? `• ${a(cfg.prodUrl, "Прод")}` : "• Прод — PROD_URL не задан",
-    cfg.prodUrl ? `• ${a(`${cfg.prodUrl}/admin/ai`, "Админка ИИ /admin/ai")}` : null,
-    cfg.prodUrl ? `• ${a(`${cfg.prodUrl}/center`, "Кабинет АКНЦ /center")} (когда появится, I9)` : null,
-    `• ${a(cfg.vercelUrl, "Vercel")}`,
-    `• ${a(supa, "Supabase")}`,
-    `• ${a(`${gh}/actions`, "GitHub Actions")}`,
-    `• ${a(`${gh}/milestones`, `Milestone «${cfg.milestone}»`)}`,
-    `• ${a(`${gh}/issues`, "Issues")} · ${a(`${gh}/tree/main/docs/issues`, "папка задач")}`,
-  ]
-    .filter(Boolean)
-    .join("\n");
+    "",
+    "<b>Продукт</b>",
+    p ? `• ${a(p, "Прод")} · ${at("/start", "создать семью /start")}` : "• Прод — PROD_URL не задан",
+    ...demo,
+    "",
+    "<b>Админки</b> (PIN)",
+    `• ${at("/admin")} · ${at("/admin/ai")} · ${at("/admin/families")}`,
+    `• АКНЦ: ${at("/center")} · ${at("/center/archive")}`,
+    `• Киоск: ${at("/kiosk")} · ${at("/kiosk/archive")} · ${at("/kiosk/archive/show", "показ")}`,
+    `• ${at("/api/health")}`,
+    "",
+    "<b>Разработка</b>",
+    `• ${a(gh, "Репозиторий")} · ${a(`${gh}/issues`, "Issues")} · ${a(`${gh}/issues?q=is%3Aopen+label%3Aowner%3Ahuman`, "owner:human")} · ${a(`${gh}/pulls`, "PR")}`,
+    `• Actions: ${a(`${gh}/actions`, "все")} · ${["smoke", "migrate", "seed-demo", "diag"].map((w) => a(`${gh}/actions/workflows/${w}.yml`, w)).join(" · ")}`,
+    `• ${a(blob("docs/HANDOFF.md"), "HANDOFF")} · ${a(blob("docs/STATUS.md"), "STATUS")} · ${a(blob("docs/DECISIONS.md"), "DECISIONS")}`,
+    "",
+    "<b>Сервисы</b>",
+    `• Supabase: ${a(supaProd, "прод")} · ${supaStaging ? a(supaStaging, "staging") : "staging — после #211"}`,
+    `• Vercel: ${a(cfg.vercelUrl, isProject ? "проект" : "дашборд")}${isProject ? ` · ${a(`${cfg.vercelUrl}/settings/environment-variables`, "Environment Variables")}` : ""}`,
+    `• ИИ: ${a("https://aistudio.google.com/usage", "Google AI Studio — расход")} · ${a("https://platform.openai.com/usage", "OpenAI Usage")}`,
+    "",
+    "<b>v2 / превью</b>",
+    x.preview
+      ? `• ${a(x.preview.url, "Последнее превью")} · ${a(`${x.preview.url}/api/health`, "/api/health")} — ${e(x.preview.note)}`
+      : "• Появятся после #211 (staging): превью пока пишут в боевую базу",
+  ].join("\n");
 }
 
 export type HealthResult = { ok: boolean; http: number | null; json: Record<string, unknown> | null; error?: string };
@@ -119,35 +164,30 @@ export function askLogin(role: "danil" | "vlad"): string {
 }
 
 export const HELP_COMMANDS =
-  "/menu — пульт кнопками\n/take I5 — взять задачу\n/release I5 — вернуть в очередь\n/prompt I5 — промпт для агента\n/iam login — привязать GitHub";
+  "/menu — пульт кнопками\n/take 212 — взять задачу (номер issue)\n/release 212 — вернуть в очередь\n/prompt 212 — промпт для нового чата\n/iam login — привязать GitHub";
 
+/** Инструкции — коротко, со ссылкой на HANDOFF (там всё подробно и всегда актуально). */
 export function instructionDanil(repo: string): string {
+  const gh = `https://github.com/${repo}`;
   return [
-    "<b>📘 Инструкция Данилу — задача в новом чате Claude</b>",
-    "1. 🧭 Очередь → «Взять» (или <code>/take I5</code>) — задача назначится на вас, придёт готовый промпт.",
-    "2. Откройте <b>новый чат Claude вне проекта</b>, включите Code, подключите репозиторий " + e(repo) + ".",
-    "3. Вставьте промпт целиком. Агент сам прочитает AGENTS.md и issue, сделает ветку zN/… и PR.",
-    "4. <b>Лимиты кончаются?</b> Попросите агента: «запушь, что есть, открой черновик PR и опиши, что осталось». Продолжите в новом чате: «продолжи PR #N».",
-    "5. Параллельно — не больше 3 агентов, и только задачи из одной группы очереди.",
-    "6. <b>Сливаете только вы</b>: после зелёного CI и проверки превью Vercel. Squash merge.",
+    "<b>📘 Данилу — задача в новом чате Claude</b>",
+    "1. 🧭 Очередь → «Взять» (или <code>/take 212</code>) — задача назначится на вас, придёт промпт по HANDOFF §7.",
+    "2. Новый чат Claude <b>вне проектов</b>, один чат = одна задача. Вставьте промпт целиком.",
+    "3. Агент сам: ветка → PR с «📝 Заметками для команды» → зелёные ci и e2e → squash-слияние → migrate / smoke.",
+    "4. Каждое «руками» агент заводит отдельной issue с меткой owner:human — смотрите 📊 Прогресс.",
+    "5. «Лимиты кончаются» — агент открывает черновой PR «Сделано / Осталось / Как продолжить».",
+    `Подробно: <a href="${e(`${gh}/blob/main/docs/HANDOFF.md`)}">docs/HANDOFF.md</a> (§3 — правила, §7 — промпт).`,
   ].join("\n");
 }
 
 export function instructionVlad(repo: string): string {
+  const gh = `https://github.com/${repo}`;
   return [
-    "<b>📗 Инструкция Владу — Codex</b>",
-    "<b>Разовая настройка</b>",
-    "1. Примите инвайт в репозиторий " + e(repo) + " (письмо от GitHub).",
-    "2. chatgpt.com/codex → Connect to GitHub → выберите репозиторий. Если его нет в списке — нажмите запрос на установку, Данил одобрит в GitHub.",
-    "3. Environment: setup-скрипт <code>npm ci</code>, переменная <code>AI_MODE=mock</code>. Ключи не нужны.",
-    "4. Здесь в боте: <code>/iam ваш_github_логин</code>.",
-    "",
-    "<b>Как брать задачу</b>",
-    "1. 🧭 Очередь → «Взять» — придёт промпт для Codex.",
-    "2. Вставьте его в Codex → Code. Дождитесь зелёного <code>npm run check</code>.",
-    "3. <b>Create PR</b> (не в main!). Номер PR напишите Данилу в группу — сливает он (можно с телефона в приложении GitHub: PR → Squash and merge, когда CI зелёный).",
-    "4. Если PR меняет <code>prompts/</code> — дождитесь комментария workflow <b>eval</b> с таблицей «до / после»: 🔴 = стало хуже, такую правку не сливаем.",
-    "",
-    "<b>Порядок</b>: берите сверху очереди задачи с пометкой codex; задачи одной группы можно вести параллельно в разных окнах Codex.",
+    "<b>📗 Владу — задача в новом чате Claude</b>",
+    "1. 🧭 Очередь → «Взять» — придёт тот же универсальный промпт (HANDOFF §7), с «Я — Влад».",
+    "2. Первый раз Claude попросит подключить GitHub — подключите свой аккаунт (вы коллаборатор). Не даётся — напишите Данилу.",
+    "3. Новый чат вне проектов, один чат = одна задача; агент сам доводит PR до main, если ci и e2e зелёные.",
+    "4. Правите <code>prompts/</code> — ждите комментарий eval: 🔴 по фактам = не сливать.",
+    `Подробно: <a href="${e(`${gh}/blob/main/docs/HANDOFF.md`)}">docs/HANDOFF.md</a>.`,
   ].join("\n");
 }

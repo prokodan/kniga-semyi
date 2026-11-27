@@ -25,6 +25,7 @@ export type GhPull = {
   html_url: string;
   user: GhUser | null;
   merged_at: string | null;
+  created_at?: string;
 };
 
 export type TaskStatus = "done" | "in_progress" | "todo" | "blocked";
@@ -51,7 +52,10 @@ export type Task = {
 
 export const IN_PROGRESS_LABEL = "in-progress";
 
-const CODE_RE = /\[([A-Z]\d+)\]/;
+// Код задачи MLP ([I5], [V2]); [Z6] — это зона, а не код (#212).
+const CODE_RE = /\[([A-Y]\d+)\]/;
+/** Ведущие пометки в заголовке: «[Z6] », «[Z1/Z5] », «[I5] ». */
+const TAGS_RE = /^(?:\s*\[[^\]]{1,12}\])+\s*/;
 const DEP_CODE_RE = /\b([A-Z]\d+)\b/g;
 
 export function parseCode(title: string): string | null {
@@ -134,7 +138,7 @@ export function buildTasks(issues: GhIssue[]): Task[] {
       number: i.number,
       code,
       title: i.title,
-      name: i.title.replace(CODE_RE, "").trim(),
+      name: i.title.replace(CODE_RE, "").replace(TAGS_RE, "").trim(),
       url: i.html_url,
       state: i.state,
       zone: parseZone(labels, i.body),
@@ -206,11 +210,15 @@ export type Queue = {
   blocked: Task[];
 };
 
-/** Очередь: открытые, без исполнителя, все «Зависит от» закрыты. */
+/** Задачи людей и вопросы — не для агента: в очередь «Взять» не попадают (#212). */
+const NOT_FOR_AGENT = ["owner:human", "question", "wontfix", "duplicate", "invalid"];
+export const isForAgent = (t: Task) => !t.labels.some((l) => NOT_FOR_AGENT.includes(l));
+
+/** Очередь: открытые, без исполнителя, все «Зависит от» закрыты, не задачи людей. Свежие — выше. */
 export function buildQueue(tasks: Task[]): Queue {
   const ready = tasks
-    .filter((t) => t.status === "todo")
-    .sort((a, b) => priority(a) - priority(b) || a.number - b.number);
+    .filter((t) => t.status === "todo" && isForAgent(t))
+    .sort((a, b) => priority(a) - priority(b) || b.number - a.number);
   // Готовые задачи не зависят друг от друга (зависимость от открытой задачи = не готова),
   // поэтому для параллельности достаточно развести их по разным зонам.
   const byZone = new Map<string, Task[]>();
@@ -226,4 +234,40 @@ export function buildQueue(tasks: Task[]): Queue {
   }
   const blocked = tasks.filter((t) => t.status === "blocked");
   return { ready, groups, blocked };
+}
+
+/** Обзор по открытым issues (#212): вместо старых кодов задач MLP (I, W, V) и milestone. */
+export type Overview = {
+  open: number;
+  byZone: { zone: string; count: number }[];
+  inProgress: Task[];
+  human: Task[];
+  /** Без milestone — «после питча» / v2. */
+  later: number;
+  closedWeek: number;
+  openPulls: { pull: GhPull; hours: number | null }[];
+};
+
+export function buildOverview(issues: GhIssue[], pulls: GhPull[], now: Date): Overview {
+  const tasks = buildTasks(issues);
+  const open = tasks.filter((t) => t.state === "open");
+  const zones = new Map<string, number>();
+  for (const t of open) {
+    const zs = t.labels.filter((l) => /^zone:Z\d+$/i.test(l)).map((l) => l.slice(5).toUpperCase());
+    for (const z of zs.length ? zs : [t.zone ?? "без зоны"]) zones.set(z, (zones.get(z) ?? 0) + 1);
+  }
+  const weekAgo = now.getTime() - 7 * 86_400_000;
+  const closedWeek = issues.filter(
+    (i) => !i.pull_request && i.state === "closed" && i.closed_at && new Date(i.closed_at).getTime() >= weekAgo,
+  ).length;
+  const hours = (iso?: string) => (iso ? Math.max(0, Math.floor((now.getTime() - new Date(iso).getTime()) / 3_600_000)) : null);
+  return {
+    open: open.length,
+    byZone: [...zones].map(([zone, count]) => ({ zone, count })).sort((a, b) => a.zone.localeCompare(b.zone)),
+    inProgress: open.filter((t) => t.status === "in_progress"),
+    human: open.filter((t) => t.labels.includes("owner:human")),
+    later: open.filter((t) => !t.milestone).length,
+    closedWeek,
+    openPulls: pulls.filter((p) => p.state === "open").map((pull) => ({ pull, hours: hours(pull.created_at) })),
+  };
 }
