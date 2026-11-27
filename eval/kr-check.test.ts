@@ -312,7 +312,7 @@ describe("#198: судья KR и глоссарий корё мар, ㅂ-неп�
   });
 
   it("демо, киоск и банк не дают флажков style:bieup", () => {
-    for (const s of DEMO_STORIES) expect(bieupFlags(chapter(s.text_ru ?? "", s.text_ko ?? "")), s.title).toHaveLength(0);
+    for (const s of DEMO_STORIES) expect(bieupFlags(chapter(s.text_ru ?? "", s.text_ko ?? "")), s.title ?? "").toHaveLength(0);
     expect(bieupFlags({ ...chapter("", QUESTIONS.map((q) => q.ko).join("\n")), kind: "question" })).toHaveLength(0);
   });
 });
