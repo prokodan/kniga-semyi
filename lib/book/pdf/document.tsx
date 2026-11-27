@@ -268,7 +268,7 @@ function Toc({ book, pages }: { book: BookModel; pages: PageMap }) {
 // страницы переносится внутри ряда; имена переносятся по словам и не обрезаются.
 
 const TREE = { card: 70, photo: 24, couple: 4, capsule: 3 };
-/** Плотнее, когда на странице больше 14 человек (большая семья): уже карточка, мельче фото и шрифт */
+/** Плотнее, когда на странице больше 10 человек (большая семья): уже карточка, мельче фото и шрифт */
 const TREE_DENSE = { card: 58, photo: 18, couple: 3, capsule: 2.5 };
 
 function TreePerson({ p, ko, dense }: { p: BookTreePerson; ko: boolean; dense: boolean }) {
@@ -345,7 +345,7 @@ function TreeUnit({ unit, ko, dense }: { unit: BookTreePerson[]; ko: boolean; de
 
 function TreePage({ rows, second, part, parts }: { rows: BookTreeRow[]; second: SecondLang | null; part: number; parts: number }) {
   const ko = second === "ko";
-  const dense = rows.reduce((a, r) => a + r.units.flat().length, 0) > 14;
+  const dense = rows.reduce((a, r) => a + r.units.flat().length, 0) > 10;
   return (
     <View>
       {/* fixed: большая семья перетекает на следующую страницу — подпись повторяется и там */}
@@ -356,17 +356,20 @@ function TreePage({ rows, second, part, parts }: { rows: BookTreeRow[]; second: 
       {ko && <Text style={s.h1ko}>가계도</Text>}
       <View style={s.rule} />
       {rows.map((row, i) => (
-        <View key={i} wrap={false} style={{ marginBottom: 4 }}>
+        // ряд может продолжиться на следующей странице (пары не разрываются); подпись — не одна внизу страницы
+        <View key={i} style={{ marginBottom: 4 }}>
           {i > 0 && <View style={{ width: 1, height: 8, backgroundColor: COLOR.gold, alignSelf: "center" }} />}
           {row.title && (
-            <Text style={{ fontSize: 6.5, letterSpacing: 1.2, color: COLOR.muted, textTransform: "uppercase", textAlign: "center", marginBottom: 2 }}>
+            <Text minPresenceAhead={90} style={{ fontSize: 6.5, letterSpacing: 1.2, color: COLOR.muted, textTransform: "uppercase", textAlign: "center", marginBottom: 2 }}>
               {row.title}
               {row.second && <Text style={{ fontFamily: secondFont(second), letterSpacing: 0.4, textTransform: "none" }}>{` · ${row.second}`}</Text>}
             </Text>
           )}
           <View style={{ flexDirection: "row", flexWrap: "wrap", justifyContent: "center", alignItems: "flex-start" }}>
             {row.units.map((u, j) => (
-              <TreeUnit key={j} unit={u} ko={ko} dense={dense} />
+              <View key={j} wrap={false}>
+                <TreeUnit unit={u} ko={ko} dense={dense} />
+              </View>
             ))}
           </View>
         </View>
