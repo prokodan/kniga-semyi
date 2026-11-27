@@ -1,9 +1,11 @@
 import type { Metadata } from "next";
+import { flag } from "@/lib/flags";
 import { StartForm } from "./StartForm";
 
 export const metadata: Metadata = { title: "Создать книгу · Книга семьи" };
 
 // Старт семьи: название книги, рассказчик (имя, годы, фото), дата вручения. ≤ 2 минут с телефона.
+// #233 (флаг culture_packs): «Кто ваша семья?», язык рассказа, языки книги.
 // #235: с древа («Записать историю мамы») приходят ?storyteller=&birthYear=&nameKo=&book= — поля заполнены заранее.
 export default async function StartPage({ searchParams }: { searchParams: Promise<Record<string, string | string[] | undefined>> }) {
   const q = await searchParams;
@@ -23,7 +25,7 @@ export default async function StartPage({ searchParams }: { searchParams: Promis
         </p>
         {second && <p className="rounded-card border border-gold bg-paper-deep px-4 py-3 text-ink-soft">Вторая книга в семье — со скидкой 40 %, древо в подарок.</p>}
       </header>
-      <StartForm prefill={prefill} />
+      <StartForm prefill={prefill} choices={flag("culture_packs") ? { kkOn: flag("lang_kk") } : null} />
     </main>
   );
 }

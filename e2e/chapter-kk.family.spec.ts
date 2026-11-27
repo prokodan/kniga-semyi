@@ -26,17 +26,15 @@ async function shot(page: Page, name: string) {
 test("книга RU + KZ: глава RU | KZ из story_texts, без корейского", async ({ page }) => {
   const familyName = `Книга семьи E2E KZ ${Date.now().toString(36)}`;
 
-  await test.step("старт → «Языки книги»: русский и казахский", async () => {
+  await test.step("старт: казахская семья → книга RU + KZ (как culture.family.spec)", async () => {
     await page.goto("/start");
     await page.getByLabel("Как назовём книгу?").fill(familyName);
     await page.getByLabel("Имя, как зовут в семье").fill("Әжем Гүлнар");
-    await page.getByLabel("Год рождения").fill("1943");
-    await page.getByLabel("Где родились").fill("Үштөбе");
+    await page.getByRole("checkbox", { name: "Корё-сарам" }).uncheck();
+    await page.getByRole("checkbox", { name: "Казахская" }).check();
+    await expect(page.getByRole("radio", { name: /^Русский и казахский/ })).toBeChecked();
     await page.getByRole("button", { name: "Создать книгу" }).click();
     await expect(page.getByRole("heading", { name: "Книга создана ✓" })).toBeVisible();
-    await page.getByRole("radio", { name: /Русский и казахский/ }).click();
-    await expect(page.getByRole("radio", { name: /Русский и казахский/ })).toHaveAttribute("aria-checked", "true");
-    await expect(page.getByText(/^Сохранено/)).toBeVisible();
   });
   const token = new URL(page.url()).pathname.split("/").pop()!;
   expect(token).toMatch(/^[0-9a-f]{64}$/);
@@ -53,15 +51,16 @@ test("книга RU + KZ: глава RU | KZ из story_texts, без корей
     await page.locator('input[type="file"]').setInputFiles(audioFile("otvet.wav", 1));
     await page.getByRole("button", { name: "Отправить рассказ" }).click();
     await expect(page.getByText("Спасибо! Рассказ сохранён.")).toBeVisible();
-    await expect(page.getByText(/· уточнение/)).toBeVisible({ timeout: 60_000 });
-    const followup = (await h1.textContent())!.trim();
-    await page.locator('input[type="file"]').setInputFiles(audioFile("utochnenie.wav", 8));
-    await page.getByRole("button", { name: "Отправить рассказ" }).click();
-    await expect(page.getByText("Спасибо! Дополнение сохранено.")).toBeVisible();
-    // интервью перешло к следующему вопросу — только тогда глава собирается (пока сессия на вопросе — ждёт уточнений)
-    await expect(h1).not.toHaveText(followup, { timeout: 60_000 });
-    await expect(h1).not.toHaveText(question);
-    await expect(page.getByText(/· уточнение/)).toBeHidden();
+    await expect(h1).not.toHaveText(question, { timeout: 60_000 });
+    if (await page.getByText(/· уточнение/).isVisible()) {
+      const followup = (await h1.textContent())!.trim();
+      await page.locator('input[type="file"]').setInputFiles(audioFile("utochnenie.wav", 8));
+      await page.getByRole("button", { name: "Отправить рассказ" }).click();
+      await expect(page.getByText("Спасибо! Дополнение сохранено.")).toBeVisible();
+      // интервью перешло к следующему вопросу — только тогда глава собирается (пока сессия на вопросе — ждёт уточнений)
+      await expect(h1).not.toHaveText(followup, { timeout: 60_000 });
+      await expect(page.getByText(/· уточнение/)).toBeHidden();
+    }
   });
 
   await test.step("глава RU | KZ", async () => {

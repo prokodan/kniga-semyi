@@ -3,7 +3,8 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { nameHints } from "./names";
 import { loadNameHints } from "./names-db";
-import type { Session, SessionMode, Story } from "@/lib/types";
+import type { Family, Session, SessionMode, Story } from "@/lib/types";
+import { familyPacks } from "./bank";
 import type { SessionState } from "./policy";
 
 export type StoryDraft = Pick<Story, "family_id" | "storyteller_id" | "session_id" | "question_id" | "block" | "transcript">;
@@ -33,6 +34,11 @@ export interface InterviewRepo {
    * рассказчика, от старых к новым. Нет колонки / ошибка — пусто (интервью идёт как до #140).
    */
   deferredFollowups?(storytellerId: string): Promise<DeferredAsk[]>;
+  /**
+   * #233: культурные пакеты семьи для банка вопросов (флаг culture_packs). null / нет реализации — банк V0, как сейчас.
+   * Читается один раз при старте сессии и запоминается в sessions.state.packs.
+   */
+  culturePacks?(familyId: string): Promise<string[] | null>;
 }
 
 export interface DeferredAsk {
@@ -72,6 +78,13 @@ export class MemoryInterviewRepo implements InterviewRepo {
 
   addFamily(familyId: string, token: string, storytellerIds: string[]) {
     this.families.set(familyId, { token, storytellers: new Set(storytellerIds) });
+  }
+
+  /** #233: пакеты семей (тесты кладут сами; локальный режим — из MemoryFamilyStore через resolver). Нет — null. */
+  packs = new Map<string, string[] | null>();
+  packsResolver?: (familyId: string) => string[] | null;
+  async culturePacks(familyId: string) {
+    return this.packs.get(familyId) ?? this.packsResolver?.(familyId) ?? null;
   }
 
   async createSession(s: Parameters<InterviewRepo["createSession"]>[0]) {
@@ -165,7 +178,19 @@ function fail(what: string, error: { message: string } | null): never {
 }
 
 export class SupabaseInterviewRepo implements InterviewRepo {
-  constructor(private db: SupabaseClient) {}
+  constructor(
+    private db: SupabaseClient,
+    /** #233: включён ли флаг culture_packs семье (lib/flags — server-only, поэтому снаружи). Нет — выключен. */
+    private packsOn: (family: Pick<Family, "id" | "labs">) => boolean = () => false,
+  ) {}
+
+  async culturePacks(familyId: string) {
+    // "*": culture_packs / labs — колонки миграций #230 / #223; ошибка / нет семьи — банк V0
+    const { data, error } = await this.db.from("families").select("*").eq("id", familyId).maybeSingle();
+    if (error || !data) return null;
+    const family = data as Pick<Family, "id" | "labs" | "culture_packs">;
+    return familyPacks(family, this.packsOn(family));
+  }
 
   async createSession(s: Parameters<InterviewRepo["createSession"]>[0]) {
     const { data, error } = await this.db.from("sessions").insert(s).select("*").single();
@@ -221,7 +246,7 @@ export class SupabaseInterviewRepo implements InterviewRepo {
   }
   async nameHints(storytellerId: string) {
     try {
-      return await loadNameHints(this.db, storytellerId);
+      return await loadNameHints(this.db, storytellerId, this.packsOn);
     } catch {
       return nameHints({});
     }

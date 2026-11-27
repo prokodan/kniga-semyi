@@ -1,5 +1,7 @@
 import { z } from "zod";
 import { getFamilyStore } from "@/lib/db/access";
+import { flag } from "@/lib/flags";
+import { parseStartChoices, StartChoiceError } from "@/lib/interview/start-choices";
 import { errorResponse, ok } from "../_family/http";
 
 export const dynamic = "force-dynamic";
@@ -37,6 +39,9 @@ const Fields = z.object({
 
 // POST /api/families — создать книгу семьи и рассказчика. multipart/form-data:
 // name, storytellerName, storytellerNameKo?, birthYear?, birthPlace?, giftDate? (YYYY-MM-DD), contact?, photo? (image/*).
+// #233 (флаг culture_packs): packs (несколько: koryo | kz | ua | general), spoken (ru,koryo | ru | ru,kk | kk),
+// book (ru,ko | ru,kk | ru) → families.culture_packs / book_langs, storytellers.spoken_langs. Флаг выключен — поля
+// не читаются, семья получает умолчания базы (как сейчас).
 // Ответ 201: { familyId, storytellerId, token, url: "/f/<token>" }.
 export async function POST(req: Request) {
   try {
@@ -55,6 +60,18 @@ export async function POST(req: Request) {
       contact: get("contact"),
     });
 
+    let langs: ReturnType<typeof parseStartChoices> | undefined;
+    const packs = form.getAll("packs").filter((v): v is string => typeof v === "string");
+    // анкеты нет (старая форма, скрипты, e2e без выбора) — умолчания базы, как сейчас
+    if (flag("culture_packs") && (packs.length > 0 || form.has("spoken") || form.has("book"))) {
+      try {
+        langs = parseStartChoices({ packs, spoken: get("spoken"), book: get("book") }, flag("lang_kk"));
+      } catch (e) {
+        if (e instanceof StartChoiceError) return ok({ error: "bad_request", message: e.message }, 400);
+        throw e;
+      }
+    }
+
     let photo: { bytes: Uint8Array; contentType: string } | null = null;
     const file = form.get("photo");
     if (file && typeof file !== "string" && file.size > 0) {
@@ -69,6 +86,7 @@ export async function POST(req: Request) {
       contact: f.contact,
       storyteller: { name: f.storytellerName, name_ko: f.storytellerNameKo, birth_year: f.birthYear, birth_place: f.birthPlace },
       photo,
+      ...(langs ? { langs } : {}),
     });
     return ok({ familyId: family.id, storytellerId: storyteller.id, token: family.access_token, url: `/f/${family.access_token}` }, 201);
   } catch (e) {
