@@ -4,7 +4,8 @@ import { redirect } from "next/navigation";
 import { BLOCKS } from "@/content/questions/blocks";
 import { lifeYears, loadChapter, photoSignedUrl, requestOrigin } from "@/lib/book/chapter";
 import { listenUrl } from "@/lib/book/qr";
-import { STATUS_MESSAGE } from "@/lib/pipeline";
+import { familyBookLangsById } from "@/lib/pipeline/book-langs";
+import { statusMessage } from "@/lib/pipeline/engine";
 import { QrCode } from "@/components/chapter/QrCode";
 import { ShareButton } from "@/components/chapter/ShareButton";
 import { Spread } from "@/components/chapter/Spread";
@@ -19,6 +20,7 @@ export const metadata: Metadata = { title: "Глава · Книга семьи"
 // Разворот главы /chapter/<storyId>?token=<токен семьи>: RU | KR, фото, цитата крупно, QR на голос, «отправить семье».
 // Текст — те же поля, что GET /api/stories/:id; пока история не ready — экран ожидания с опросом этой ручки.
 // #274 (флаг lang_kk): книга RU + KZ → разворот RU | KZ (казахский — из story_texts); книга RU + KR — как было.
+// #299: подписи (QR, шаги ожидания, «우리 이야기», имя по-корейски) — по языкам книги; только RU — без корейского.
 export default async function ChapterPage({
   params,
   searchParams,
@@ -38,11 +40,13 @@ export default async function ChapterPage({
   // Ответ на уточнение — часть основной главы.
   if (story.parent_story_id) redirect(`/chapter/${story.parent_story_id}?token=${encodeURIComponent(token)}`);
 
-  const [photo, origin, kk] = await Promise.all([
+  const [photo, origin, kk, langs] = await Promise.all([
     photoSignedUrl(storyteller?.photo_url ?? null),
     requestOrigin(),
     loadKkChapter(story, token),
+    familyBookLangsById(story.family_id),
   ]);
+  const ko = !kk && langs.includes("ko");
   const block = BLOCKS.find((b) => b.id === story.block);
   const ready = story.status === "ready";
   const voice = listenUrl(origin, story.id);
@@ -56,7 +60,7 @@ export default async function ChapterPage({
           ← {family.name}
         </Link>
         <p className="hidden text-sm tracking-widest text-muted uppercase sm:block">
-          Книга семьи{kk ? null : <> · <span lang="ko">우리 이야기</span></>}
+          Книга семьи{ko ? <> · <span lang="ko">우리 이야기</span></> : null}
         </p>
       </nav>
 
@@ -71,7 +75,7 @@ export default async function ChapterPage({
         )}
         <div className="flex flex-col gap-1">
           <p className="font-serif text-2xl leading-tight md:text-3xl">{name}</p>
-          {!kk && storyteller?.name_ko && (
+          {ko && storyteller?.name_ko && (
             <p className="font-serif text-xl text-ink-soft" lang="ko">
               {storyteller.name_ko}
             </p>
@@ -90,12 +94,12 @@ export default async function ChapterPage({
           ) : (
             <Spread
               ru={{ block: block?.ru ?? null, title: story.title, quote: story.quote, text: story.text_ru }}
-              ko={{ block: block?.ko ?? null, title: story.title_ko, quote: story.quote_ko, text: story.text_ko }}
+              ko={ko ? { block: block?.ko ?? null, title: story.title_ko, quote: story.quote_ko, text: story.text_ko } : { block: null, title: null, quote: null, text: null }}
             />
           )}
 
           <div className="grid gap-6 md:grid-cols-[1fr_minmax(0,22rem)] md:items-center">
-            <QrCode url={voice} fileName={`qr-${story.id.slice(0, 8)}.svg`} />
+            <QrCode url={voice} fileName={`qr-${story.id.slice(0, 8)}.svg`} langs={langs} />
             <ShareButton
               url={voice}
               title={story.title ?? family.name}
@@ -120,7 +124,8 @@ export default async function ChapterPage({
         <StoryWaiting
           storyId={story.id}
           token={token}
-          initial={{ status: story.status, done: false, message: kk && story.status === "translating" ? "Переводим главу…" : STATUS_MESSAGE[story.status], error: story.error, updatedAt: story.updated_at }}
+          langs={langs}
+          initial={{ status: story.status, done: false, message: statusMessage(story.status, langs), error: story.error, updatedAt: story.updated_at }}
         />
       )}
     </main>

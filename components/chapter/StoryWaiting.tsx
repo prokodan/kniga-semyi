@@ -1,17 +1,23 @@
 "use client";
 import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
-import { STORY_PIPELINE, type StoryStatus } from "@/lib/types";
+import { translatingStep } from "@/lib/pipeline/langs";
+import { STORY_PIPELINE, type BookLang, type StoryStatus } from "@/lib/types";
 
 // Экран ожидания главы: опрашивает GET /api/stories/:id (токен семьи) и обновляет страницу, когда глава готова.
 // Конвейер двигает сервер (цепочка в /process + kick-stuck раз в 10 мин); экран — подстраховка: стоит 20 с → POST /process.
 // Стоит дольше 45 с или failed — кнопка «Перезапустить сборку»: продолжает с застрявшего шага (restart: true).
-const STEPS: { status: StoryStatus; label: string }[] = [
-  { status: "uploaded", label: "Запись получена" },
-  { status: "transcribing", label: "Слушаем и записываем" },
-  { status: "editing", label: "Собираем главу" },
-  { status: "translating", label: "Переводим на корейский" },
-];
+// #293: шаг перевода — по языкам книги («на корейский» / «на казахский»), книга только RU — без шага перевода.
+// Языки не переданы — как раньше (RU + KR).
+function steps(langs?: readonly BookLang[]): { status: StoryStatus; label: string }[] {
+  const translating = langs ? translatingStep(langs) : "Переводим на корейский";
+  return [
+    { status: "uploaded", label: "Запись получена" },
+    { status: "transcribing", label: "Слушаем и записываем" },
+    { status: "editing", label: "Собираем главу" },
+    ...(translating ? [{ status: "translating" as const, label: translating }] : []),
+  ];
+}
 const POLL_MS = 3000;
 const STALL_MS = 20000;
 const SHOW_RESTART_MS = 45000;
@@ -24,7 +30,7 @@ interface View {
   updatedAt: string;
 }
 
-export function StoryWaiting({ storyId, token, initial }: { storyId: string; token: string; initial: View }) {
+export function StoryWaiting({ storyId, token, initial, langs }: { storyId: string; token: string; initial: View; langs?: readonly BookLang[] }) {
   const router = useRouter();
   const [view, setView] = useState<View>(initial);
   const [busy, setBusy] = useState(false);
@@ -92,7 +98,7 @@ export function StoryWaiting({ storyId, token, initial }: { storyId: string; tok
       <p className="text-elder text-ink-soft">{failed ? "Запись сохранена — ничего не потерялось. Попробуем ещё раз?" : view.message}</p>
       {!failed && (
         <ol className="flex flex-col gap-3">
-          {STEPS.map((s, i) => {
+          {steps(langs).map((s, i) => {
             const state = i < current ? "done" : i === current ? "now" : "later";
             return (
               <li key={s.status} className={`flex items-center gap-3 ${state === "later" ? "text-muted" : "text-ink"}`}>

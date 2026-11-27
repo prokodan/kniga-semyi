@@ -1,5 +1,5 @@
 // Цитата главы крупно: «…» киноварью, текст засечками. Корейский — без разрыва слов (break-keep).
-export function Quote({ text, lang, size = "lg" }: { text: string | null; lang: "ru" | "ko"; size?: "lg" | "md" }) {
+export function Quote({ text, lang, size = "lg" }: { text: string | null; lang: "ru" | "ko" | "kk"; size?: "lg" | "md" }) {
   if (!text) return null;
   const clean = text.replace(/^[«"“„]+|[»"”]+$/g, "").trim();
   return (
