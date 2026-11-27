@@ -1,21 +1,62 @@
 // Банк вопросов из культурных пакетов (#230, docs/v2/LANGUAGES.md §2): resolveBank(packs, spokenLang) — чистая функция.
 // general — костяк (всегда первым), слои применяются по порядку `families.culture_packs`.
 // Правило конфликта: два слоя переформулируют один вопрос → берём первый слой, второй становится вопросом
-// сразу после него (прозвучат оба), id = "<id>-<слой>".
-import type { Question, SpokenLang } from "@/lib/types";
+// сразу после него (прозвучат оба), id = "<id>-<слой>". reword заменяет тексты вопроса целиком (#233).
+import { DEFAULT_CULTURE_PACKS, type Question, type SpokenLang } from "@/lib/types";
 import { GENERAL_QUESTIONS } from "./general/questions";
 import { KORYO_PACK } from "./koryo/pack";
 import { KZ_PACK } from "./kz/pack";
+import { UA_PACK } from "./ua/pack";
 import type { CulturePack, PackLang, PackQuestion } from "./types";
 
 export type { CulturePack, PackLang, PackOp, PackQuestion, PackText } from "./types";
 
 /** Слои, которые есть в репозитории. Неизвестный id в culture_packs семьи пропускается. */
+// Порядок здесь = порядок вариантов «Кто ваша семья?» на /start (#233) и порядок слоёв, если выбрано несколько.
 export const CULTURE_PACKS: Readonly<Record<string, CulturePack>> = {
   koryo: KORYO_PACK,
-  // #231: глоссарий и родство для перевода ru ↔ kk; вопросов пока нет (#233)
+  // #231: глоссарий и родство для перевода ru ↔ kk; #233: вопросы, трудные темы, подсказки (черновик, #281)
   kz: KZ_PACK,
+  // #233: каркас (контент Влада, #281)
+  ua: UA_PACK,
 };
+
+/**
+ * Пакеты семьи в каноническом виде: general первым, дальше известные слои без повторов в порядке семьи.
+ * Неизвестный id пропускается (семья с пакетом, которого ещё нет в коде, слышит остальное).
+ */
+export function normalizePacks(packs: readonly string[] | null | undefined, registry: Readonly<Record<string, CulturePack>> = CULTURE_PACKS): string[] {
+  const out = ["general"];
+  for (const id of packs ?? []) if (id !== "general" && registry[id] && !out.includes(id)) out.push(id);
+  return out;
+}
+
+/** Пакеты = сегодняшний продукт (general + koryo): банк V0, подсказки корё, корейская строка вопроса. */
+export function isDefaultPacks(packs: readonly string[] | null | undefined): boolean {
+  return normalizePacks(packs).join(",") === normalizePacks(DEFAULT_CULTURE_PACKS).join(",");
+}
+
+/** Слои семьи (без general) — объекты пакетов по порядку. */
+export function packLayers(packs: readonly string[] | null | undefined): CulturePack[] {
+  return normalizePacks(packs)
+    .slice(1)
+    .map((id) => CULTURE_PACKS[id]!);
+}
+
+/** #235 (древо): термины родства всех слоёв семьи — «нағашы ата» → «дедушка по матери». Первым — первый слой. */
+export function packKinship(packs: readonly string[] | null | undefined): { term: string; relation: string; pack: string }[] {
+  return packLayers(packs).flatMap((p) => (p.kinship ?? []).map((k) => ({ ...k, pack: p.id })));
+}
+
+/** Трудные темы слоёв семьи (только в hardship, не первыми — тест). */
+export function packSensitive(packs: readonly string[] | null | undefined): { topic: string; questionIds: string[]; pack: string }[] {
+  return packLayers(packs).flatMap((p) => (p.sensitive ?? []).map((s) => ({ topic: s.topic, questionIds: s.questionIds ?? [], pack: p.id })));
+}
+
+/** Правила обращения слоёв семьи (для вопросов и перевода). */
+export function packTone(packs: readonly string[] | null | undefined): string[] {
+  return packLayers(packs).flatMap((p) => p.tone ?? []);
+}
 
 /** На каком языке задаём вопрос: корё мар — диалект, вопросы звучат по-русски (как сейчас). */
 export function questionLang(spoken: SpokenLang): PackLang {
@@ -47,10 +88,10 @@ export function applyPacks(base: readonly PackQuestion[], layers: readonly Cultu
         case "reword": {
           const item = items[find(op.id, layer.id)]!;
           if (item.rewordedBy) {
-            const text = { ...item.q.text, ...op.text } as PackQuestion["text"];
-            insertAfter(op.id, layer.id, { id: `${op.id}-${layer.id}`, block: item.q.block, text, minimum: op.minimum ?? item.q.minimum });
+            insertAfter(op.id, layer.id, { id: `${op.id}-${layer.id}`, block: item.q.block, text: { ...op.text }, minimum: op.minimum ? [...op.minimum] : [...item.q.minimum] });
           } else {
-            item.q = { ...item.q, text: { ...item.q.text, ...op.text }, minimum: op.minimum ? [...op.minimum] : item.q.minimum };
+            // #233: тексты заменяются целиком — языки, которых нет в reword, у вопроса пропадают (types.ts)
+            item.q = { ...item.q, text: { ...op.text }, minimum: op.minimum ? [...op.minimum] : item.q.minimum };
             item.rewordedBy = layer.id;
           }
           break;

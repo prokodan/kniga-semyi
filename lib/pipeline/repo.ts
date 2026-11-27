@@ -3,6 +3,7 @@
 // запуск без базы (делит Map историй с интервью-агентом, чтобы ответ из /api/sessions сразу обрабатывался).
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { nameHints } from "@/lib/interview/names";
+import { familyPacks } from "@/lib/interview/bank";
 import { loadNameHints } from "@/lib/interview/names-db";
 import type { BookLang, Family, FamilyEntity, Story } from "@/lib/types";
 import { loadStoryTexts, mirrorRows, withStoryTexts, type StoryTextRow } from "@/lib/book/texts";
@@ -55,6 +56,11 @@ export interface PipelineRepo {
   saveText?(story: Story, lang: BookLang, t: TextFields): Promise<void>;
   /** #231: пересборка — убрать переводы ИИ без колонок (kk): иначе перевод старого текста остался бы в книге. */
   dropTranslations?(story: Story): Promise<void>;
+  /**
+   * #233: культурные пакеты семьи (флаг culture_packs) — по ним текст вопроса для edit и уточнение после поздней
+   * расшифровки. null / нет реализации — банк V0, как сейчас.
+   */
+  culturePacks?(story: Story): Promise<string[] | null>;
 }
 
 export interface TextFields {
@@ -188,6 +194,11 @@ export class MemoryPipelineRepo implements PipelineRepo {
   /** #231: языки книги по семьям (тесты кладут сами); нет — ru, ko. Флаг lang_kk в памяти включён (как локально). */
   bookLangs = new Map<string, BookLang[]>();
   langKkOn = true;
+  /** #233: пакеты семей (тесты кладут сами); нет — null (банк V0). */
+  packs = new Map<string, string[] | null>();
+  async culturePacks(story: Story) {
+    return this.packs.get(story.family_id) ?? null;
+  }
   async translationPlan(story: Story) {
     const langs = effectiveBookLangs({ book_langs: this.bookLangs.get(story.family_id) ?? null }, this.langKkOn);
     const have = (this.texts.get(story.id) ?? []).filter((r) => r.text != null).map((r) => r.lang);
@@ -212,7 +223,17 @@ export class SupabasePipelineRepo implements PipelineRepo {
     private bucket = "audio",
     /** #231: включён ли флаг lang_kk семье (lib/flags — server-only, поэтому снаружи). Нет — выключен. */
     private langKk: (family: Pick<Family, "id" | "labs">) => boolean = () => false,
+    /** #233: включён ли флаг culture_packs семье. Нет — выключен (банк V0, подсказки корё). */
+    private packsOn: (family: Pick<Family, "id" | "labs">) => boolean = () => false,
   ) {}
+
+  async culturePacks(story: Story) {
+    // "*": culture_packs / labs — колонки миграций #230 / #223; ошибка / нет семьи — банк V0
+    const { data, error } = await this.db.from("families").select("*").eq("id", story.family_id).maybeSingle();
+    if (error || !data) return null;
+    const family = data as Pick<Family, "id" | "labs" | "culture_packs">;
+    return familyPacks(family, this.packsOn(family));
+  }
 
   async getStory(id: string) {
     const { data, error } = await this.db.from("stories").select("*").eq("id", id).maybeSingle();
@@ -257,7 +278,7 @@ export class SupabasePipelineRepo implements PipelineRepo {
   }
   async nameHints(story: Story) {
     try {
-      return await loadNameHints(this.db, story.storyteller_id);
+      return await loadNameHints(this.db, story.storyteller_id, this.packsOn);
     } catch {
       return nameHints({}); // без карточки — хотя бы словарь
     }
