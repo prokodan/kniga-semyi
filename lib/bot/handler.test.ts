@@ -295,6 +295,11 @@ describe("промпт по HANDOFF §7 (#212)", () => {
     await bot().handleUpdate(msg(GROUP, 1, "/prompt 9"));
     expect(tg.sent.at(-1)!.html).toContain("Я — Данил. Сделай issue #9");
   });
+
+  it("#223: промпт требует строку «Флаг:» в описании PR и зелёный flag-line", () => {
+    expect(FALLBACK_TEMPLATE).toContain("в описании PR — строка «Флаг: <имя из lib/flags> | не нужен — <почему>»");
+    expect(FALLBACK_TEMPLATE).toContain("ci, e2e и flag-line");
+  });
 });
 
 describe("очередь (#212)", () => {

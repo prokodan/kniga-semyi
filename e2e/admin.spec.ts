@@ -34,3 +34,22 @@ test("/admin/families: все семьи, главы, книга, цена, сс
   await page.getByRole("link", { name: "Киоск АКНЦ" }).click();
   await expect(kim).toHaveCount(0);
 });
+
+test("флаги #223: demo_flag в /api/health, список флагов и включение семье (labs)", async ({ page, request }) => {
+  // e2e — не Production и без FLAGS_ON: окружением включены все флаги
+  const health = await (await request.get("/api/health")).json();
+  expect(health.flags_on).toContain("demo_flag");
+
+  await adminLogin(page, "/admin");
+  await page.goto("/admin/families");
+  await expect(page.locator('[data-flag="demo_flag"]')).toContainText("включён окружением");
+  const kim = page.locator(`[data-family="${DEMO_FAMILY.id}"]`);
+  await kim.getByRole("button", { name: "demo_flag — включить семье" }).click();
+  await expect(page.getByText(`demo_flag: включён семье ${DEMO_FAMILY.id.slice(0, 8)}`)).toBeVisible();
+  await expect(kim).toContainText("labs: demo_flag");
+  await expect(page.locator('[data-flag="demo_flag"]')).toContainText("семей с флагом: 1");
+  // вернуть как было
+  await kim.getByRole("button", { name: "✓ demo_flag — выключить семье" }).click();
+  await expect(page.getByText(`demo_flag: выключен семье ${DEMO_FAMILY.id.slice(0, 8)}`)).toBeVisible();
+  await expect(kim).not.toContainText("labs:");
+});

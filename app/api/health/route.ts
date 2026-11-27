@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { getDbOrNull } from "@/lib/db";
 import { env, getAiMode, isAiUsageSinkEnabled } from "@/lib/env";
+import { flagsOn } from "@/lib/flags";
 import { isStageMode } from "@/lib/stage";
 
 export const dynamic = "force-dynamic";
@@ -55,6 +56,8 @@ export async function GET() {
       ai_mode: getAiMode(),
       // Для утреннего чек-листа 27.11 и smoke: только «задано / нет», без значений.
       stage_mode: isStageMode(),
+      // #223: флаги, включённые окружением (FLAGS_ON / по умолчанию) — только имена; выкатка по семьям сюда не входит
+      flags_on: flagsOn(),
       config: {
         admin_pin: Boolean(env.adminPin()),
         kiosk_pin: Boolean(env.kioskPin()),

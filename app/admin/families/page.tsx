@@ -1,14 +1,18 @@
 // /admin/families — наша админка «Семьи» (#201): все семьи (family и kiosk), источник, главы готово / всего,
 // статус книги, цена книги (тариф + допы из demo_orders), расход ИИ, ссылки на семью, книгу и словарь имён.
 // Вход — наш ADMIN_PIN (cookie та же, что у /admin и /admin/ai). Токены семей — только в ссылках этой страницы.
+// #223: флаги функций — список с описанием и где включены; у семьи — переключатели families.labs.
 import type { Metadata } from "next";
 import Link from "next/link";
 import { redirect } from "next/navigation";
+import { revalidatePath } from "next/cache";
 import { Badge, fmtUsd, Notice } from "@/components/admin/ui";
+import { env } from "@/lib/env";
+import { currentEnvFlags, flag, FLAG_NAMES, FLAGS, isFlagName, type FlagName } from "@/lib/flags";
 import { formatKzt } from "@/lib/payments/plans";
 import { isAdmin, isAdminConfigured } from "../ai/_lib/session";
-import { buildAdminFamilies, filterAdminFamilies, priceLabel, totals, type AdminFamily, type SourceView } from "./_lib/families";
-import { loadAdminFamilyRows } from "./_lib/load";
+import { buildAdminFamilies, filterAdminFamilies, labsCount, priceLabel, totals, type AdminFamily, type SourceView } from "./_lib/families";
+import { loadAdminFamilyRows, setFamilyLab } from "./_lib/load";
 
 export const dynamic = "force-dynamic";
 export const metadata: Metadata = { title: "Семьи · админка · Книга семьи", robots: { index: false, follow: false } };
@@ -42,7 +46,104 @@ function href(view: SourceView, hideDemo: boolean): string {
   return `/admin/families${s ? `?${s}` : ""}`;
 }
 
-function FamilyRow({ f }: { f: AdminFamily }) {
+const ISSUES = "https://github.com/prokodan/kniga-semyi/issues";
+
+/** Куда вернуться после переключения: только эта страница (с её фильтрами), без чужих адресов. */
+function backTo(raw: FormDataEntryValue | null, kind: "ok" | "err", message: string): never {
+  const path = typeof raw === "string" && /^\/admin\/families(\?[^#]*)?$/.test(raw) ? raw : "/admin/families";
+  const u = new URL(path, "http://x");
+  u.searchParams.delete("ok");
+  u.searchParams.delete("err");
+  u.searchParams.set(kind, message);
+  redirect(`${u.pathname}${u.search}`);
+}
+
+async function toggleLabAction(fd: FormData) {
+  "use server";
+  const ret = fd.get("return");
+  if (!(await isAdmin())) backTo(ret, "err", "Сессия истекла — введите PIN ещё раз в /admin.");
+  const familyId = String(fd.get("family") ?? "");
+  const name = String(fd.get("flag") ?? "");
+  const on = fd.get("on") === "1";
+  if (!familyId || !isFlagName(name)) backTo(ret, "err", "Неизвестный флаг или семья.");
+  let message: string;
+  try {
+    await setFamilyLab(familyId, name, on);
+    message = `${name}: ${on ? "включён" : "выключен"} семье ${familyId.slice(0, 8)}`;
+  } catch (e) {
+    console.error("[admin/families] labs:", e instanceof Error ? e.message : e);
+    backTo(ret, "err", `Не удалось изменить флаг: ${e instanceof Error ? e.message : String(e)}`);
+  }
+  revalidatePath("/admin/families");
+  backTo(ret, "ok", message);
+}
+
+function envLabel(name: FlagName): { text: string; tone: "ok" | "off" } {
+  const e = currentEnvFlags();
+  if (FLAGS[name].everyone) return { text: "включён всем (everyone)", tone: "ok" };
+  if (e.all || e.names.has(name)) return { text: e.source === "FLAGS_ON" ? "включён окружением (FLAGS_ON)" : "включён окружением (по умолчанию не в проде)", tone: "ok" };
+  return { text: "в окружении выключен — только семьи из labs", tone: "off" };
+}
+
+function FlagsSection({ counts }: { counts: Map<string, number> }) {
+  return (
+    <section className="flex flex-col gap-2 rounded-card bg-paper-deep p-4 text-sm shadow-card" aria-label="Флаги функций">
+      <h2 className="font-serif text-lg">Флаги функций</h2>
+      <p className="text-ink-soft">
+        Окружение: <b>{env.vercelEnv()}</b>. Семье флаг включается кнопкой в её карточке (families.labs) — даже если в
+        окружении он выключен. Как выкатывать — docs/HANDOFF.md §3 «Флаги».
+      </p>
+      <ul className="flex flex-col gap-2">
+        {FLAG_NAMES.map((n) => {
+          const info = FLAGS[n];
+          const e = envLabel(n);
+          return (
+            <li key={n} className="flex flex-col gap-1 rounded-card border border-line bg-paper p-3" data-flag={n}>
+              <p className="flex flex-wrap items-center gap-2">
+                <code className="font-mono">{n}</code>
+                <Badge tone={e.tone}>{e.text}</Badge>
+              </p>
+              <p>{info.description}</p>
+              <p className="text-muted">
+                семей с флагом: {counts.get(n) ?? 0} · ведёт {info.owner} ·{" "}
+                <a className="underline" href={`${ISSUES}/${info.issue}`}>
+                  #{info.issue}
+                </a>
+              </p>
+            </li>
+          );
+        })}
+      </ul>
+    </section>
+  );
+}
+
+function LabToggles({ f, returnTo }: { f: AdminFamily; returnTo: string }) {
+  if (FLAG_NAMES.length === 0) return null;
+  return (
+    <div className="flex flex-wrap gap-2">
+      {FLAG_NAMES.map((n) => {
+        const on = f.labs.includes(n);
+        return (
+          <form key={n} action={toggleLabAction}>
+            <input type="hidden" name="family" value={f.id} />
+            <input type="hidden" name="flag" value={n} />
+            <input type="hidden" name="on" value={on ? "0" : "1"} />
+            <input type="hidden" name="return" value={returnTo} />
+            <button
+              type="submit"
+              className={`flex min-h-12 items-center rounded-button border px-4 text-sm ${on ? "border-ink bg-ink text-paper" : "border-line bg-paper text-ink"}`}
+            >
+              {on ? `✓ ${n} — выключить семье` : `${n} — включить семье`}
+            </button>
+          </form>
+        );
+      })}
+    </div>
+  );
+}
+
+function FamilyRow({ f, returnTo }: { f: AdminFamily; returnTo: string }) {
   const b = BOOK[f.book.status];
   return (
     <li className="flex flex-col gap-2 rounded-card border border-line bg-paper p-3" data-family={f.id}>
@@ -58,7 +159,10 @@ function FamilyRow({ f }: { f: AdminFamily }) {
         {f.isDemo ? <span className="text-warning">демо</span> : null}
         <span className="font-mono text-muted">{f.shortId}</span>
         <span className="text-muted">создана {date(f.createdAt)}</span>
+        {/* #223: демонстрационный флаг — единственное, что он делает */}
+        {flag("demo_flag", { familyId: f.id, labs: f.labs }) ? <span title="demo_flag включён">🧪</span> : null}
       </p>
+      {f.labs.length > 0 ? <p className="text-sm text-ink-soft">labs: {f.labs.join(", ")}</p> : null}
       <p className="flex flex-wrap gap-x-3 text-sm">
         <span>
           главы: <b>{f.chapters.ready}</b> готово / {f.chapters.total} всего
@@ -87,6 +191,7 @@ function FamilyRow({ f }: { f: AdminFamily }) {
           Словарь имён
         </a>
       </div>
+      <LabToggles f={f} returnTo={returnTo} />
     </li>
   );
 }
@@ -108,6 +213,9 @@ export default async function AdminFamiliesPage({ searchParams }: { searchParams
   }
   const list = all ? filterAdminFamilies(all, view, hideDemo) : [];
   const t = totals(list);
+  const returnTo = href(view, hideDemo);
+  const ok = typeof sp.ok === "string" ? sp.ok : null;
+  const err = typeof sp.err === "string" ? sp.err : null;
 
   return (
     <main className="mx-auto flex max-w-3xl flex-col gap-4 px-4 py-6 sm:px-6">
@@ -146,6 +254,8 @@ export default async function AdminFamiliesPage({ searchParams }: { searchParams
         Только для команды: ссылки ниже содержат ключ семьи — не пересылайте их и не вставляйте в чаты, логи и PR. Кабинет центра (/center) видит
         только семьи киоска.
       </Notice>
+      {ok ? <Notice tone="ok">{ok}</Notice> : null}
+      {err ? <Notice tone="err">{err}</Notice> : null}
       {memory ? <Notice tone="info">База не настроена — показана память сервера (локальный режим).</Notice> : null}
       {!all ? <Notice tone="err">Не удалось прочитать семьи. Обновите страницу через минуту.</Notice> : null}
 
@@ -161,11 +271,13 @@ export default async function AdminFamiliesPage({ searchParams }: { searchParams
         </section>
       ) : null}
 
+      {all ? <FlagsSection counts={labsCount(all)} /> : null}
+
       {all && list.length === 0 ? <p className="rounded-card bg-paper-deep p-5 text-center text-ink-soft">Семей пока нет.</p> : null}
       {list.length > 0 ? (
         <ul className="flex flex-col gap-2">
           {list.map((f) => (
-            <FamilyRow key={f.id} f={f} />
+            <FamilyRow key={f.id} f={f} returnTo={returnTo} />
           ))}
         </ul>
       ) : null}

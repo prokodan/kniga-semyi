@@ -36,6 +36,9 @@ export interface Family {
   contact: string | null;
   archive_consent: boolean;
   is_demo: boolean;
+  /** #223: флаги функций, включённые этой семье (имена из lib/flags/registry.ts). В базе `text[] not null default '{}'`;
+   *  в типе необязательно — объекты в памяти и фикстуры демо его не задают (= пусто). */
+  labs?: string[];
   created_at: IsoDateTime;
   updated_at: IsoDateTime;
 }
