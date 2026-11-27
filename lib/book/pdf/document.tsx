@@ -348,7 +348,10 @@ function TreePage({ rows, second, part, parts }: { rows: BookTreeRow[]; second: 
   const dense = rows.reduce((a, r) => a + r.units.flat().length, 0) > 14;
   return (
     <View>
-      <Text style={s.kicker}>Древо семьи{parts > 1 ? ` · ${part} из ${parts}` : ""}</Text>
+      {/* fixed: большая семья перетекает на следующую страницу — подпись повторяется и там */}
+      <Text style={s.kicker} fixed>
+        Древо семьи{parts > 1 ? ` · ${part} из ${parts}` : ""}
+      </Text>
       <Text style={s.h1}>{parts > 1 ? (part === 1 ? "Старшие поколения" : "Рассказчик и потомки") : "Древо семьи"}</Text>
       {ko && <Text style={s.h1ko}>가계도</Text>}
       <View style={s.rule} />
