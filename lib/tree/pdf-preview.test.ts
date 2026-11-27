@@ -52,7 +52,7 @@ describe("#277 PDF древа большой семьи", () => {
         .filter((w) => !text.includes(w));
       expect(missing).toEqual([]);
       expect(text).not.toContain("…"); // имена не обрезаются многоточием
-      expect(text).toContain(langs[1] === "ko" ? "조부모" : "Ата-әже");
+      expect(text).toContain(langs[1] === "ko" ? "조부모" : "Атаәже"); // без «-»: текст сравниваем без переносов
     }, 60_000);
   }
 
