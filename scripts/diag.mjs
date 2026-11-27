@@ -102,7 +102,7 @@ stories.forEach((s, i) => {
   );
 });
 
-const stuck = stories.filter((s) => !["ready", "failed"].includes(s.status) && Date.now() - new Date(s.updated_at).getTime() > 5 * 60000);
+const stuck = stories.filter((s) => !["ready", "failed", "skipped"].includes(s.status) && Date.now() - new Date(s.updated_at).getTime() > 5 * 60000);
 log();
 log(`**Застряли > 5 мин:** ${stuck.length} (${stuck.map((s) => `${short(s.id)} ${s.status}`).join(", ") || "нет"})`);
 

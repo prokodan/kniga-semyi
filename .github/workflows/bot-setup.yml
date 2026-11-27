@@ -43,9 +43,9 @@ jobs:
         run: |
           body=$(jq -n '{commands: [
             {command:"menu", description:"Пульт кнопками"},
-            {command:"take", description:"Взять задачу: /take I5"},
-            {command:"release", description:"Вернуть задачу в очередь: /release I5"},
-            {command:"prompt", description:"Промпт для агента: /prompt I5"},
+            {command:"take", description:"Взять задачу: /take 212"},
+            {command:"release", description:"Вернуть задачу в очередь: /release 212"},
+            {command:"prompt", description:"Промпт для агента: /prompt 212"},
             {command:"iam", description:"Привязать GitHub: /iam логин"},
             {command:"help", description:"Список команд"}
           ]}')
