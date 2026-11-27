@@ -1,5 +1,5 @@
 // Шаг 1: расшифровка аудио. Текстовый ответ (transcript уже есть) этот шаг пропускает — решает движок.
-import { KZ_HINTS_KK, KZ_HINTS_RU } from "@/content/packs/kz/pack";
+import { KZ_HINTS_KK, KZ_HINTS_RU_WORDS } from "@/content/packs/kz/pack";
 import type { AiInput } from "@/lib/ai/types";
 import { reconcileNames } from "@/lib/interview/names";
 import type { SpokenLang } from "@/lib/types";
@@ -19,21 +19,22 @@ const MAX_HINTS = 150; // лимит hints во входе transcribe (lib/ai/ty
  * #300 (флаг spoken_kk): что добавить ко входу расшифровки по языку рассказа. Нет kk в языке рассказа (ru, ru + корё мар,
  * флаг выключен) — null: вход, промпт и ключ кэша ровно как до #300. С kk: `spokenLangs` (→ prompts/transcribe.kk.md),
  * languageHint kk (по-казахски) или mixed (по-русски с казахскими словами), подсказки — казахские написания пакета kz
- * вместо русских («нағашы», а не «нагашы»). Сверка со словарём (reconcileNames) — только по неказахским подсказкам:
- * она знает лишь русские буквы и могла бы «поправить» казахское слово.
+ * вместо русских написаний казахских слов («нағашы», а не «нагашы»); русские названия мест остаются — по-русски сказанное
+ * пишется по-русски. Сверка со словарём (reconcileNames) — по прежним подсказкам: она знает лишь русские буквы, слова
+ * с казахскими буквами не трогает (тест).
  */
 export function spokenInput(
   langs: readonly SpokenLang[] | null | undefined,
   hints: readonly string[] | undefined,
 ): { languageHint: "kk" | "mixed"; spokenLangs: SpokenLang[]; hints: string[]; reconcile: string[] } | null {
   if (!langs?.includes("kk")) return null;
-  const ruSpellings = new Set(KZ_HINTS_RU);
+  const ruSpellings = new Set(KZ_HINTS_RU_WORDS);
   const own = (hints ?? []).filter((h) => !ruSpellings.has(h));
   return {
     languageHint: langs.includes("ru") ? "mixed" : "kk",
     spokenLangs: [...langs],
     hints: [...new Set([...own, ...KZ_HINTS_KK])].slice(0, MAX_HINTS),
-    reconcile: own,
+    reconcile: [...(hints ?? [])],
   };
 }
 

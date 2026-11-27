@@ -4,7 +4,7 @@ import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { KZ_HINTS_KK, KZ_HINTS_RU } from "@/content/packs/kz/pack";
+import { KZ_HINTS_KK, KZ_HINTS_RU, KZ_HINTS_RU_WORDS } from "@/content/packs/kz/pack";
 import { promptPath, promptVariant } from "@/lib/ai/prompts";
 import { transcribeModelBody } from "@/lib/ai/providers/gemini";
 import type { AiInput, AiOutput, AiStep } from "@/lib/ai/types";
@@ -102,12 +102,17 @@ describe("расшифровка по языку рассказа (#300, фла�
     expect(patch.transcript).toBe(heard.replace("Уштабе", "Уштобе"));
   });
 
-  it("spokenInput: без kk — null; русские написания kz уходят из подсказок и из сверки", () => {
+  it("spokenInput: без kk — null; русские написания казахских слов уходят из подсказок, русские топонимы остаются", () => {
     expect(spokenInput(["ru", "koryo"], ["Уштобе"])).toBeNull();
     expect(spokenInput(null, ["Уштобе"])).toBeNull();
-    const s = spokenInput(["ru", "kk"], ["Серік", ...KZ_HINTS_RU])!;
-    expect(s.reconcile).toEqual(["Серік"]);
-    expect(s.hints).toEqual(["Серік", ...KZ_HINTS_KK].slice(0, 150));
+    const hints = ["Серік", ...KZ_HINTS_RU];
+    const s = spokenInput(["ru", "kk"], hints)!;
+    expect(s.reconcile).toEqual(hints);
+    for (const w of KZ_HINTS_RU_WORDS) expect(s.hints, w).not.toContain(w);
+    expect(s.hints.slice(0, 2)).toEqual(["Серік", "Алматы"]);
+    expect(s.hints).toContain("Уштобе");
+    expect(s.hints).toContain("Үштөбе");
+    expect(s.hints.length).toBeLessThanOrEqual(150);
   });
 
   it("Gemini: инструкция модели расшифровки без spokenLangs — как раньше; с kk — про казахские буквы", () => {
