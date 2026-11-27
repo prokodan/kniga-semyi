@@ -32,7 +32,7 @@ describe("пакет kz (#231): глоссарий для перевода ru �
   });
 
   it("казахские буквы в словах, где они есть в норме (ауыл, құрт, қымыз…)", () => {
-    for (const w of ["ауыл", "құрт", "қымыз", "сырмақ", "Қарағанды"]) expect(KZ_GLOSSARY.find((t) => t.kk === w)?.kk, w).toMatch(/ауыл|[құ]/);
+    for (const w of ["ауыл", "құрт", "қымыз", "сырмақ", "Қарағанды"]) expect(KZ_GLOSSARY.find((t) => t.kk === w)?.kk, w).toMatch(/ауыл|[құ]/i);
     expect(KZ_GLOSSARY.filter((t) => KK_LETTERS.test(t.kk)).length).toBeGreaterThan(30);
   });
 
