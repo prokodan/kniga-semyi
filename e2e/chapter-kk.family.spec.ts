@@ -61,7 +61,16 @@ test("книга RU + KZ: глава RU | KZ из story_texts, без корей
   await test.step("глава RU | KZ", async () => {
     await page.goto(`/f/${token}`);
     const chapter = page.getByRole("link", { name: /^1\. / });
-    await reloadUntil(page, () => expect(chapter).toContainText("читать →", { timeout: 2000 }), 90_000);
+    const storyId = (await chapter.getAttribute("href"))!.match(/\/chapter\/([0-9a-f-]{36})/)![1];
+    await reloadUntil(
+      page,
+      async () => {
+        const view = await (await page.request.get(`/api/stories/${storyId}?token=${token}`)).json();
+        console.log("[chapter-kk] история:", JSON.stringify({ status: view.status, next: view.next, waiting: view.waiting, error: view.error, message: view.message }));
+        await expect(chapter).toContainText("читать →", { timeout: 2000 });
+      },
+      90_000,
+    );
     await chapter.click();
     await expect(page.getByRole("heading", { name: editFixture.title })).toBeVisible();
     await expect(page.getByRole("tab", { name: "Қазақша" })).toBeVisible();
