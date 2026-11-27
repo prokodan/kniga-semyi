@@ -4,7 +4,7 @@ import "server-only";
 // (тогда аудио и фото не грузятся в Storage, а путь просто записывается в строку).
 import { randomBytes, randomUUID } from "node:crypto";
 import type { SupabaseClient } from "@supabase/supabase-js";
-import type { Family, LifeBlock, Story, Storyteller } from "@/lib/types";
+import type { BookLang, Family, LifeBlock, SpokenLang, Story, Storyteller } from "@/lib/types";
 import { LIFE_BLOCKS } from "@/lib/types";
 import { MemoryInterviewRepo } from "@/lib/interview/repo";
 import { BUCKETS, getDbOrNull } from "./index";
@@ -32,6 +32,11 @@ export interface NewFamily {
   contact: string | null;
   storyteller: { name: string; name_ko: string | null; birth_year: number | null; birth_place: string | null };
   photo: { bytes: Uint8Array; contentType: string } | null;
+  /**
+   * #233 (флаг culture_packs): выбор на /start — культурные пакеты, язык рассказа, языки книги.
+   * Нет — умолчания базы (general + koryo, ru + корё мар, ru,ko) = сегодняшний продукт.
+   */
+  langs?: { culture_packs: string[]; spoken_langs: SpokenLang[]; book_langs: BookLang[] };
 }
 
 export type AudioKind = "story" | "consent";
@@ -153,6 +158,7 @@ export class MemoryFamilyStore implements FamilyStore {
       contact: input.contact,
       archive_consent: false,
       is_demo: false,
+      ...(input.langs ? { culture_packs: [...input.langs.culture_packs], book_langs: [...input.langs.book_langs] } : {}),
       created_at: now,
       updated_at: now,
     };
@@ -165,6 +171,7 @@ export class MemoryFamilyStore implements FamilyStore {
       photo_url: input.photo ? `${family.id}/${id}.jpg` : null,
       consent_audio_url: null,
       consent_at: null,
+      ...(input.langs ? { spoken_langs: [...input.langs.spoken_langs] } : {}),
       created_at: now,
       updated_at: now,
     };
@@ -247,14 +254,21 @@ export class SupabaseFamilyStore implements FamilyStore {
   async createFamily(input: NewFamily) {
     const { data: family, error } = await this.db
       .from("families")
-      .insert({ name: input.name, gift_date: input.gift_date, contact: input.contact, source: "family" })
+      .insert({
+        name: input.name,
+        gift_date: input.gift_date,
+        contact: input.contact,
+        source: "family",
+        // #233: колонки миграции #230; без выбора не пишем — умолчания базы
+        ...(input.langs ? { culture_packs: input.langs.culture_packs, book_langs: input.langs.book_langs } : {}),
+      })
       .select("*")
       .single();
     if (error || !family) fail("создание семьи", error);
 
     const { data: st, error: stError } = await this.db
       .from("storytellers")
-      .insert({ family_id: family.id, ...input.storyteller })
+      .insert({ family_id: family.id, ...input.storyteller, ...(input.langs ? { spoken_langs: input.langs.spoken_langs } : {}) })
       .select("*")
       .single();
     if (stError || !st) {

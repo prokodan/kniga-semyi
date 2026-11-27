@@ -13,7 +13,7 @@
 import { DEFAULT_PROVIDERS } from "@/lib/ai/config";
 import type { AiRouter } from "@/lib/ai/router";
 import { AiUnavailableError } from "@/lib/ai/types";
-import { getQuestionBank, type QuestionBank } from "@/lib/interview/bank";
+import { bankForPacks, getQuestionBank, type QuestionBank } from "@/lib/interview/bank";
 import type { BookLang, Story, StoryStatus } from "@/lib/types";
 import type { PipelinePatch, PipelineRepo } from "./repo";
 import { checkDeferred, needsDeferredCheck } from "./deferred";
@@ -132,9 +132,24 @@ export const LATE_CHILD_REBUILD_MS = 30 * 60_000;
 
 export function createPipeline(deps: PipelineDeps) {
   const { ai, repo } = deps;
-  const bank = deps.bank ?? getQuestionBank();
+  const base = deps.bank ?? getQuestionBank();
   const retryInMinutes = deps.retryInMinutes ?? DEFAULT_PROVIDERS.gemini.cooldown_minutes;
   const now = deps.now ?? Date.now;
+
+  /**
+   * #233: банк вопросов семьи (культурные пакеты, флаг culture_packs) — текст вопроса для edit и вопрос отложенного
+   * уточнения. Вопроса нет в банке семьи (пакеты сменили после записи) — ищем в банке V0. Сбой — банк V0, как до #233.
+   */
+  async function bankOf(story: Story): Promise<QuestionBank> {
+    if (deps.bank || !repo.culturePacks) return base;
+    try {
+      const bank = bankForPacks(await repo.culturePacks(story));
+      return bank === base ? base : { ...bank, get: (id: string) => bank.get(id) ?? base.get(id) };
+    } catch (e) {
+      console.warn(`[pipeline] пакеты семьи ${story.id.slice(0, 8)}:`, (e as Error).message);
+      return base;
+    }
+  }
 
   async function load(storyId: string, token?: string, withPlan = true): Promise<PlannedStory> {
     const story = await repo.getStory(storyId);
@@ -191,7 +206,7 @@ export function createPipeline(deps: PipelineDeps) {
     if (needsDeferredCheck(story)) {
       let deferred = null;
       try {
-        deferred = await checkDeferred(story, { ai, bank, deadline: now() + STEP_BUDGET_MS, now });
+        deferred = await checkDeferred(story, { ai, bank: await bankOf(story), deadline: now() + STEP_BUDGET_MS, now });
       } catch (e) {
         console.warn(`[pipeline] полнота ${story.id.slice(0, 8)}:`, (e as Error).message);
       }
@@ -241,6 +256,7 @@ export function createPipeline(deps: PipelineDeps) {
       return fresh && (theirs !== started || fresh.status === "skipped") ? fresh : null;
     }
     try {
+      const bank = step === "edit" ? await bankOf(story) : base; // банк нужен только edit (текст вопроса)
       const patch = await STEP_FNS[step]({ story, ai, repo, bank, deadline: started + STEP_BUDGET_MS });
       const newer = await superseded();
       if (newer) return result(newer, null, { running: Boolean(newer.step_started_at) });
