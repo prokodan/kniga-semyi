@@ -3,13 +3,16 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 import { loadChapter } from "@/lib/book/chapter";
 import { DraftEditor } from "@/components/draft/DraftEditor";
+import { familyBookLangsById } from "@/lib/pipeline/book-langs";
+import { langUi } from "@/lib/pipeline/langs";
 import { LinkNotFound } from "../../_ui/LinkNotFound";
 
 export const dynamic = "force-dynamic";
 export const metadata: Metadata = { title: "Правка главы · Книга семьи", robots: { index: false, follow: false } };
 
 // Правка черновика /draft/<storyId>?token=<токен семьи>: заголовок, цитата, текст RU.
-// После сохранения корейская версия пересобирается сама (PATCH /api/stories/:id/edit).
+// После сохранения перевод (второй язык книги) пересобирается сам (PATCH /api/stories/:id/edit).
+// #299 / #245: текст RU — из story_texts (loadChapter), подпись про перевод — по языкам книги семьи.
 export default async function DraftPage({
   params,
   searchParams,
@@ -29,6 +32,7 @@ export default async function DraftPage({
 
   const chapterUrl = `/chapter/${story.id}?token=${encodeURIComponent(token)}`;
   const editable = Boolean(story.text_ru) && story.status !== "transcribing" && story.status !== "editing";
+  const ui = langUi(await familyBookLangsById(story.family_id));
 
   return (
     <main className="mx-auto flex max-w-3xl flex-col gap-6 px-4 py-6 md:px-8 md:py-10">
@@ -44,7 +48,7 @@ export default async function DraftPage({
       <header className="flex flex-col gap-2">
         <h1 className="font-serif text-3xl leading-tight">Исправить главу</h1>
         <p className="text-elder text-ink-soft">
-          ИИ мог ошибиться в именах, названиях мест и датах. Поправьте их здесь — корейский перевод обновится сам.
+          {`ИИ мог ошибиться в именах, названиях мест и датах. Поправьте их здесь${ui ? ` — ${ui.name} перевод обновится сам.` : "."}`}
         </p>
       </header>
 

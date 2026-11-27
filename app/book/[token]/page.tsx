@@ -4,6 +4,8 @@ import { LinkNotFound } from "@/app/(family)/_ui/LinkNotFound";
 import { BOOK_MIN_CHAPTERS, getBookView } from "@/lib/book/build";
 import { lifeYears } from "@/lib/book/chapter";
 import { getFamilyByToken } from "@/lib/db/access";
+import { familyBookLangs } from "@/lib/pipeline/book-langs";
+import { bookLangsPhrase, langUi } from "@/lib/pipeline/langs";
 import { BookActions } from "./BookActions";
 
 export const dynamic = "force-dynamic";
@@ -29,6 +31,10 @@ export default async function BookPage({ params }: { params: Promise<{ token: st
     ? new Date(book.built_at).toLocaleString("ru-RU", { day: "numeric", month: "long", hour: "2-digit", minute: "2-digit", timeZone: "Asia/Almaty" })
     : null;
   const meta = [lifeYears(storyteller), storyteller?.birth_place].filter(Boolean).join(" · ");
+  // #299: подписи по языкам книги — RU + KR как было, RU + KZ / только RU без корейского
+  const langs = familyBookLangs(family);
+  const ui = langUi(langs);
+  const ko = langs.includes("ko");
 
   return (
     <main className="mx-auto flex max-w-xl flex-col gap-6 px-5 py-8">
@@ -39,14 +45,20 @@ export default async function BookPage({ params }: { params: Promise<{ token: st
       </nav>
 
       <p className="text-sm tracking-widest text-muted uppercase">
-        Книга семьи · <span lang="ko">우리 이야기</span>
+        {ko ? (
+          <>
+            Книга семьи · <span lang="ko">우리 이야기</span>
+          </>
+        ) : (
+          "Книга семьи"
+        )}
       </p>
 
       {/* мини-обложка */}
       <section className="flex flex-col items-center gap-2 rounded-card bg-paper-deep px-6 py-10 text-center shadow-card">
         <div aria-hidden className="mb-4 h-px w-12 bg-gold" />
         <h1 className="font-serif text-3xl leading-tight">{storyteller?.name ?? family.name}</h1>
-        {storyteller?.name_ko && (
+        {ko && storyteller?.name_ko && (
           <p className="font-serif text-xl text-ink-soft" lang="ko">
             {storyteller.name_ko}
           </p>
@@ -63,8 +75,8 @@ export default async function BookPage({ params }: { params: Promise<{ token: st
         )}
         {book.outdated && (
           <p>
-            В главах поправили имена{builtAt ? ` после сборки ${builtAt}` : ""}. Нажмите «Пересобрать», чтобы PDF обновился —
-            когда корейский перевод исправленных глав будет готов (обычно пара минут).
+            В главах поправили имена{builtAt ? ` после сборки ${builtAt}` : ""}
+            {`. Нажмите «Пересобрать», чтобы PDF обновился${ui ? ` — когда ${ui.name} перевод исправленных глав будет готов (обычно пара минут).` : "."}`}
           </p>
         )}
         {book.status === "building" && <p>Книга собирается — это меньше минуты.</p>}
@@ -79,7 +91,7 @@ export default async function BookPage({ params }: { params: Promise<{ token: st
             ? "Запишите первый рассказ — и здесь появится книга."
             : ready < BOOK_MIN_CHAPTERS
               ? `Книга будет полнее с ${BOOK_MIN_CHAPTERS} главами, но собрать можно уже сейчас.`
-              : "В книге будут обложка, оглавление, главы на русском и корейском, QR-коды на голос."}
+              : `В книге будут обложка, оглавление, главы ${bookLangsPhrase(langs)}, QR-коды на голос.`}
         </p>
       </section>
 

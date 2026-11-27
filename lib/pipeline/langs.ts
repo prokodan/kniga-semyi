@@ -37,3 +37,78 @@ export type BookLangChoice = (typeof BOOK_LANG_CHOICES)[number]["id"];
 export function choiceOf(langs: readonly BookLang[]): BookLangChoice | null {
   return BOOK_LANG_CHOICES.find((c) => c.langs.join(",") === langs.join(","))?.id ?? null;
 }
+
+// ── #299: подписи интерфейса по языкам книги ─────────────────────────────────────────────────────────────────
+// Одно место для «на корейский / на казахский / без перевода» во всём интерфейсе семьи. Книга ru,ko — строки
+// ровно те же, что до #299 (тест сверяет байт в байт). Казахские строки — от команды, вычитка носителем — #295;
+// где казахского текста ещё нет (QR, подвал /listen) — строки просто нет, корейскую не показываем.
+
+/** Второй язык книги — язык перевода главы. */
+export type SecondLang = Exclude<BookLang, "ru">;
+
+/** Второй язык книги; null — книга только на русском (перевода нет). */
+export function secondLang(langs: readonly BookLang[]): SecondLang | null {
+  return (langs.find((l) => l !== "ru") as SecondLang | undefined) ?? null;
+}
+
+export interface LangUi {
+  /** «корейский» — в «… перевод» */
+  name: string;
+  /** «на корейский» — в «переводим …» */
+  to: string;
+  /** «корейском» — в «главы на русском и …» */
+  prep: string;
+  /** Подпись поля имени: «По-корейски» */
+  adverb: string;
+  /** Подпись «우리 이야기» рядом с «Книга семьи»; null — без второй строки */
+  tagline: string | null;
+  /** Вторая строка под QR («наведите камеру…»); null — только по-русски */
+  qr: string | null;
+  /** Подвал страницы голоса /listen; null — только по-русски */
+  listenFooter: string | null;
+}
+
+export const LANG_UI: Readonly<Record<SecondLang, LangUi>> = {
+  ko: {
+    name: "корейский",
+    to: "на корейский",
+    prep: "корейском",
+    adverb: "По-корейски",
+    tagline: "우리 이야기",
+    qr: "카메라를 대면 목소리를 들을 수 있어요",
+    listenFooter: "손주들을 위한 가족의 이야기",
+  },
+  kk: {
+    name: "казахский",
+    to: "на казахский",
+    prep: "казахском",
+    adverb: "По-казахски",
+    tagline: null, // казахскую подпись даст носитель (#295)
+    qr: null, // #294: строка — от носителя (#295)
+    listenFooter: null,
+  },
+};
+
+/** Подписи второго языка книги; null — книга только на русском. */
+export function langUi(langs: readonly BookLang[]): LangUi | null {
+  const second = secondLang(langs);
+  return second ? LANG_UI[second] : null;
+}
+
+/** «на русском и корейском» / «на русском и казахском» / «на русском». */
+export function bookLangsPhrase(langs: readonly BookLang[]): string {
+  const ui = langUi(langs);
+  return ui ? `на русском и ${ui.prep}` : "на русском";
+}
+
+/** Подпись шага перевода на экране ожидания главы: «Переводим на корейский»; null — шага нет (книга только RU). */
+export function translatingStep(langs: readonly BookLang[]): string | null {
+  const ui = langUi(langs);
+  return ui ? `Переводим ${ui.to}` : null;
+}
+
+/** Сообщение статуса translating: «Переводим главу на корейский…» (как STATUS_MESSAGE в engine.ts). */
+export function translatingMessage(langs: readonly BookLang[]): string {
+  const ui = langUi(langs);
+  return ui ? `Переводим главу ${ui.to}…` : "Заканчиваем главу…";
+}

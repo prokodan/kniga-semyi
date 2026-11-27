@@ -18,7 +18,7 @@ import type { BookLang, Story, StoryStatus } from "@/lib/types";
 import type { PipelinePatch, PipelineRepo } from "./repo";
 import { checkDeferred, needsDeferredCheck } from "./deferred";
 import { entitiesFromChapter } from "./entities";
-import { pendingTranslations } from "./langs";
+import { pendingTranslations, translatingMessage } from "./langs";
 import { attachChildren, represented } from "./sources";
 import { PIPELINE_STEPS, StepError, StepSkip, type PipelineStep, type PlannedStory, type StepFn } from "./steps/context";
 import { edit } from "./steps/edit";
@@ -49,6 +49,11 @@ export const STATUS_MESSAGE: Record<StoryStatus, string> = {
   failed: "Не получилось собрать главу",
   skipped: "Вопрос пропущен — глава не собирается",
 };
+
+/** #293: подпись статуса по языкам книги — translating «на корейский / на казахский». Языки не известны — STATUS_MESSAGE. */
+export function statusMessage(status: StoryStatus, langs?: readonly BookLang[] | null): string {
+  return status === "translating" && langs ? translatingMessage(langs) : STATUS_MESSAGE[status];
+}
 
 const STEP_FNS: Record<PipelineStep, StepFn> = { transcribe, edit, translate };
 

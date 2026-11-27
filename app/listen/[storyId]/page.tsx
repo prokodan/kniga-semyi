@@ -2,6 +2,10 @@ import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 import { cache } from "react";
 import { chapterAudioParts, lifeYears, loadChapter, photoSignedUrl } from "@/lib/book/chapter";
+import { chapterText, loadStoryTexts } from "@/lib/book/texts";
+import { getDbOrNull } from "@/lib/db";
+import { familyBookLangsById } from "@/lib/pipeline/book-langs";
+import { LANG_UI, secondLang } from "@/lib/pipeline/langs";
 import { verifyListen } from "@/lib/book/qr";
 import { Quote } from "@/components/chapter/Quote";
 import { VoicePlayer } from "@/components/chapter/VoicePlayer";
@@ -12,14 +16,30 @@ export const dynamic = "force-dynamic";
 // Без токена семьи и без входа: подпись открывает только эту историю; неверная подпись → 404.
 // Серверный рендер, из JS — только плеер: открывается быстро и на мобильном интернете.
 // Голос — вся глава: основной ответ и ответы на уточнения подряд (chapterAudioParts).
+// #299 / #245: второй язык — по языкам книги семьи: RU + KR — корейский, как было; RU + KZ — казахское название и цитата
+// из story_texts, без корейского; только RU — без второго языка.
 type Props = { params: Promise<{ storyId: string }>; searchParams: Promise<{ s?: string }> };
 
 const load = cache(async (storyId: string, sig: string | undefined) => {
   if (!verifyListen(storyId, sig)) return null;
   const data = await loadChapter(storyId);
   if (!data || data.story.parent_story_id) return null;
-  return data;
+  const second = secondLang(await familyBookLangsById(data.story.family_id));
+  return { ...data, second, alt: await secondText(data.story, second) };
 });
+
+/** Название и цитата на втором языке книги: ko — колонки (как было), kk — строка story_texts, нет второго — null. */
+async function secondText(story: Parameters<typeof chapterText>[0], second: ReturnType<typeof secondLang>) {
+  if (second === "ko") return { title: story.title_ko, quote: story.quote_ko };
+  if (!second) return null;
+  try {
+    const db = getDbOrNull();
+    const kk = chapterText(story, db ? await loadStoryTexts(db, [story.id]) : [], second);
+    return { title: kk.title, quote: kk.quote };
+  } catch {
+    return null;
+  }
+}
 
 export async function generateMetadata({ params, searchParams }: Props): Promise<Metadata> {
   const [{ storyId }, { s }] = await Promise.all([params, searchParams]);
@@ -27,12 +47,14 @@ export async function generateMetadata({ params, searchParams }: Props): Promise
   if (!data) return { title: "Книга семьи", robots: { index: false, follow: false } };
   const name = data.storyteller?.name ?? "Голос семьи";
   const title = data.story.title ? `${name} — «${data.story.title}»` : name;
-  const description = data.story.quote ?? "Живой голос из «Книги семьи» · 우리 이야기";
+  const tagline = data.second ? LANG_UI[data.second].tagline : null;
+  const siteName = tagline ? `Книга семьи · ${tagline}` : "Книга семьи";
+  const description = data.story.quote ?? `Живой голос из «Книги семьи»${tagline ? ` · ${tagline}` : ""}`;
   return {
     title: `${title} · Книга семьи`,
     description,
     robots: { index: false, follow: false },
-    openGraph: { title, description, type: "music.song", siteName: "Книга семьи · 우리 이야기" },
+    openGraph: { title, description, type: "music.song", siteName },
   };
 }
 
@@ -41,7 +63,8 @@ export default async function ListenPage({ params, searchParams }: Props) {
   const data = await load(storyId, s);
   if (!data) notFound();
 
-  const { story, storyteller } = data;
+  const { story, storyteller, second, alt } = data;
+  const ui = second ? LANG_UI[second] : null;
   const [parts, photo] = await Promise.all([chapterAudioParts(story), photoSignedUrl(storyteller?.photo_url ?? null, 12 * 60 * 60)]);
   const name = storyteller?.name ?? "Рассказчик";
   const meta = [lifeYears(storyteller), storyteller?.birth_place].filter(Boolean).join(" · ");
@@ -49,7 +72,13 @@ export default async function ListenPage({ params, searchParams }: Props) {
   return (
     <main className="mx-auto flex min-h-dvh max-w-md flex-col items-center gap-7 px-6 pt-10 pb-12 text-center">
       <p className="text-xs tracking-[0.25em] text-muted uppercase">
-        Книга семьи · <span lang="ko">우리 이야기</span>
+        {ui?.tagline ? (
+          <>
+            Книга семьи · <span lang={second ?? undefined}>{ui.tagline}</span>
+          </>
+        ) : (
+          "Книга семьи"
+        )}
       </p>
 
       <div className="flex flex-col items-center gap-3">
@@ -63,7 +92,7 @@ export default async function ListenPage({ params, searchParams }: Props) {
         )}
         <div>
           <h1 className="font-serif text-3xl leading-tight">{name}</h1>
-          {storyteller?.name_ko && (
+          {second === "ko" && storyteller?.name_ko && (
             <p className="font-serif text-xl text-ink-soft" lang="ko">
               {storyteller.name_ko}
             </p>
@@ -72,12 +101,12 @@ export default async function ListenPage({ params, searchParams }: Props) {
         </div>
       </div>
 
-      {(story.title || story.title_ko) && (
+      {(story.title || alt?.title) && (
         <div className="flex flex-col gap-1">
           {story.title && <h2 className="font-serif text-2xl leading-snug">«{story.title}»</h2>}
-          {story.title_ko && (
-            <p className="font-serif text-lg break-keep text-ink-soft" lang="ko">
-              {story.title_ko}
+          {alt?.title && (
+            <p className={second === "ko" ? "font-serif text-lg break-keep text-ink-soft" : "font-serif text-lg text-ink-soft"} lang={second ?? undefined}>
+              {alt.title}
             </p>
           )}
         </div>
@@ -89,17 +118,21 @@ export default async function ListenPage({ params, searchParams }: Props) {
         <p className="rounded-card bg-paper-deep px-5 py-4 text-ink-soft">Запись скоро появится здесь.</p>
       )}
 
-      {(story.quote || story.quote_ko) && (
+      {(story.quote || alt?.quote) && (
         <div className="flex w-full flex-col gap-4 text-left">
           <Quote text={story.quote} lang="ru" size="md" />
-          <Quote text={story.quote_ko} lang="ko" size="md" />
+          {second && <Quote text={alt?.quote ?? null} lang={second} size="md" />}
         </div>
       )}
 
       <footer className="mt-auto pt-4 text-sm text-muted">
         Голос записан семьёй для книги внукам.
-        <br />
-        <span lang="ko">손주들을 위한 가족의 이야기</span>
+        {ui?.listenFooter && (
+          <>
+            <br />
+            <span lang={second ?? undefined}>{ui.listenFooter}</span>
+          </>
+        )}
       </footer>
     </main>
   );
