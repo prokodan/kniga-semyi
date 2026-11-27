@@ -93,7 +93,9 @@ export function mockOutput<S extends AiStep>(step: S, input: ProviderCall<S>["in
     case "judge": {
       // Заглушка не умеет судить: ставит нейтральную 3, чтобы отчёт честно не дотягивал до цели ≥ 4.
       const i = input as ProviderCall<"judge">["input"];
-      return { scores: i.chapters.map((c) => ({ id: c.id, voice: 3, comment: "mock: оценка не показательна" })) };
+      // #256: сверка с правкой носителя — оба перевода «как было» (3 / 3), без потерянных фактов
+      const golden = (i.golden?.items ?? []).map((g) => ({ id: g.id, x: 3, y: 3, lost_x: [], lost_y: [], comment: "mock: оценка не показательна" }));
+      return { scores: i.chapters.map((c) => ({ id: c.id, voice: 3, comment: "mock: оценка не показательна" })), golden };
     }
     case "back_translate": {
       // Заглушка «переводит обратно» оригиналом; флажок только если корейского текста нет вовсе.

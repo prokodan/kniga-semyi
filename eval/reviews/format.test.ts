@@ -2,7 +2,11 @@
 import { describe, expect, it } from "vitest";
 import type { ReviewFeedback, ReviewItem, ReviewLink } from "@/lib/types";
 import {
+  applyJudge,
   chrF,
+  goldenJudgeItem,
+  goldenNewIsX,
+  reviewSetItems,
   goldenFromLink,
   goldenKey,
   goldenLine,
@@ -159,5 +163,49 @@ describe("сверка с золотым набором", () => {
     expect(ok).toContain("🟢");
     expect(ok).toContain("ближе 1 / дальше 0 / как было 0 из 1");
     expect(goldenLine("ru-ko", [judgeGolden(entry, "엄마가 울었다.")])).toContain("🔴 по фактам: kim (нет 1937)");
+  });
+
+  it("#256: судья ИИ — по смыслу; хуже по смыслу или потерян факт правки = 🔴", () => {
+    const fresh = "1937년에 엄마가 울었다.";
+    const item = goldenJudgeItem(entry, fresh);
+    const newIsX = goldenNewIsX(entry.key);
+    expect(newIsX ? item.x : item.y).toBe(fresh);
+    expect(newIsX ? item.y : item.x).toBe(entry.model);
+    expect(goldenJudgeItem(entry, fresh)).toEqual(item); // порядок детерминирован → кэш
+    const score = (now: number, old: number, lostNew: string[] = [], lostOld: string[] = []) =>
+      newIsX ? { id: entry.key, x: now, y: old, lost_x: lostNew, lost_y: lostOld } : { id: entry.key, x: old, y: now, lost_x: lostOld, lost_y: lostNew };
+
+    const closer = applyJudge(judgeGolden(entry, fresh), score(5, 3));
+    expect(closer).toMatchObject({ verdict: "closer", method: "judge", missing: [], judge: { new: 5, old: 3 } });
+    expect(applyJudge(judgeGolden(entry, fresh), score(4, 4)).verdict).toBe("same");
+
+    const worse = applyJudge(judgeGolden(entry, fresh), score(2, 4));
+    expect(worse.verdict).toBe("farther");
+    expect(worse.missing).toEqual(["смысл 2 < 4"]);
+    expect(goldenLine("ru-ko", [worse])).toContain("🔴 по фактам: kim (смысл 2 < 4)");
+
+    // потерян факт, который старый перевод сохранял, — 🔴; потерян в обоих — не вина нового промпта
+    const lost = applyJudge(judgeGolden(entry, fresh), score(4, 4, ["мать, а не тётя", "год 1937"], ["Год 1937"]));
+    expect(lost.verdict).toBe("same");
+    expect(lost.missing).toEqual(["мать, а не тётя"]);
+  });
+
+  it("#256: строка говорит, чем судили", () => {
+    const fresh = "1937년에 어머니가 우셨다.";
+    const s = goldenNewIsX(entry.key) ? { id: entry.key, x: 5, y: 4 } : { id: entry.key, x: 4, y: 5 };
+    expect(goldenLine("ru-ko", [applyJudge(judgeGolden(entry, fresh), s)])).toContain("судья ИИ по смыслу");
+    expect(goldenLine("ru-ko", [judgeGolden(entry, fresh)])).toContain("chrF — судья недоступен");
+  });
+
+  it("#257: набор носителей — ru-ko из корейского, ru-kk только перевод ru → kk", () => {
+    const chapters = [
+      { title: "Корни", text_ru: "Рус", text_ko: "한국어", original: "ru" as const },
+      { title: "Степь", text_ru: "Рус 2", text_kk: "Қазақша", original: "ru" as const },
+      { title: "Аул", text_ru: "перевод с kk", text_kk: "рассказ по-казахски", original: "kk" as const },
+      { title: "Сбой", text_ru: "x", text_ko: "y", error: "ИИ недоступен" },
+    ];
+    const v = { translate: "aaa", "translate.kk": "bbb" };
+    expect(reviewSetItems("kim", chapters, "ru-ko", v)).toEqual([{ persona: "kim", title: "Корни", source: "Рус", model: "한국어", prompt_version: "translate aaa" }]);
+    expect(reviewSetItems("serik", chapters, "ru-kk", v)).toEqual([{ persona: "serik", title: "Степь", source: "Рус 2", model: "Қазақша", prompt_version: "translate.kk bbb" }]);
   });
 });

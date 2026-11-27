@@ -21,12 +21,13 @@ export const DEFAULT_TRANSLATE_TO = "ko";
 
 /**
  * Вариант промпта по входу шага: перевод — язык `to` (нет — ko, как до v2); completeness с `next` (#105 п. 1,
- * флаг lang_kk) — completeness.next.md. undefined — обычный prompts/<step>.md (версия и кэш как раньше).
+ * флаг lang_kk) — completeness.next.md; judge с `golden` (#256) — eval/judge.golden.md. undefined — обычный prompts/<step>.md (версия и кэш как раньше).
  */
 export function promptVariant(step: AiStep, input: unknown): string | undefined {
-  const o = (input && typeof input === "object" ? input : {}) as { to?: unknown; next?: unknown };
+  const o = (input && typeof input === "object" ? input : {}) as { to?: unknown; next?: unknown; golden?: unknown };
   if (step === "translate") return typeof o.to === "string" ? o.to : DEFAULT_TRANSLATE_TO;
   if (step === "completeness" && o.next) return "next";
+  if (step === "judge" && o.golden) return "golden"; // #256: eval/judge.golden.md
   return undefined;
 }
 

@@ -5,7 +5,7 @@ import path from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
 import { createRouter } from "@/lib/ai/router";
 import { MemoryStore } from "@/lib/ai/store";
-import type { AiInput, AiOutput, AiStep } from "@/lib/ai/types";
+import { AiUnavailableError, type AiInput, type AiOutput, type AiStep } from "@/lib/ai/types";
 import { MAX_FOLLOWUPS } from "@/lib/interview/policy";
 import { SimBudgetError, withBudget } from "./budget";
 import { checkFact, checkFacts, splitFacts, stems } from "./facts";
@@ -14,6 +14,9 @@ import { renderReport, reportFileName, writeReport } from "./report";
 import { runSimulation } from "./run";
 
 type Override = { [S in AiStep]?: (input: AiInput<S>, n: number) => AiOutput<S> | undefined };
+
+const LONG = `Родился я в Уштобе, в сороковом году. Отец был бригадиром в колхозе, мама вела дом и пела нам по вечерам.
+  Помню запах риса на току, как мы с братом бегали к арыку и как отец привёз с базара первый велосипед. `.repeat(2);
 
 function mockAi(override: Override = {}) {
   const router = createRouter({ store: new MemoryStore(), mode: () => "mock" });
@@ -159,6 +162,50 @@ describe("симуляция", () => {
     expect(r.aiCalls.used).toBeLessThanOrEqual(30);
     expect(r.chapters.length).toBeGreaterThan(0);
     expect(r.chapters.every((c) => !c.error)).toBe(true);
+  });
+});
+
+describe("#275: режим «меньше вызовов» и повтор persona_reply", () => {
+  const counter = () => {
+    const n: Partial<Record<AiStep, number>> = {};
+    const inner = mockAi({ persona_reply: () => ({ answer: LONG }) });
+    return {
+      n,
+      ai: {
+        async run<S extends AiStep>(step: S, input: AiInput<S>): Promise<AiOutput<S>> {
+          n[step] = (n[step] ?? 0) + 1;
+          return inner.run(step, input);
+        },
+      },
+    };
+  };
+
+  it("--fewer-calls: completeness без отдельного next_question; без опции — как в проде", async () => {
+    const off = counter();
+    await runSimulation({ persona: kim, ai: off.ai, maxQuestions: 2 });
+    expect(off.n.next_question ?? 0).toBeGreaterThan(0);
+    const on = counter();
+    await runSimulation({ persona: kim, ai: on.ai, maxQuestions: 2, fewerCalls: true });
+    expect(on.n.completeness ?? 0).toBeGreaterThan(0);
+    expect(on.n.next_question ?? 0).toBeLessThan(off.n.next_question!);
+  });
+
+  it("persona_reply не JSON → один повтор, интервью идёт дальше", async () => {
+    const inner = mockAi();
+    let fails = 0;
+    const ai = {
+      async run<S extends AiStep>(step: S, input: AiInput<S>): Promise<AiOutput<S>> {
+        if (step === "persona_reply" && fails === 0) {
+          fails++;
+          throw new AiUnavailableError("persona_reply", [{ provider: "gemini", model: "gemini-3.5-flash-lite", reason: "bad_output: ответ не JSON" }]);
+        }
+        return inner.run(step, input);
+      },
+    };
+    const r = await runSimulation({ persona: kim, ai, maxQuestions: 2 });
+    expect(r.stoppedBy).toBe("questions");
+    expect(r.turns.some((t) => t.role === "note" && t.text.includes("повтор"))).toBe(true);
+    expect(r.chapters.length).toBeGreaterThan(0);
   });
 });
 

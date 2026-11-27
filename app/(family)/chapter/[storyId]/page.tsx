@@ -10,12 +10,15 @@ import { ShareButton } from "@/components/chapter/ShareButton";
 import { Spread } from "@/components/chapter/Spread";
 import { StoryWaiting } from "@/components/chapter/StoryWaiting";
 import { LinkNotFound } from "../../_ui/LinkNotFound";
+import { loadKkChapter } from "./kk";
+import { SpreadKk } from "./SpreadKk";
 
 export const dynamic = "force-dynamic";
 export const metadata: Metadata = { title: "Глава · Книга семьи", robots: { index: false, follow: false } };
 
 // Разворот главы /chapter/<storyId>?token=<токен семьи>: RU | KR, фото, цитата крупно, QR на голос, «отправить семье».
 // Текст — те же поля, что GET /api/stories/:id; пока история не ready — экран ожидания с опросом этой ручки.
+// #274 (флаг lang_kk): книга RU + KZ → разворот RU | KZ (казахский — из story_texts); книга RU + KR — как было.
 export default async function ChapterPage({
   params,
   searchParams,
@@ -35,7 +38,11 @@ export default async function ChapterPage({
   // Ответ на уточнение — часть основной главы.
   if (story.parent_story_id) redirect(`/chapter/${story.parent_story_id}?token=${encodeURIComponent(token)}`);
 
-  const [photo, origin] = await Promise.all([photoSignedUrl(storyteller?.photo_url ?? null), requestOrigin()]);
+  const [photo, origin, kk] = await Promise.all([
+    photoSignedUrl(storyteller?.photo_url ?? null),
+    requestOrigin(),
+    loadKkChapter(story, token),
+  ]);
   const block = BLOCKS.find((b) => b.id === story.block);
   const ready = story.status === "ready";
   const voice = listenUrl(origin, story.id);
@@ -49,7 +56,7 @@ export default async function ChapterPage({
           ← {family.name}
         </Link>
         <p className="hidden text-sm tracking-widest text-muted uppercase sm:block">
-          Книга семьи · <span lang="ko">우리 이야기</span>
+          Книга семьи{kk ? null : <> · <span lang="ko">우리 이야기</span></>}
         </p>
       </nav>
 
@@ -64,7 +71,7 @@ export default async function ChapterPage({
         )}
         <div className="flex flex-col gap-1">
           <p className="font-serif text-2xl leading-tight md:text-3xl">{name}</p>
-          {storyteller?.name_ko && (
+          {!kk && storyteller?.name_ko && (
             <p className="font-serif text-xl text-ink-soft" lang="ko">
               {storyteller.name_ko}
             </p>
@@ -75,10 +82,17 @@ export default async function ChapterPage({
 
       {ready ? (
         <>
-          <Spread
-            ru={{ block: block?.ru ?? null, title: story.title, quote: story.quote, text: story.text_ru }}
-            ko={{ block: block?.ko ?? null, title: story.title_ko, quote: story.quote_ko, text: story.text_ko }}
-          />
+          {kk ? (
+            <SpreadKk
+              ru={{ block: block?.ru ?? null, title: story.title, quote: story.quote, text: story.text_ru }}
+              kk={kk.page && { block: null, ...kk.page }}
+            />
+          ) : (
+            <Spread
+              ru={{ block: block?.ru ?? null, title: story.title, quote: story.quote, text: story.text_ru }}
+              ko={{ block: block?.ko ?? null, title: story.title_ko, quote: story.quote_ko, text: story.text_ko }}
+            />
+          )}
 
           <div className="grid gap-6 md:grid-cols-[1fr_minmax(0,22rem)] md:items-center">
             <QrCode url={voice} fileName={`qr-${story.id.slice(0, 8)}.svg`} />
@@ -106,7 +120,7 @@ export default async function ChapterPage({
         <StoryWaiting
           storyId={story.id}
           token={token}
-          initial={{ status: story.status, done: false, message: STATUS_MESSAGE[story.status], error: story.error, updatedAt: story.updated_at }}
+          initial={{ status: story.status, done: false, message: kk && story.status === "translating" ? "Переводим главу…" : STATUS_MESSAGE[story.status], error: story.error, updatedAt: story.updated_at }}
         />
       )}
     </main>
