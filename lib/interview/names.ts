@@ -3,6 +3,7 @@
 // Источники подсказок: словарь docs/glossary.md (корё мар, топонимы, фамилии — список ниже, тест сверяет
 // его с файлом), карточка рассказчика (имя, место рождения), люди и места, уже названные в прошлых главах.
 // Чистые функции без базы и ИИ.
+import { packLayers } from "@/content/packs";
 import type { StoryFact } from "@/lib/types";
 
 /** Топонимы из docs/glossary.md в основной форме (в словаре — основа со «*»). */
@@ -59,9 +60,18 @@ export function familyHints(src: NameHintSource): string[] {
  * не больше 120. #102: корё мар раньше топонимов — модели расшифровки берут только первые 45–60, и слова
  * корё мар («пигоди», «кочжан») до них не доходили.
  */
-export function nameHints(src: NameHintSource): string[] {
-  const all = [...familyHints(src), ...GLOSSARY_KORYO, ...GLOSSARY_PLACES, ...GLOSSARY_SURNAMES];
+export function nameHints(src: NameHintSource, packs?: readonly string[] | null): string[] {
+  const all = [...familyHints(src), ...(packs ? packHints(packs) : [...GLOSSARY_KORYO, ...GLOSSARY_PLACES, ...GLOSSARY_SURNAMES])];
   return [...new Set(all)].slice(0, MAX_HINTS);
+}
+
+/**
+ * #233 (флаг culture_packs): словарные подсказки по слоям семьи, в их порядке. koryo — ровно сегодняшний список
+ * (корё мар → топонимы → фамилии, docs/glossary.md), остальные слои — `hints` пакета. Общий костяк своих подсказок
+ * не даёт: у семьи без слоёв — только карточка, словарь семьи и прошлые главы (без корейских слов и фамилий).
+ */
+export function packHints(packs: readonly string[]): string[] {
+  return packLayers(packs).flatMap((p) => (p.id === "koryo" ? [...GLOSSARY_KORYO, ...GLOSSARY_PLACES, ...GLOSSARY_SURNAMES] : (p.hints ?? [])));
 }
 
 /** Короткая строка для prompt gpt-4o-transcribe (ограничен ~200 токенами): семья и места первыми. */

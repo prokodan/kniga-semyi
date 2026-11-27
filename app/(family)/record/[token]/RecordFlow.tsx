@@ -373,7 +373,8 @@ export function RecordFlow(props: {
               </p>
             )}
             <h1 className="font-serif text-elder leading-snug sm:text-kiosk">{current.prompt}</h1>
-            {current.kind === "question" && (
+            {/* #233: корейская строка — только у семей с пакетом корё-сарам (у остальных банк отдаёт ko пустым) */}
+            {current.kind === "question" && current.question.ko && (
               <p className="text-ink-soft" lang="ko">
                 {current.question.ko}
               </p>

@@ -7,8 +7,8 @@
 // Боевая сборка с ai-роутером и Supabase — lib/interview/index.ts.
 import type { AiRouter } from "@/lib/ai/router";
 import { AiUnavailableError, type AiInput, type AiOutput } from "@/lib/ai/types";
-import type { LifeBlock, Question, SessionMode, Story } from "@/lib/types";
-import { getQuestionBank, type QuestionBank } from "./bank";
+import type { LifeBlock, Question, Session, SessionMode, Story } from "@/lib/types";
+import { bankForPacks, getQuestionBank, type QuestionBank } from "./bank";
 import {
   SHORT_ANSWER_WORDS,
   addUnique,
@@ -104,6 +104,7 @@ export type AnswerInput = { text: string; storyId?: undefined } | { storyId: str
 export interface InterviewDeps {
   ai: Pick<AiRouter, "run">;
   repo: InterviewRepo;
+  /** Свой банк (тесты, симулятор): тогда пакеты семьи не читаются — всегда он. */
   bank?: QuestionBank;
   /**
    * #105 п. 1–2 (флаг lang_kk): меньше вызовов ИИ на ответ — полнота и следующий вопрос одним вызовом, короткий
@@ -135,9 +136,73 @@ const PHRASES = {
   finished: "Спасибо вам огромное! Все вопросы позади — теперь из ваших рассказов соберём книгу.",
 };
 
+/**
+ * #233 (флаг culture_packs): у каждой семьи свой банк вопросов — по её культурным пакетам (repo.culturePacks).
+ * Пакеты читаются один раз при старте сессии и запоминаются в sessions.state.packs: смена пакетов семьи или флага
+ * посреди разговора не ломает текущий вопрос (его id есть в банке сессии). Нет пакетов — банк V0, как сейчас.
+ */
 export function createInterview(deps: InterviewDeps) {
+  const base = deps.bank ?? getQuestionBank();
+  const cores = new Map<QuestionBank, Core>();
+
+  function coreFor(packs: readonly string[] | null | undefined): Core {
+    let bank = base;
+    if (!deps.bank && packs?.length) {
+      try {
+        bank = bankForPacks(packs);
+      } catch (e) {
+        console.warn("[interview] банк по пакетам семьи:", (e as Error).message); // битый пакет — банк V0
+      }
+    }
+    let core = cores.get(bank);
+    if (!core) {
+      core = createCore(deps, bank);
+      cores.set(bank, core);
+    }
+    return core;
+  }
+
+  async function familyPacks(familyId: string): Promise<string[] | null> {
+    if (deps.bank || !deps.repo.culturePacks) return null;
+    try {
+      return await deps.repo.culturePacks(familyId);
+    } catch (e) {
+      console.warn("[interview] пакеты семьи:", (e as Error).message);
+      return null; // база не ответила — банк V0, как до #233
+    }
+  }
+
+  /** Сессия читается один раз: по state.packs выбираем банк, дальше её же использует load(). */
+  async function withSession<T>(sessionId: string, run: (core: Core, session: Session | null) => Promise<T>): Promise<T> {
+    const session = await deps.repo.getSession(sessionId);
+    const packs = (session?.state as SessionState | undefined)?.packs;
+    return run(coreFor(packs), session);
+  }
+
+  return {
+    /** Банк по умолчанию (V0 или переданный в deps) — симулятор берёт из него вопросы глав. */
+    bank: base,
+
+    async startSession(input: Parameters<Core["startSession"]>[0]): Promise<StartResult> {
+      const packs = await familyPacks(input.familyId);
+      return coreFor(packs).startSession(input, packs);
+    },
+
+    async submitAnswer(sessionId: string, input: AnswerInput, opts: { token?: string } = {}): Promise<AnswerResult> {
+      return withSession(sessionId, (core, session) => core.submitAnswer(sessionId, input, opts, session));
+    },
+
+    async skip(sessionId: string, action: "skip" | "later", opts: { token?: string; storyId?: string } = {}): Promise<AnswerResult> {
+      return withSession(sessionId, (core, session) => core.skip(sessionId, action, opts, session));
+    },
+  };
+}
+
+type Core = ReturnType<typeof createCore>;
+
+/** Движок интервью на одном банке вопросов. */
+function createCore(deps: InterviewDeps, bank: QuestionBank) {
   const { ai, repo } = deps;
-  const bank = deps.bank ?? getQuestionBank();
 
   const view = (q: Question): QuestionView => ({ id: q.id, block: q.block, blockTitle: bank.blockTitle(q.block), ru: q.ru, ko: q.ko });
 
@@ -163,8 +228,9 @@ export function createInterview(deps: InterviewDeps) {
     };
   }
 
-  async function load(sessionId: string, token?: string) {
-    const session = await repo.getSession(sessionId);
+  /** `pre` — сессия, уже прочитанная createInterview (#233), чтобы не читать её второй раз. */
+  async function load(sessionId: string, token?: string, pre?: Session | null) {
+    const session = pre !== undefined ? pre : await repo.getSession(sessionId);
     if (!session) throw new InterviewError("not_found", "Сессия не найдена");
     if (token !== undefined && !(await repo.checkFamilyToken(session.family_id, token))) {
       throw new InterviewError("forbidden", "Ссылка семьи не подходит к этой сессии");
@@ -528,8 +594,6 @@ export function createInterview(deps: InterviewDeps) {
   }
 
   return {
-    bank,
-
     /**
      * Начать сессию без вызова ИИ: первый вопрос банка, а если рассказчик уже отвечал в прошлых сессиях (#108) —
      * первый неотвеченный по порядку фаз; отвеченные засчитаны в answered_question_ids.
@@ -540,7 +604,7 @@ export function createInterview(deps: InterviewDeps) {
       mode?: SessionMode;
       volunteerId?: string | null;
       token?: string;
-    }): Promise<StartResult> {
+    }, packs?: readonly string[] | null): Promise<StartResult> {
       if (input.token !== undefined && !(await repo.checkFamilyToken(input.familyId, input.token))) {
         throw new InterviewError("forbidden", "Ссылка семьи не подходит");
       }
@@ -566,6 +630,8 @@ export function createInterview(deps: InterviewDeps) {
         current_story_id: null,
         pending_followup: null,
         recent_answers: [],
+        // #233: банк этой сессии — по пакетам семьи на момент старта (нет — банк V0)
+        ...(packs?.length ? { packs: [...packs] } : {}),
       };
       // Всё уже рассказано — начинаем сначала: можно дополнить любой ответ.
       // #140: отложенные уточнения прошлых сессий здесь не задаём — телефон и киоск при старте сами пролистывают
@@ -586,8 +652,8 @@ export function createInterview(deps: InterviewDeps) {
     },
 
     /** Ответ на текущий вопрос или на уточнение: текстом или готовой историей (transcript после I2). */
-    async submitAnswer(sessionId: string, input: AnswerInput, opts: { token?: string } = {}): Promise<AnswerResult> {
-      const { session, state, question } = await load(sessionId, opts.token);
+    async submitAnswer(sessionId: string, input: AnswerInput, opts: { token?: string } = {}, pre?: Session | null): Promise<AnswerResult> {
+      const { session, state, question } = await load(sessionId, opts.token, pre);
 
       let incoming: Story | null = null;
       let text: string;
@@ -737,8 +803,8 @@ export function createInterview(deps: InterviewDeps) {
      * «Пропустить» / «вернуться позже» — без уточнений. Если основной ответ уже записан и шли
      * уточнения, «пропустить» означает «хватит уточнять»: ответ засчитывается.
      */
-    async skip(sessionId: string, action: "skip" | "later", opts: { token?: string; storyId?: string } = {}): Promise<AnswerResult> {
-      const { session, state, question } = await load(sessionId, opts.token);
+    async skip(sessionId: string, action: "skip" | "later", opts: { token?: string; storyId?: string } = {}, pre?: Session | null): Promise<AnswerResult> {
+      const { session, state, question } = await load(sessionId, opts.token, pre);
       const name = await storytellerName(session);
       const wasBlockDone = isBlockDone(bank, state, question.block);
       if (action === "skip" && opts.storyId) return skipRecorded(sessionId, { session, state, question, name, wasBlockDone }, opts.storyId);
