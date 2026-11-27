@@ -625,7 +625,10 @@ function TreeCanvas({
 function PersonCard({ n, photo, showKo, active, onOpen }: { n: TreeNode; photo?: string; showKo: boolean; active: boolean; onOpen: () => void }) {
   const border = n.isViewer ? "border-2 border-seal" : n.loose ? "border border-dashed border-muted" : "border border-line";
   // длинное имя (ФИО) — до 3 строк мельче, короткое — до 2; длиннее — «…», целиком — в листе по нажатию
-  const long = n.name.length > 16 && n.name.trim().split(/\s+/).length >= 2;
+  const words = n.name.trim().split(/\s+/);
+  const long = n.name.length > 16 && words.length >= 2;
+  // слово длиннее 12 букв («Константинович») не влезает в строку 14 px — мельче, а не перенос посреди слова
+  const huge = words.some((w) => w.length > 12);
   return (
     <button
       type="button"
@@ -641,7 +644,7 @@ function PersonCard({ n, photo, showKo, active, onOpen }: { n: TreeNode; photo?:
         <span
           lang="ru"
           data-testid="tree-name"
-          className={`w-full font-serif break-words hyphens-auto text-ink ${long ? "line-clamp-3 text-[13px] leading-[1.15]" : "line-clamp-2 text-[14px] leading-[1.2]"}`}
+          className={`w-full font-serif break-words hyphens-auto text-ink ${huge ? "line-clamp-3 text-[12px] leading-[1.15]" : long ? "line-clamp-3 text-[13px] leading-[1.15]" : "line-clamp-2 text-[14px] leading-[1.2]"}`}
         >
           {n.name}
         </span>
