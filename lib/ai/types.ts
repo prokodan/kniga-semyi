@@ -267,7 +267,7 @@ export const outputSchemas = {
           comment: z.string().default(""),
         }),
       )
-      .default([]),
+      .optional(),
   }),
   back_translate: z.object({
     chapters: z.array(
