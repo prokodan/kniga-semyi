@@ -1,5 +1,5 @@
 // #277: страницы древа из PDF книги → PNG (mupdf, WASM — без системных пакетов). Для снимков PR и проверки глазами.
-//   npx tsx scripts/tree-pdf-preview.ts <папка> [имя=путь.pdf …]
+//   npx tsx scripts/tree-pdf-preview.mts <папка> [имя=путь.pdf …]
 // Без PDF на входе — только синтетическая семья на 40 человек (lib/tree/fixtures/big-family.ts): книга-пример
 // DEMO_BOOK + её древо, RU + KR и RU + KZ. Печатает пути PNG. В базу не ходит.
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
@@ -12,7 +12,10 @@ import { bigFamily } from "@/lib/tree/fixtures/big-family";
 import { layoutTree } from "@/lib/tree/layout";
 
 /** Страницы, где есть «Древо семьи» (заголовок страницы древа), — в PNG. */
-type Mupdf = typeof import("mupdf");
+// .mts — ESM: @react-pdf и mupdf (await верхнего уровня) грузятся только так
+import * as mupdfModule from "mupdf";
+
+type Mupdf = typeof mupdfModule;
 
 function treePages(mupdf: Mupdf, pdf: Uint8Array, outDir: string, name: string): string[] {
   const doc = mupdf.Document.openDocument(pdf, "application/pdf");
@@ -33,8 +36,7 @@ async function main() {
   const [outDir = "e2e-screens/tree", ...inputs] = process.argv.slice(2);
   mkdirSync(outDir, { recursive: true });
   const files: string[] = [];
-  // mupdf — ESM с await верхнего уровня: только динамический import (скрипт запускается tsx как CommonJS)
-  const mupdf: Mupdf = await import("mupdf");
+  const mupdf: Mupdf = mupdfModule;
 
   const src = bigFamily();
   const plan = planTree(src, (() => {

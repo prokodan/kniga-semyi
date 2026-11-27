@@ -237,7 +237,7 @@ test("древо 2.0: страницы древа в PDF → PNG", async () => {
   } catch {
     // книгу Ким не собрали — только синтетическая семья
   }
-  const out = execFileSync("npx", ["tsx", "scripts/tree-pdf-preview.ts", DIR, ...inputs], { encoding: "utf8", timeout: 110_000 });
+  const out = execFileSync("npx", ["tsx", "scripts/tree-pdf-preview.mts", DIR, ...inputs], { encoding: "utf8", timeout: 110_000 });
   const files = out.trim().split("\n").filter((f) => f.endsWith(".png"));
   expect(files.length).toBeGreaterThanOrEqual(3); // 40 человек: 2 страницы (KR) + 2 (KZ); Ким — 1
   if (inputs.length) expect(files.some((f) => f.includes("pdf-kim"))).toBe(true);
