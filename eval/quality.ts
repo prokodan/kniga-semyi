@@ -12,9 +12,10 @@
 import type { AiRouter, RunOptions } from "@/lib/ai/router";
 import { AiUnavailableError, type AiInput, type AiOutput, type AiStep } from "@/lib/ai/types";
 import { checkItem, nameSpellingFlags, type GlossaryEntry } from "./kr-check";
+import { backTranslateKk, checkKk, KK_NOTE, kkFlagRows, kkTotals, type KkFlag, type KkItem } from "./kk-check";
 import { checkDialogue, checkTale, pickTaleChapters, type DialogueChecks, type TaleChecks, type TextIssue } from "./prompt-checks";
 import { SimBudgetError } from "./sim/budget";
-import { tally, type FactStatus } from "./sim/facts";
+import { checkFacts, tally, type FactStatus } from "./sim/facts";
 import type { Persona } from "./sim/persona";
 import type { SimResult } from "./sim/run";
 
@@ -192,10 +193,26 @@ export interface RunMetrics {
   dialogue: DialogueChecks;
   /** Сказка по главам прогона (null — глав меньше двух или шаг не ответил) */
   tale: TaleChecks | null;
+  /** #231: казахский (книга ru,kk или kk,ru) — kk-check без ИИ и обратный перевод; нет казахского — нет поля */
+  kk?: KkRun;
   aiCalls: number;
   stoppedBy: SimResult["stoppedBy"];
   errors: string[];
   wallMs: number;
+}
+
+export interface KkRun {
+  /** Направление перевода: ru → kk (оригинал русский) или kk → ru (рассказ по-казахски) */
+  direction: "ru→kk" | "kk→ru";
+  chapters: number;
+  flags: KkFlag[];
+  major: number;
+  minor: number;
+  /** ru → kk: «ключевые факты» после обратного перевода kk → ru (null — обратного перевода не было) */
+  backFacts: (Record<FactStatus, number> & { total: number }) | null;
+  backModels: string[];
+  /** Примеры для человека: оригинал, перевод, обратный перевод (обрезаны) */
+  samples: { id: string; ru: string; kk: string; back?: string }[];
 }
 
 /** Раздел «Манера речи» персонажа — эталон голоса для судьи. */
@@ -223,6 +240,57 @@ export interface EvaluateOptions {
   mock?: boolean;
   /** docs/glossary.md, разобранный parseGlossary — для правил корейского без ИИ */
   glossary?: GlossaryEntry[];
+  /** #231: роутер другого провайдера для обратного перевода kk → ru (chooseBackMode); нет — без обратного перевода */
+  backAi?: Pick<AiRouter, "runWithMeta">;
+}
+
+/** Сколько глав ru → kk переводить обратно (по вызову на главу). */
+const KK_BACK_MAX = 3;
+
+async function evaluateKk(o: EvaluateOptions, chapters: SimResult["chapters"], errors: string[]): Promise<KkRun | undefined> {
+  const kk = chapters.map((c, i) => ({ ...c, id: `ch${i + 1}` })).filter((c) => c.text_kk && c.text_ru);
+  if (!kk.length) return undefined;
+  const direction = kk.some((c) => c.original === "kk") ? "kk→ru" : "ru→kk";
+  const items: KkItem[] = kk.map((c) => ({
+    id: c.id,
+    label: c.title ?? c.id,
+    text_ru: c.text_ru!,
+    text_kk: c.text_kk!,
+    title_kk: c.title_kk,
+    quote_kk: c.quote_kk,
+    names: (o.sim.names ?? []).map((n) => n.ru).filter((n) => c.text_ru!.includes(n.slice(0, Math.max(3, n.length - 2)))),
+  }));
+  // kk — оригинал (живая речь): правила перевода к нему не применяем, факты уже сверены по русскому переводу
+  const flags = direction === "ru→kk" ? items.flatMap((i) => checkKk(i)) : [];
+  let backFacts: KkRun["backFacts"] = null;
+  const backModels: string[] = [];
+  const back = new Map<string, string>();
+  if (direction === "ru→kk" && o.backAi) {
+    try {
+      const r = await backTranslateKk(o.backAi, items.slice(0, KK_BACK_MAX));
+      flags.push(...r.flags);
+      for (const b of r.back) {
+        back.set(b.id, b.back_ru);
+        if (!backModels.includes(`${b.provider}/${b.model}`)) backModels.push(`${b.provider}/${b.model}`);
+      }
+      const t = tally(checkFacts(o.sim.persona.keyFacts, [...back.values()].join("\n\n")));
+      backFacts = { ...t, total: t.found + t.distorted + t.lost };
+    } catch (e) {
+      if (!isAiStop(e)) throw e;
+      errors.push(`обратный перевод kk: ${e.message}`);
+    }
+  }
+  const { major, minor } = kkTotals(flags);
+  return {
+    direction,
+    chapters: kk.length,
+    flags,
+    major,
+    minor,
+    backFacts,
+    backModels,
+    samples: items.slice(0, 2).map((i) => ({ id: i.id, ru: i.text_ru.slice(0, 300), kk: i.text_kk.slice(0, 300), ...(back.has(i.id) ? { back: back.get(i.id)!.slice(0, 300) } : {}) })),
+  };
 }
 
 /** Судья + обратный перевод по главам симуляции → метрики прогона. */
@@ -290,6 +358,8 @@ export async function evaluateRun(o: EvaluateOptions): Promise<RunMetrics> {
     }
   }
 
+  const kk = await evaluateKk(o, sim.chapters, errors);
+
   const chapterQuality = [...quality.values()];
   const t = tally(sim.factsInChapters);
   const followups = sim.questions.reduce((n, q) => n + q.followups, 0);
@@ -321,7 +391,8 @@ export async function evaluateRun(o: EvaluateOptions): Promise<RunMetrics> {
     krRules: o.glossary ? checkKrRules(done, o.glossary, sim.names ?? []) : null,
     dialogue: checkDialogue(sim),
     tale,
-    aiCalls: sim.aiCalls.used + extra,
+    ...(kk ? { kk } : {}),
+    aiCalls: sim.aiCalls.used + extra + (kk?.backModels.length ? Math.min(kk.chapters, KK_BACK_MAX) : 0),
     stoppedBy: sim.stoppedBy,
     errors,
     wallMs: o.wallMs ?? 0,
@@ -594,6 +665,7 @@ export function renderEvalReport(s: EvalSummary, before?: EvalSummary): string {
   out.push("## Корейский: обратный перевод KR → RU", "", ...flagRows(s), "");
   out.push("## Корейский: правила без ИИ (скобки, глоссарий, стиль)", "", ...krRuleRows(s), "");
   out.push("## Уточнения, связки, сказка (эвристики без ИИ)", "", ...agentSection(s, Number.POSITIVE_INFINITY), "");
+  if (s.runs.some((r) => r.kk)) out.push("## Казахский (#231): kk-check и обратный перевод", "", ...kkSection(s, Number.POSITIVE_INFINITY, true), "");
 
   out.push("## Главы: голос и смысл", "");
   for (const r of s.runs) {
@@ -621,6 +693,29 @@ export function renderEvalReport(s: EvalSummary, before?: EvalSummary): string {
   return out.join("\n").replace(/\n{3,}/g, "\n\n") + "\n";
 }
 
+/** #231: казахский по прогонам — направление, флажки kk-check, факты после обратного перевода, примеры. */
+function kkSection(s: EvalSummary, limit: number, samples: boolean): string[] {
+  const runs = s.runs.filter((r) => r.kk);
+  const out = [
+    KK_NOTE,
+    "",
+    "| Персонаж | Направление | Глав | Флажки 🔴/🟡 | Факты после обратного перевода ✅/⚠️/❌ | Обратный перевод |",
+    "| --- | --- | --- | --- | --- | --- |",
+    ...runs.map((r) => {
+      const k = r.kk!;
+      const bf = k.backFacts ? `${k.backFacts.found}/${k.backFacts.distorted}/${k.backFacts.lost} из ${k.backFacts.total}` : k.direction === "kk→ru" ? "— (факты — по русскому переводу выше)" : "—";
+      return `| ${r.persona} | ${k.direction} | ${k.chapters} | ${k.major}/${k.minor} | ${bf} | ${cell(k.backModels.join(", ") || "—")} |`;
+    }),
+    "",
+    ...kkFlagRows(runs.flatMap((r) => r.kk!.flags.map((flag) => ({ persona: r.persona, flag }))), limit),
+  ];
+  if (samples)
+    for (const r of runs)
+      for (const x of r.kk!.samples)
+        out.push("", `**${r.persona} · ${x.id}**`, "", `- RU: ${cell(x.ru)}`, `- KK: ${cell(x.kk)}`, ...(x.back ? [`- KK → RU: ${cell(x.back)}`] : []));
+  return out;
+}
+
 export const COMMENT_MARKER = "<!-- kniga-eval -->";
 
 /** Короткий комментарий в PR: «до / после», цель, главные флажки KR. */
@@ -636,6 +731,7 @@ export function renderPrComment(s: EvalSummary, before?: EvalSummary, opts: { li
   out.push("<details><summary>Корейский: сомнительные места (обратный перевод)</summary>", "", ...flagRows(s, 10), "", "</details>", "");
   out.push("<details><summary>Корейский: правила без ИИ (скобки, глоссарий, стиль)</summary>", "", ...krRuleRows(s, 10), "", "</details>", "");
   out.push("<details><summary>Уточнения, связки, сказка</summary>", "", ...agentSection(s, 12), "", "</details>", "");
+  if (s.runs.some((r) => r.kk)) out.push("<details><summary>Казахский (#231): kk-check и обратный перевод</summary>", "", ...kkSection(s, 12, false), "", "</details>", "");
   if (opts.link) out.push(`Полный отчёт и главы — [артефакт запуска](${opts.link}).`);
   return out.join("\n").replace(/\n{3,}/g, "\n\n") + "\n";
 }

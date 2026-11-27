@@ -20,8 +20,12 @@ export type AiStep = (typeof AI_STEPS)[number];
 
 /** #230: языки текстов главы (= BookLang в lib/types). */
 export const BOOK_LANGS = ["ru", "ko", "kk"] as const satisfies readonly BookLang[];
-/** Пары перевода, для которых есть промпт (prompts/translate.<to>.md). L1 (#231) добавит ru → kk и kk → ru. */
-export const TRANSLATE_PAIRS: readonly (readonly [BookLang, BookLang])[] = [["ru", "ko"]];
+/** Пары перевода, для которых есть промпт (prompts/translate.<to>.md). #231 (L1): ru → kk и kk → ru — за флагом lang_kk. */
+export const TRANSLATE_PAIRS: readonly (readonly [BookLang, BookLang])[] = [
+  ["ru", "ko"],
+  ["ru", "kk"],
+  ["kk", "ru"],
+];
 export const DEFAULT_TRANSLATE_PAIR = { from: "ru", to: "ko" } as const satisfies { from: BookLang; to: BookLang };
 
 export function isTranslatePair(from: BookLang, to: BookLang): boolean {
@@ -94,6 +98,19 @@ export const inputSchemas = {
     names: z.array(z.object({ ru: z.string().max(80), ko: z.string().max(80) })).max(80).optional(),
   }),
   completeness: z.object({
+    /**
+     * #105 п. 1 (флаг lang_kk): заодно выбрать следующий вопрос — тот же вход, что у next_question. Задан — промпт
+     * prompts/completeness.next.md и в ответе `next`; не задан — вызов как до #105 (тот же промпт и ключ кэша).
+     */
+    next: z
+      .object({
+        storytellerName: z.string(),
+        coveredBlocks: z.array(lifeBlock),
+        recentAnswers: z.array(z.string()).max(5),
+        candidateQuestions: z.array(z.object({ id: z.string(), block: lifeBlock, text: z.string() })).min(1),
+        knownAnswers: z.array(z.string()).max(30).optional(),
+      })
+      .optional(),
     questionText: z.string(),
     block: lifeBlock,
     minimum: z.array(z.string()).min(1),
@@ -154,6 +171,15 @@ export const inputSchemas = {
   }),
 } satisfies Record<AiStep, z.ZodType>;
 
+/** #231: { text, title, quote } (перевод на kk / ru) → { text_ko, title_ko, quote_ko }; ответ с text_ko — как есть. */
+export function neutralTranslation(v: unknown): unknown {
+  if (!v || typeof v !== "object" || Array.isArray(v)) return v;
+  const o = v as Record<string, unknown>;
+  if ("text_ko" in o || !("text" in o)) return v;
+  const { text, title, quote, ...rest } = o;
+  return { ...rest, text_ko: text, title_ko: title ?? "", quote_ko: quote ?? "" };
+}
+
 /** Схемы выходов: ответ модели проходит проверку, иначе это ошибка провайдера → следующий. */
 export const outputSchemas = {
   transcribe: z.object({ text: z.string(), language: z.string().default("ru") }),
@@ -163,7 +189,9 @@ export const outputSchemas = {
     quote: z.string(),
     facts: z.array(fact).default([]),
   }),
-  translate: z.object({
+  // #231: перевод не на корейский (translate.kk.md, translate.ru.md) отвечает нейтральными ключами text / title / quote —
+  // приводим их к text_ko / title_ko / quote_ko (= «текст перевода»; имена полей — с L0, когда перевод был только KR).
+  translate: z.preprocess(neutralTranslation, z.object({
     text_ko: z.string().min(1),
     title_ko: z.string(),
     quote_ko: z.string(),
@@ -176,7 +204,7 @@ export const outputSchemas = {
       .max(80)
       .optional()
       .catch(undefined),
-  }),
+  })),
   completeness: z.object({
     covered: z.array(z.string()),
     missing: z.array(z.string()),
@@ -184,6 +212,11 @@ export const outputSchemas = {
     done: z.boolean(),
     /** если рассказчик ушёл в другую тему — блок, куда засчитать ответ */
     offTopicBlock: lifeBlock.nullable().default(null),
+    /** #105 п. 1: следующий вопрос (только если во входе был `next`) — как ответ next_question. Кривой — нет выбора. */
+    next: z
+      .object({ questionId: z.string(), bridge: z.string().default(""), alreadyAnswered: z.array(z.string()).optional() })
+      .optional()
+      .catch(undefined),
   }),
   next_question: z.object({
     questionId: z.string(),

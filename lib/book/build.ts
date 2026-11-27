@@ -13,7 +13,8 @@ import { flag } from "@/lib/flags";
 import { loadTree } from "@/lib/tree";
 import { treeForBook } from "@/lib/tree/book";
 import { renderBook } from "./pdf/render";
-import { bookLangs, loadStoryTexts, withStoryTexts } from "./texts";
+import { effectiveBookLangs } from "@/lib/pipeline/langs";
+import { loadStoryTexts, withStoryTexts, type StoryTextRow } from "./texts";
 
 /** Минимум глав, с которого книга «как настоящая» (собрать можно и раньше — экран предупредит). */
 export const BOOK_MIN_CHAPTERS = 5;
@@ -54,6 +55,8 @@ interface BookSource {
   family: Pick<Family, "id" | "name" | "book_langs" | "labs">;
   storyteller: Storyteller | null;
   stories: Story[];
+  /** #231: строки story_texts глав — для языков без колонок (kk) */
+  texts?: StoryTextRow[];
 }
 
 async function loadSource(familyId: string): Promise<BookSource | null> {
@@ -86,6 +89,7 @@ async function loadSource(familyId: string): Promise<BookSource | null> {
     family: { id: f.id, name: f.name, book_langs: f.book_langs, labs: f.labs },
     storyteller: (st.data?.[0] as Storyteller) ?? null,
     stories: list.map((s) => withStoryTexts(s, texts)),
+    texts,
   };
 }
 
@@ -210,12 +214,14 @@ export async function buildBook(familyId: string, opts: { origin: string }): Pro
   try {
     const origin = env.prodUrl() ?? opts.origin;
     const st = src.storyteller;
+    // #231: казахский — только с флагом lang_kk (семье выключили — книга как сейчас, ru + ko)
+    const langs = effectiveBookLangs(src.family, flag("lang_kk", { familyId: src.family.id, labs: src.family.labs }));
     // #235: страница древа — только если флаг family_tree включён семье; сбой древа книгу не роняет
     let tree: BookTree | null = null;
     if (flag("family_tree", { familyId, labs: src.family.labs })) {
       try {
         const { model } = await loadTree(familyId, { write: true, viewer: st?.id ?? null });
-        tree = treeForBook(model, bookLangs(src.family).includes("ko"));
+        tree = treeForBook(model, langs.includes("ko"));
       } catch (e) {
         console.warn(`[book] ${familyId}: древо не собралось — ${e instanceof Error ? e.message : e}`);
       }
@@ -233,7 +239,8 @@ export async function buildBook(familyId: string, opts: { origin: string }): Pro
       stories: src.stories,
       voiceUrl: (id) => listenUrl(origin, id),
       elder,
-      langs: bookLangs(src.family),
+      langs,
+      texts: src.texts,
       tree,
     });
     if (rendered.missingKorean.length) console.warn(`[book] ${familyId}: нет в шрифте слогов ${rendered.missingKorean.join("")}`);

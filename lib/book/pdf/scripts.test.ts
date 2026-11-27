@@ -105,3 +105,31 @@ describe("PDF: смешанные алфавиты (#97)", () => {
     }
   }, 60_000);
 });
+
+describe("PDF: казахские буквы (#231)", () => {
+  const KK = "әіңғүұқөһ ӘІҢҒҮҰҚӨҺ";
+  it("әіңғүұқөһ в казахском столбце — шрифтом Noto Serif (как русский), каждая буква на месте", async () => {
+    const one = DEMO_STORIES[0]!;
+    const texts = [{ story_id: one.id, lang: "kk" as const, title: `Тарау ${KK}`, text: `Қазақша мәтін: ${KK}. 1941 жылы.`, quote: `Сөз ${KK}` }];
+    const r = await renderBook({ ...DEMO_BOOK, stories: [one], voiceUrl, langs: ["ru", "kk"], texts });
+    const doc = mupdf.Document.openDocument(r.pdf, "application/pdf") as mupdf.PDFDocument;
+    const out = process.env.BOOK_PNG_OUT;
+    if (out) mkdirSync(out, { recursive: true });
+    const hits: Glyph[][] = [];
+    for (let i = 0; i < doc.countPages(); i++) {
+      const page = doc.loadPage(i) as mupdf.PDFPage;
+      if (out) writeFileSync(path.join(out, `kk-${String(i + 1).padStart(2, "0")}.png`), page.toPixmap(mupdf.Matrix.scale(1.5, 1.5), mupdf.ColorSpace.DeviceRGB, false, true).asPNG());
+      for (const g of pageLines(page)) {
+        const t = text(g);
+        const at = t.indexOf(KK);
+        if (at >= 0) hits.push(g.slice(at, at + [...KK].length));
+      }
+    }
+    expect(hits.length).toBeGreaterThanOrEqual(3); // заголовок, цитата, текст
+    for (const glyphs of hits) {
+      expect(text(glyphs)).toBe(KK);
+      for (const g of glyphs) if (g.c.trim()) expect(g.font, g.c).toMatch(/NotoSerif-(Regular|Bold|Italic)/);
+      for (let k = 1; k < glyphs.length; k++) expect(glyphs[k]!.x).toBeGreaterThanOrEqual(glyphs[k - 1]!.x + glyphs[k - 1]!.w - 0.5);
+    }
+  }, 60_000);
+});

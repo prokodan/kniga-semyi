@@ -2,14 +2,20 @@
 // сохраняет движок (lib/pipeline/engine.ts), так шаг легко перезапускать и тестировать.
 import type { AiRouter } from "@/lib/ai/router";
 import type { QuestionBank } from "@/lib/interview/bank";
-import type { Story } from "@/lib/types";
+import type { BookLang, Story } from "@/lib/types";
 import type { PipelinePatch, PipelineRepo } from "../repo";
 
 export const PIPELINE_STEPS = ["transcribe", "edit", "translate"] as const;
 export type PipelineStep = (typeof PIPELINE_STEPS)[number];
 
+/**
+ * #231: история с планом перевода — каких переводов главы ещё нет (по языкам книги семьи и флагу lang_kk).
+ * Не задан (нет translationPlan в хранилище / сбой) — как до #231: перевод нужен, пока нет text_ko.
+ */
+export type PlannedStory = Story & { pending_langs?: BookLang[] };
+
 export interface StepContext {
-  story: Story;
+  story: PlannedStory;
   ai: Pick<AiRouter, "run">;
   repo: PipelineRepo;
   bank: QuestionBank;

@@ -5,6 +5,7 @@
 import type { Question, SpokenLang } from "@/lib/types";
 import { GENERAL_QUESTIONS } from "./general/questions";
 import { KORYO_PACK } from "./koryo/pack";
+import { KZ_PACK } from "./kz/pack";
 import type { CulturePack, PackLang, PackQuestion } from "./types";
 
 export type { CulturePack, PackLang, PackOp, PackQuestion, PackText } from "./types";
@@ -12,6 +13,8 @@ export type { CulturePack, PackLang, PackOp, PackQuestion, PackText } from "./ty
 /** Слои, которые есть в репозитории. Неизвестный id в culture_packs семьи пропускается. */
 export const CULTURE_PACKS: Readonly<Record<string, CulturePack>> = {
   koryo: KORYO_PACK,
+  // #231: глоссарий и родство для перевода ru ↔ kk; вопросов пока нет (#233)
+  kz: KZ_PACK,
 };
 
 /** На каком языке задаём вопрос: корё мар — диалект, вопросы звучат по-русски (как сейчас). */
