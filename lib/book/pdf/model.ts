@@ -30,9 +30,29 @@ export interface BookInput {
   langs?: readonly BookLang[];
   /** #231: строки story_texts глав — для языков без колонок в stories (kk). */
   texts?: readonly StoryTextRow[];
+  /** #235: страница древа после оглавления; нет — книга как раньше */
+  tree?: BookTree | null;
 }
 
 export type Elder = "grandfather" | "grandmother";
+
+/** #235: человек на странице древа в PDF */
+export interface BookTreePerson {
+  name: string;
+  nameKo: string | null;
+  years: string | null;
+  /** Кем приходится рассказчику книги («мама», «жена»); у рассказчика — null */
+  label: string | null;
+  viewer: boolean;
+  /** Супруг стоящего справа — рисуем скрепу */
+  spouseOfNext: boolean;
+}
+
+/** #235: страница «Древо семьи» — ряды поколений сверху вниз (только при флаге family_tree у семьи) */
+export interface BookTree {
+  rows: BookTreePerson[][];
+}
+
 
 /** Второй язык, который книга умеет печатать (шрифт и подписи — document.tsx). */
 export type SecondLang = "ko" | "kk";
@@ -77,6 +97,8 @@ export interface BookModel {
   langs: BookLang[];
   /** Второй язык книги, который печатаем: ko (как сейчас) или kk (#231); null — книга на одном языке */
   second: SecondLang | null;
+  /** #235: страница древа (null / нет — нет) */
+  tree?: BookTree | null;
 }
 
 export const LEGACY_TITLE: Record<Elder, { ru: string; ko: string }> = {
@@ -169,5 +191,6 @@ export function composeBook(input: BookInput): BookModel {
     builtAt: input.builtAt ?? new Date(),
     langs,
     second,
+    tree: input.tree && input.tree.rows.length ? input.tree : null,
   };
 }

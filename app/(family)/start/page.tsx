@@ -4,7 +4,15 @@ import { StartForm } from "./StartForm";
 export const metadata: Metadata = { title: "Создать книгу · Книга семьи" };
 
 // Старт семьи: название книги, рассказчик (имя, годы, фото), дата вручения. ≤ 2 минут с телефона.
-export default function StartPage() {
+// #235: с древа («Записать историю мамы») приходят ?storyteller=&birthYear=&nameKo=&book= — поля заполнены заранее.
+export default async function StartPage({ searchParams }: { searchParams: Promise<Record<string, string | string[] | undefined>> }) {
+  const q = await searchParams;
+  const one = (k: string) => {
+    const v = q[k];
+    return (Array.isArray(v) ? v[0] : v)?.trim().slice(0, 120) || undefined;
+  };
+  const prefill = { name: one("book"), storytellerName: one("storyteller"), birthYear: one("birthYear")?.replace(/\D/g, "").slice(0, 4), storytellerNameKo: one("nameKo") };
+  const second = Boolean(one("from"));
   return (
     <main className="mx-auto flex max-w-xl flex-col gap-6 px-5 py-10">
       <header className="flex flex-col gap-2">
@@ -13,8 +21,9 @@ export default function StartPage() {
         <p className="text-ink-soft">
           Пара строк о том, чьи рассказы будем записывать. Регистрация не нужна — в конце вы получите ссылку для всей семьи.
         </p>
+        {second && <p className="rounded-card border border-gold bg-paper-deep px-4 py-3 text-ink-soft">Вторая книга в семье — со скидкой 40 %, древо в подарок.</p>}
       </header>
-      <StartForm />
+      <StartForm prefill={prefill} />
     </main>
   );
 }

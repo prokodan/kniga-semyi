@@ -39,6 +39,7 @@ export default async function FamilyPage({ params, searchParams }: { params: Pro
   const { family, storyteller } = view;
   // #231: «Языки книги» (RU + KR / RU + KZ / RU) — только с флагом lang_kk
   const langKk = flag("lang_kk", { familyId: family.id, labs: family.labs });
+  const tree = flag("family_tree", { familyId: family.id, labs: family.labs }); // #235
   const progress = blockProgress(view.stories, storyteller?.id);
   const photo = storyteller?.photo_url ? await getFamilyStore().photoUrl(storyteller.photo_url) : null;
   const chapters = view.stories.filter((s) => !s.parent_story_id && s.storyteller_id === storyteller?.id);
@@ -143,6 +144,17 @@ export default async function FamilyPage({ params, searchParams }: { params: Pro
             </span>
             <span className="text-seal">→</span>
           </Link>
+          {tree && (
+            <Link
+              href={`/f/${token}/tree`}
+              className="flex min-h-12 items-center justify-between gap-3 rounded-card border border-line bg-paper px-4 py-3"
+            >
+              <span>
+                Древо семьи <span className="text-ink-soft">· кто кому кем приходится</span>
+              </span>
+              <span className="text-seal">→</span>
+            </Link>
+          )}
           <Link
             href={`/checkout/${token}`}
             className="flex min-h-12 items-center justify-between gap-3 rounded-card border border-line bg-paper px-4 py-3"

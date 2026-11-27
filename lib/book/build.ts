@@ -8,9 +8,11 @@ import { getFamilyStore, MemoryFamilyStore } from "@/lib/db/access";
 import { photoSignedUrl } from "./chapter";
 import { listenUrl } from "./qr";
 import { DEMO_BOOK } from "./pdf/demo";
-import { isBookChapter, type Elder } from "./pdf/model";
-import { renderBook } from "./pdf/render";
+import { isBookChapter, type BookTree, type Elder } from "./pdf/model";
 import { flag } from "@/lib/flags";
+import { loadTree } from "@/lib/tree";
+import { treeForBook } from "@/lib/tree/book";
+import { renderBook } from "./pdf/render";
 import { effectiveBookLangs } from "@/lib/pipeline/langs";
 import { loadStoryTexts, withStoryTexts, type StoryTextRow } from "./texts";
 
@@ -212,6 +214,18 @@ export async function buildBook(familyId: string, opts: { origin: string }): Pro
   try {
     const origin = env.prodUrl() ?? opts.origin;
     const st = src.storyteller;
+    // #231: казахский — только с флагом lang_kk (семье выключили — книга как сейчас, ru + ko)
+    const langs = effectiveBookLangs(src.family, flag("lang_kk", { familyId: src.family.id, labs: src.family.labs }));
+    // #235: страница древа — только если флаг family_tree включён семье; сбой древа книгу не роняет
+    let tree: BookTree | null = null;
+    if (flag("family_tree", { familyId, labs: src.family.labs })) {
+      try {
+        const { model } = await loadTree(familyId, { write: true, viewer: st?.id ?? null });
+        tree = treeForBook(model, langs.includes("ko"));
+      } catch (e) {
+        console.warn(`[book] ${familyId}: древо не собралось — ${e instanceof Error ? e.message : e}`);
+      }
+    }
     const rendered = await renderBook({
       title,
       storyteller: {
@@ -225,9 +239,9 @@ export async function buildBook(familyId: string, opts: { origin: string }): Pro
       stories: src.stories,
       voiceUrl: (id) => listenUrl(origin, id),
       elder,
-      // #231: казахский — только с флагом lang_kk (семье выключили — книга как сейчас, ru + ko)
-      langs: effectiveBookLangs(src.family, flag("lang_kk", { familyId: src.family.id, labs: src.family.labs })),
+      langs,
       texts: src.texts,
+      tree,
     });
     if (rendered.missingKorean.length) console.warn(`[book] ${familyId}: нет в шрифте слогов ${rendered.missingKorean.join("")}`);
 

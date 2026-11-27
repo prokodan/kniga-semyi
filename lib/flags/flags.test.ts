@@ -89,6 +89,6 @@ describe("flag() читает окружение", () => {
     process.env.VERCEL_ENV = "preview";
     process.env.FLAGS_ON = "*";
     expect(flag("demo_flag")).toBe(true);
-    expect(flagsOn()).toEqual(FLAG_NAMES);
+    expect(flagsOn()).toEqual(FLAG_NAMES); // превью: включены все флаги реестра
   });
 });

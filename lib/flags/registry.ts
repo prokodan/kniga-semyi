@@ -29,6 +29,11 @@ const DEFS = {
     owner: "Данил",
     issue: 231,
   },
+  family_tree: {
+    description: "Древо семьи #235: /f/<токен>/tree (строится само из глав, правит семья), страница древа в PDF книги, «Записать историю мамы».",
+    owner: "Данил",
+    issue: 235,
+  },
 } as const satisfies Record<string, FlagInfo>;
 
 export type FlagName = keyof typeof DEFS;
