@@ -98,6 +98,11 @@ export interface SimOptions {
    * по-казахски: оригинал главы — сам рассказ, русский — translate kk → ru (редактура kk-рассказа — #234); ru — без перевода.
    */
   bookLangs?: BookLang[];
+  /**
+   * #275 (#105 п. 1–2): режим «меньше вызовов», как у семьи с флагом lang_kk — completeness + следующий вопрос одним
+   * вызовом, короткий первый ответ — уточнение по шаблону без ИИ. По умолчанию выключен (как в проде).
+   */
+  fewerCalls?: boolean;
 }
 
 const FAMILY = "sim-family";
@@ -114,7 +119,7 @@ export async function runSimulation(opts: SimOptions): Promise<SimResult> {
   const repo = new MemoryInterviewRepo();
   repo.addFamily(FAMILY, TOKEN, [STORYTELLER]);
   repo.names.set(STORYTELLER, opts.persona.name);
-  const interview = createInterview({ ai: budget.ai, repo, bank: opts.bank });
+  const interview = createInterview({ ai: budget.ai, repo, bank: opts.bank, ...(opts.fewerCalls ? { fewerCalls: async () => true } : {}) });
   const maxQuestions = opts.maxQuestions ?? Number.POSITIVE_INFINITY;
 
   const turns: Turn[] = [];
@@ -148,12 +153,17 @@ export async function runSimulation(opts: SimOptions): Promise<SimResult> {
 
     let res: AnswerResult;
     try {
-      const reply = await budget.ai.run("persona_reply", {
-        persona: opts.persona.markdown,
-        behavior: opts.behavior,
-        question: asked,
-        history: history.slice(-HISTORY_MAX),
-      });
+      const replyInput = { persona: opts.persona.markdown, behavior: opts.behavior, question: asked, history: history.slice(-HISTORY_MAX) };
+      let reply: { answer: string };
+      try {
+        reply = await budget.ai.run("persona_reply", replyInput);
+      } catch (e) {
+        // #275: модель персонажа иногда отвечает не JSON (kuljamal на gemini-3.5-flash-lite) — один повтор, а не конец
+        // интервью на 2-й главе. Неудачный ответ не кэшируется, повтор — новый вызов в пределах лимита прогона.
+        if (!(e instanceof AiUnavailableError) || budget.used() + TURN_COST + reserve > budget.limit) throw e;
+        turns.push({ role: "note", text: `(персонаж: повтор после «${e.message.slice(0, 80)}»)` });
+        reply = await budget.ai.run("persona_reply", replyInput);
+      }
       const answer = reply.answer.trim() || "…";
       turns.push({ role: "persona", text: answer, questionId });
       history.push({ q: asked, a: answer });

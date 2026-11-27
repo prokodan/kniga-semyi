@@ -10,10 +10,13 @@
    `eval/golden/<пара>.jsonl`. Слияние PR = правки приняты в золотой набор.
 4. «Разбери отзывы eval/reviews/…» → агент правит `prompts/translate*.md`, глоссарий, проверки — коммитом в ту же ветку.
 5. eval на PR с `prompts/**` (реальный режим) добавляет строку **«Носители (пара): ближе N / дальше M»** — новый перевод
-   золотых абзацев против правки носителя (chrF); число из правки пропало в переводе — 🔴 по фактам.
+   ≤ 8 свежих золотых абзацев на пару; судья ИИ (`eval/judge.golden.md`, #256) сравнивает по смыслу с правкой носителя его и
+   тот перевод, что носитель правил. Хуже по смыслу, потерян факт правки или число — 🔴 по фактам. Судья недоступен — chrF.
 
 **Только вымышленные тексты:** демо (`fixtures/demo`), вопросы банка (`content/packs`), наборы прогонов eval
 (`sets/*.json` → `sets/index.ts`) по персонажам `eval/personas`. Главы живых семей — никогда.
 
-Новый набор прогона eval: `AI_MODE=gemini npm run eval -- --personas kim,pak --questions 4 --review-set eval/reviews/sets/<имя>.json`,
-затем строка импорта в `sets/index.ts`.
+Новый набор прогона eval (#257): Actions → **eval** → `review_set` = `<дата>-ru-ko` (или `-ru-kk` + `review_pair ru-kk`,
+персонажи `serik` — у него перевод ru → kk; рассказ по-казахски `kuljamal` в набор ru-kk не попадает: это оригинал) →
+файл из артефакта `eval-out/sets/` в `sets/`, строка импорта в `sets/index.ts`. Локально — `AI_MODE=gemini npm run eval --
+--personas kim,pak --questions 4 --review-set eval/reviews/sets/<имя>.json [--review-pair ru-kk]`.

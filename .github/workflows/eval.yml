@@ -5,7 +5,9 @@ name: eval
 # Метрики: голос 1–5 (LLM-судья eval/judge.md, цель ≥ 4), потерянные / искажённые факты, уточнения,
 # корейский — обратный перевод KR→RU другой моделью с флажками, время шагов. Как читать — eval/README.md.
 #
-# Квота: GEMINI_API_KEY из Secrets, AI_MODE=auto, Flash-Lite (обратный перевод — Flash). Не больше
+# Квота: GEMINI_API_KEY из Secrets, AI_MODE=gemini (основные шаги — только Gemini, платного резерва нет), Flash-Lite
+# (обратный перевод KR — Flash). #276: OPENAI_API_KEY — только для обратного перевода kk → ru другим провайдером
+# (eval/kk-check.ts, chooseBackMode; ≤ KK_BACK_MAX глав персонажа ru → kk), как в kr-check. Не больше
 # max_calls запросов на прогон (по умолчанию 20 × 3 персонажа × 2 = 120 максимум), а кэш ответов
 # (actions/cache) делает «до» и повторы почти бесплатными. Нет ключа или PR из форка — mock, комментарий
 # честно пишет «mock, оценка не показательна».
@@ -32,6 +34,18 @@ on:
       label:
         description: "Подпись прогона"
         default: ""
+      fewer_calls:
+        description: "#275: интервью в режиме «меньше вызовов» (#105 п. 1–2: completeness + вопрос одним вызовом)"
+        type: boolean
+        default: false
+      review_set:
+        description: "#257: имя набора для носителей (напр. 2026-11-27-ru-ko) → eval-out/sets/<имя>.json в артефакте; пусто — не писать"
+        default: ""
+      review_pair:
+        description: "#257: пара набора"
+        type: choice
+        options: [ru-ko, ru-kk]
+        default: ru-ko
 
 concurrency:
   group: eval-${{ github.event.pull_request.number || github.ref }}
@@ -49,12 +63,17 @@ jobs:
     env:
       NEXT_TELEMETRY_DISABLED: "1"
       GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+      # #276: обратный перевод kk → ru — OpenAI (другой провайдер, чем перевод); основные шаги — AI_MODE=gemini ниже
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
       SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
       PERSONAS: ${{ inputs.personas || 'kim,pak,tsoi' }}
       BEHAVIORS: ${{ inputs.behaviors || 'default' }}
       QUESTIONS: ${{ inputs.questions || '4' }}
       MAX_CALLS: ${{ inputs.max_calls || '20' }}
       LABEL: ${{ inputs.label }}
+      FEWER_CALLS: ${{ inputs.fewer_calls && '1' || '' }}
+      REVIEW_SET: ${{ inputs.review_set }}
+      REVIEW_PAIR: ${{ inputs.review_pair || 'ru-ko' }}
       BASE_REF: ${{ github.event.pull_request.base.ref }}
       OUT: ${{ github.workspace }}/eval-out
       EVAL_ROUTES_FILE: ${{ github.workspace }}/eval-out/routes.json
@@ -81,7 +100,12 @@ jobs:
             echo "## 🔴 eval: questions должен быть числом" >> "$GITHUB_STEP_SUMMARY"
             exit 1
           fi
-          if [ -n "$GEMINI_API_KEY" ]; then echo "AI_MODE=auto" >> "$GITHUB_ENV"; else echo "AI_MODE=mock" >> "$GITHUB_ENV"; fi
+          if [ -n "$REVIEW_SET" ] && ! [[ "$REVIEW_SET" =~ ^[a-z0-9][a-z0-9-]{2,60}$ ]]; then
+            echo "## 🔴 eval: review_set — латиница, цифры и дефис (сейчас: $REVIEW_SET)" >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
+          # gemini, а не auto: с OPENAI_API_KEY (#276) auto пустил бы основные шаги в платный резерв OpenAI
+          if [ -n "$GEMINI_API_KEY" ]; then echo "AI_MODE=gemini" >> "$GITHUB_ENV"; else echo "AI_MODE=mock" >> "$GITHUB_ENV"; fi
 
       - name: Модели из ai_routes прода
         if: env.SUPABASE_DB_URL != '' && env.GEMINI_API_KEY != ''
@@ -117,6 +141,8 @@ jobs:
           args=(--personas "$PERSONAS" --behaviors "$BEHAVIORS" --questions "$QUESTIONS" --max-calls "$MAX_CALLS"
                 --out "$OUT/report.md" --json "$OUT/report.json" --comment "$OUT/comment.md" --link "$RUN_URL")
           if [ -f "$OUT/before.json" ]; then args+=(--compare "$OUT/before.json" --label "PR #${{ github.event.pull_request.number }}"); else args+=(--label "${LABEL:-${GITHUB_REF_NAME}}"); fi
+          [ -n "$FEWER_CALLS" ] && args+=(--fewer-calls)
+          [ -n "$REVIEW_SET" ] && args+=(--review-set "$OUT/sets/$REVIEW_SET.json" --review-pair "$REVIEW_PAIR")
           set -o pipefail
           npx tsx scripts/eval.ts "${args[@]}" 2>&1 | tee "$OUT/after.log"
 

@@ -147,15 +147,31 @@ export const inputSchemas = {
     question: z.string(),
     history: z.array(z.object({ q: z.string(), a: z.string() })).max(40),
   }),
-  judge: z.object({
-    storytellerName: z.string(),
-    /** Манера речи рассказчика (из персонажа) — эталон «голоса» */
-    manner: z.string(),
-    chapters: z
-      .array(z.object({ id: z.string(), transcript: z.string().min(1), text_ru: z.string().min(1) }))
-      .min(1)
-      .max(20),
-  }),
+  judge: z
+    .object({
+      storytellerName: z.string().default(""),
+      /** Манера речи рассказчика (из персонажа) — эталон «голоса» */
+      manner: z.string().default(""),
+      chapters: z
+        .array(z.object({ id: z.string(), transcript: z.string().min(1), text_ru: z.string().min(1) }))
+        .max(20)
+        .default([]),
+      /**
+       * #256: сверка с золотым набором носителей — какой перевод ближе по смыслу к правке носителя (промпт
+       * eval/judge.golden.md). x / y — два перевода абзаца в случайном порядке (один — тот, что правил носитель,
+       * другой — новый). Только eval, ≤ 8 абзацев на пару.
+       */
+      golden: z
+        .object({
+          pair: z.string(),
+          items: z
+            .array(z.object({ id: z.string(), source: z.string().min(1), gold: z.string().min(1), x: z.string().min(1), y: z.string().min(1) }))
+            .min(1)
+            .max(8),
+        })
+        .optional(),
+    })
+    .refine((i) => i.chapters.length > 0 || i.golden !== undefined, "judge: нужны chapters (голос) или golden (#256)"),
   back_translate: z.object({
     chapters: z
       .array(
@@ -231,14 +247,29 @@ export const outputSchemas = {
   illustrate: z.object({ imageBase64: z.string(), mimeType: z.string() }),
   persona_reply: z.object({ answer: z.string() }),
   judge: z.object({
-    scores: z.array(
-      z.object({
-        id: z.string(),
-        /** 1 — голос потерян (канцелярит / пересказ), 5 — звучит как сам рассказчик */
-        voice: z.coerce.number().int().min(1).max(5),
-        comment: z.string().default(""),
-      }),
-    ),
+    scores: z
+      .array(
+        z.object({
+          id: z.string(),
+          /** 1 — голос потерян (канцелярит / пересказ), 5 — звучит как сам рассказчик */
+          voice: z.coerce.number().int().min(1).max(5),
+          comment: z.string().default(""),
+        }),
+      )
+      .default([]),
+    /** #256: по абзацу золотого набора — смысл x и y относительно правки носителя (1–5) и потерянные факты правки */
+    golden: z
+      .array(
+        z.object({
+          id: z.string(),
+          x: z.coerce.number().int().min(1).max(5),
+          y: z.coerce.number().int().min(1).max(5),
+          lost_x: z.array(z.string()).default([]),
+          lost_y: z.array(z.string()).default([]),
+          comment: z.string().default(""),
+        }),
+      )
+      .default([]),
   }),
   back_translate: z.object({
     chapters: z.array(
