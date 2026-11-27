@@ -243,3 +243,56 @@ export interface Question {
   /** Минимум полноты ответа: «кто», «когда», «где», «что произошло», «живая деталь или чувство» */
   minimum: string[];
 }
+
+// ---------------- #232: проверка перевода носителем (/review/<токен>) ----------------
+
+/** Языковая пара «откуда-куда», которую проверяет носитель. */
+export type ReviewPair = "ru-ko" | "ru-kk";
+export const REVIEW_PAIRS: readonly ReviewPair[] = ["ru-ko", "ru-kk"];
+/** texts — главы бок о бок; questions — тексты вопросов банка. */
+export type ReviewMode = "texts" | "questions";
+export const REVIEW_AXES = ["meaning", "grammar", "natural", "respect", "names"] as const;
+export type ReviewAxis = (typeof REVIEW_AXES)[number];
+/** Оценки 1–5; нет оси — не оценено. */
+export type ReviewRatings = Partial<Record<ReviewAxis, number>>;
+
+/** Ссылка носителя. Токен — только в самой ссылке; в базе — sha256. */
+export interface ReviewLink {
+  id: Uuid;
+  pair: ReviewPair;
+  mode: ReviewMode;
+  /** Инициалы проверяющего */
+  reviewer_label: string;
+  /** demo | bank | eval:<имя> */
+  items_set: string;
+  expires_at: IsoDateTime;
+  revoked_at: IsoDateTime | null;
+  created_at: IsoDateTime;
+}
+
+/** Что показали носителю: всегда вымышленный текст (eval-персонаж, демо, вопрос банка). */
+export interface ReviewItem {
+  id: Uuid;
+  link_id: Uuid;
+  position: number;
+  kind: "chapter" | "question";
+  source_lang: BookLang;
+  target_lang: BookLang;
+  title: string | null;
+  source_text: string;
+  model_text: string;
+  prompt_version: string | null;
+  /** kim / demo:kim / bank:general — не семья */
+  persona: string;
+}
+
+/** Отзыв: paragraph = -1 — на весь текст (оценки, комментарий, пропуск), 0… — правка абзаца. */
+export interface ReviewFeedback {
+  item_id: Uuid;
+  paragraph: number;
+  edited_text: string | null;
+  ratings: ReviewRatings;
+  comment: string | null;
+  skipped: boolean;
+  updated_at: IsoDateTime;
+}
