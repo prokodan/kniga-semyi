@@ -28,12 +28,23 @@ export function deriveEvalSteps(db: Record<string, RouteEntry[] | null>): Record
   return out;
 }
 
-/** Маршрут шага для оценки. Пороги квот снимаем: прод-счётчиков в памяти нет, лимит держит --max-calls. */
-export function evalRoute(step: AiStep, fromDb: RouteEntry[] | null | undefined, model?: string): Route {
+/**
+ * Маршрут шага для оценки. Пороги квот снимаем: прод-счётчиков в памяти нет, лимит держит --max-calls.
+ * `back` (#276) — роутер обратного перевода (kk → ru шагом translate): openai — только модели OpenAI маршрута (нет в
+ * прод-маршруте — из lib/ai/config.ts); gemini — сначала не Flash-Lite, как back_translate. Без `back` translate
+ * сводился к Flash-Lite, и роутер в режиме openai не находил ни одной модели («ИИ недоступен для шага translate:»).
+ */
+export function evalRoute(step: AiStep, fromDb: RouteEntry[] | null | undefined, model?: string, back?: "openai" | "gemini"): Route {
   const base = DEFAULT_ROUTES[step];
   const source = fromDb?.length ? fromDb : base.providers;
   let providers: RouteEntry[];
-  if (step === "back_translate") providers = source;
+  if (back === "openai") {
+    const own = source.filter((e) => e.provider === "openai");
+    providers = own.length ? own : base.providers.filter((e) => e.provider === "openai");
+  } else if (back === "gemini") {
+    const g = source.filter((e) => e.provider === "gemini");
+    providers = [...g.filter((e) => !isFlashLite(e)), ...g.filter(isFlashLite)];
+  } else if (step === "back_translate") providers = source;
   else if (model) providers = [{ provider: "gemini", model }];
   else {
     const fl = source.filter(isFlashLite);
@@ -56,7 +67,7 @@ export class EvalStore extends MemoryStore {
   readonly cachedAtStart: number;
 
   constructor(
-    private readonly opts: { routesFile?: string; cacheFile?: string; model?: string } = {},
+    private readonly opts: { routesFile?: string; cacheFile?: string; model?: string; back?: "openai" | "gemini" } = {},
   ) {
     super();
     this.dbRoutes = deriveEvalSteps(readJson(opts.routesFile, {}));
@@ -65,7 +76,7 @@ export class EvalStore extends MemoryStore {
   }
 
   override async getRoute(step: AiStep) {
-    return evalRoute(step, this.dbRoutes[step], this.opts.model);
+    return evalRoute(step, this.dbRoutes[step], this.opts.model, this.opts.back);
   }
 
   /** Без «остывания»: темп и повтор после 429 держит instrument(), иначе один 429 гасит все прогоны. */

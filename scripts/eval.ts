@@ -127,7 +127,9 @@ async function main() {
   const inst = instrument(createRouter({ store }), real ? { minIntervalMs: interval, retryAfterMs: Number(process.env.EVAL_RETRY_WAIT_MS ?? 65_000) } : {});
   // #231: обратный перевод kk → ru — другим провайдером, чем перевод (как kr-check): OpenAI, нет ключа — Gemini
   const backMode = real ? chooseBackMode(process.env) : "mock";
-  const backAi = createRouter({ store, mode: () => backMode });
+  // #276: свой маршрут — модели провайдера обратного перевода (общий store свёл бы translate к Flash-Lite); кэш — в памяти
+  const backStore = backMode === "mock" ? store : new EvalStore({ routesFile: process.env.EVAL_ROUTES_FILE?.trim() || undefined, back: backMode });
+  const backAi = createRouter({ store: backStore, mode: () => backMode });
   if (fewerCalls) console.log("Интервью: режим «меньше вызовов» (#105 п. 1–2)");
   console.log(`Режим ИИ: ${mode}${real ? `, до ${maxCalls} запросов на прогон, ${runsCount} прогонов` : " (бесплатно, оценка не показательна)"}`);
   if (store.cachedAtStart) console.log(`Кэш ответов: ${store.cachedAtStart} записей`);
