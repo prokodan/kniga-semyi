@@ -224,6 +224,31 @@ describe("конвейер истории", () => {
     expect((calls.filter((c) => c.step === "edit").at(-1)!.input as { transcript: string }).transcript).toContain("у арыка");
   });
 
+  it("#230: глава пишется и в story_texts (ru, ko) зеркалом колонок; перевод — ru → ko без пары во входе", async () => {
+    const { pipeline, repo, calls } = setup();
+    repo.add(story());
+    await pipeline.processStory("story-1");
+    const s = repo.stories.get("story-1")!;
+    expect(repo.texts.get("story-1")).toEqual([
+      { story_id: "story-1", lang: "ru", title: s.title, text: s.text_ru, quote: s.quote },
+      { story_id: "story-1", lang: "ko", title: s.title_ko, text: s.text_ko, quote: s.quote_ko },
+    ]);
+    const tl = calls.find((c) => c.step === "translate")!.input as Record<string, unknown>;
+    expect(tl).not.toHaveProperty("from");
+    expect(tl).not.toHaveProperty("to");
+
+    // сброс шага (rebuild с edit) убирает строки — чтение снова по колонкам
+    await pipeline.rebuild("story-1", "edit", { token: "tok-1" });
+    expect(repo.texts.get("story-1")!.map((r) => r.lang)).toEqual(["ru"]);
+  });
+
+  it("#230: чтение главы — из story_texts, если строка есть", async () => {
+    const { repo } = setup();
+    repo.add(story({ text_ru: "Колонка", title: "Т", quote: "Ц", status: "ready" }));
+    repo.texts.set("story-1", [{ story_id: "story-1", lang: "ru", title: "Т2", text: "Вычитанный текст", quote: "Ц2" }]);
+    expect(await repo.getStory("story-1")).toMatchObject({ text_ru: "Вычитанный текст", title: "Т2", quote: "Ц2", text_ko: null });
+  });
+
   it("явный шаг: уже выполненный или не по порядку → bad_request", async () => {
     const { pipeline, repo } = setup();
     repo.add(story({ transcript: "текст" }));

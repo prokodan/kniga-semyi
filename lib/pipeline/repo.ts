@@ -5,6 +5,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { nameHints } from "@/lib/interview/names";
 import { loadNameHints } from "@/lib/interview/names-db";
 import type { FamilyEntity, Story } from "@/lib/types";
+import { loadStoryTexts, mirrorRows, withStoryTexts, type StoryTextRow } from "@/lib/book/texts";
 import { mergeEntities, rankEntities, type EntityDraft } from "./entities";
 
 export type PipelinePatch = Partial<
@@ -97,17 +98,29 @@ export class MemoryPipelineRepo implements PipelineRepo {
 
   constructor(readonly stories: Map<string, Story> = new Map()) {}
 
+  /** #230: story_texts в памяти — пишется зеркалом колонок, как триггер stories_mirror_texts в базе */
+  texts = new Map<string, StoryTextRow[]>();
+
   add(story: Story) {
     this.stories.set(story.id, structuredClone(story));
+    this.texts.set(story.id, mirrorRows(story));
   }
   async getStory(id: string) {
     const s = this.stories.get(id);
-    return s ? structuredClone(s) : null;
+    return s ? withStoryTexts(structuredClone(s), this.texts.get(id) ?? []) : null;
   }
   async updateStory(id: string, patch: PipelinePatch) {
     const s = this.stories.get(id);
     if (!s) throw new Error(`история ${id} не найдена`);
     Object.assign(s, structuredClone(patch), { updated_at: new Date().toISOString() });
+    // зеркало, как триггер: язык, чьи колонки есть в патче, = колонки; все null (сброс шага) — строки языка нет
+    const touched = new Set<string>();
+    if ("text_ru" in patch || "title" in patch || "quote" in patch) touched.add("ru");
+    if ("text_ko" in patch || "title_ko" in patch || "quote_ko" in patch) touched.add("ko");
+    if (touched.size) {
+      const fresh = mirrorRows(s).filter((r) => touched.has(r.lang));
+      this.texts.set(id, [...(this.texts.get(id) ?? []).filter((r) => !touched.has(r.lang)), ...fresh]);
+    }
   }
   async storytellerName(storytellerId: string) {
     return this.names.get(storytellerId) ?? "";
@@ -166,7 +179,10 @@ export class SupabasePipelineRepo implements PipelineRepo {
   async getStory(id: string) {
     const { data, error } = await this.db.from("stories").select("*").eq("id", id).maybeSingle();
     if (error) throw new Error(`чтение истории: ${error.message}`);
-    return (data as Story | null) ?? null;
+    if (!data) return null;
+    // #230: тексты — из story_texts, если строка есть, иначе колонки (до migrate таблицы нет — читаем колонки).
+    // Запись — колонками, в story_texts их зеркалит триггер stories_mirror_texts.
+    return withStoryTexts(data as Story, await loadStoryTexts(this.db, [id]));
   }
   async updateStory(id: string, patch: PipelinePatch) {
     const { error } = await this.db

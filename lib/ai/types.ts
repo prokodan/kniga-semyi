@@ -1,7 +1,7 @@
 // Контракт ИИ: шаги, входы и выходы. Владелец — Z6 (меняет только Z6, Z2 предлагает в PR).
 // Каждый шаг вызывается через роутер: ai.run(step, input). Модели напрямую не вызываем.
 import { z } from "zod";
-import { LIFE_BLOCKS } from "@/lib/types";
+import { LIFE_BLOCKS, type BookLang } from "@/lib/types";
 
 export const AI_STEPS = [
   "transcribe",
@@ -17,6 +17,30 @@ export const AI_STEPS = [
   "back_translate",
 ] as const;
 export type AiStep = (typeof AI_STEPS)[number];
+
+/** #230: языки текстов главы (= BookLang в lib/types). */
+export const BOOK_LANGS = ["ru", "ko", "kk"] as const satisfies readonly BookLang[];
+/** Пары перевода, для которых есть промпт (prompts/translate.<to>.md). L1 (#231) добавит ru → kk и kk → ru. */
+export const TRANSLATE_PAIRS: readonly (readonly [BookLang, BookLang])[] = [["ru", "ko"]];
+export const DEFAULT_TRANSLATE_PAIR = { from: "ru", to: "ko" } as const satisfies { from: BookLang; to: BookLang };
+
+export function isTranslatePair(from: BookLang, to: BookLang): boolean {
+  return TRANSLATE_PAIRS.some(([f, t]) => f === from && t === to);
+}
+
+/**
+ * Вход шага translate для пары from → to. Для ru → ko пару не пишем — вход (и ключ кэша) как до v2.
+ * Пара без промпта — ошибка: перевод на язык, к которому мы не готовы, не должен молча уйти в корейский промпт.
+ */
+export function translateInput<T extends Omit<AiInput<"translate">, "from" | "to">>(
+  from: BookLang,
+  to: BookLang,
+  input: T,
+): T & { from?: BookLang; to?: BookLang } {
+  if (!isTranslatePair(from, to)) throw new Error(`Перевод ${from} → ${to} пока не поддерживается`);
+  if (from === DEFAULT_TRANSLATE_PAIR.from && to === DEFAULT_TRANSLATE_PAIR.to) return input;
+  return { ...input, from, to };
+}
 
 export const AI_PROVIDERS = ["mock", "gemini", "openai"] as const;
 export type AiProviderName = (typeof AI_PROVIDERS)[number];
@@ -56,6 +80,13 @@ export const inputSchemas = {
       .optional(),
   }),
   translate: z.object({
+    /**
+     * #230: пара языков перевода. Не задана = ru → ko (как до v2): так ключ ai_cache для ru → ko прежний и готовые
+     * переводы не пересчитываются; любая другая пара попадает в ключ кэша сама (входит во вход). Собирать вход — translateInput().
+     */
+    from: z.enum(BOOK_LANGS).optional(),
+    to: z.enum(BOOK_LANGS).optional(),
+    /** Текст на языке `from` (поле так называется с L0: сейчас всегда русский оригинал) */
     text_ru: z.string().min(1),
     title: z.string(),
     quote: z.string(),

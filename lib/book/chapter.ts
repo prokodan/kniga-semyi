@@ -7,6 +7,7 @@ import { env } from "@/lib/env";
 import type { Family, Story, Storyteller } from "@/lib/types";
 import { BUCKETS, getDbOrNull } from "@/lib/db";
 import { getFamilyStore, isTokenShape, MemoryFamilyStore } from "@/lib/db/access";
+import { loadStoryTexts, withStoryTexts } from "./texts";
 
 export interface ChapterData {
   story: Story;
@@ -52,7 +53,9 @@ export async function loadChapter(storyId: string, opts: { token?: string } = {}
   ]);
   if (fam.error) throw new Error(`семья истории: ${fam.error.message}`);
   if (!fam.data) return null;
-  return { story: story as Story, storyteller: (st.data as Storyteller | null) ?? null, family: fam.data as ChapterData["family"] };
+  // #230: тексты — из story_texts, если строка есть, иначе старые колонки (до migrate — колонки)
+  const texts = await loadStoryTexts(db, [storyId]);
+  return { story: withStoryTexts(story as Story, texts), storyteller: (st.data as Storyteller | null) ?? null, family: fam.data as ChapterData["family"] };
 }
 
 /** Путь в бакете из audio_url: `fam/st/story-1.m4a`, можно с префиксом `audio/`. https-ссылку отдаём как есть. */

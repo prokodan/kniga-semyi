@@ -24,6 +24,31 @@ export type BookStatus = "draft" | "building" | "ready" | "failed";
 export type SessionMode = "family" | "kiosk";
 export type DemoOrderStatus = "created" | "paid_demo" | "cancelled";
 
+// ── Языки (#230, docs/v2/LANGUAGES.md §1) ────────────────
+/** Язык текста главы / книги (ISO 639-1). */
+export type BookLang = "ru" | "ko" | "kk";
+/** Язык рассказа: koryo — корё мар (диалект, вместе с ru — как сейчас), kk — казахский. */
+export type SpokenLang = "ru" | "kk" | "koryo";
+/** Значения по умолчанию = сегодняшний продукт (как в миграции 20261127180000). */
+export const DEFAULT_BOOK_LANGS: readonly BookLang[] = ["ru", "ko"];
+export const DEFAULT_SPOKEN_LANGS: readonly SpokenLang[] = ["ru", "koryo"];
+export const DEFAULT_CULTURE_PACKS: readonly string[] = ["general", "koryo"];
+
+export type StoryTextOrigin = "ai" | "family" | "proofread";
+export type StoryTextStatus = "ready" | "review" | "approved";
+
+/** Текст главы на одном языке (story_texts). Колонки stories (text_ru / *_ko) — зеркало для ru и ko. */
+export interface StoryText {
+  story_id: Uuid;
+  lang: BookLang;
+  title: string | null;
+  text: string | null;
+  quote: string | null;
+  origin: StoryTextOrigin;
+  status: StoryTextStatus;
+  updated_at: IsoDateTime;
+}
+
 /** Порядок статусов конвейера истории (failed — терминальный из любого шага). */
 export const STORY_PIPELINE: readonly StoryStatus[] = ["uploaded", "transcribing", "editing", "translating", "ready"];
 
@@ -39,6 +64,10 @@ export interface Family {
   /** #223: флаги функций, включённые этой семье (имена из lib/flags/registry.ts). В базе `text[] not null default '{}'`;
    *  в типе необязательно — объекты в памяти и фикстуры демо его не задают (= пусто). */
   labs?: string[];
+  /** #230: языки книги, первый — основной. В базе `text[] not null default '{ru,ko}'`; нет в объекте — DEFAULT_BOOK_LANGS. */
+  book_langs?: BookLang[];
+  /** #230: культурные пакеты вопросов (general + слои). В базе default '{general,koryo}'; нет — DEFAULT_CULTURE_PACKS. */
+  culture_packs?: string[];
   created_at: IsoDateTime;
   updated_at: IsoDateTime;
 }
@@ -54,6 +83,8 @@ export interface Storyteller {
   photo_url: string | null;
   consent_audio_url: string | null;
   consent_at: IsoDateTime | null;
+  /** #230: язык рассказа. В базе `text[] not null default '{ru,koryo}'`; нет в объекте — DEFAULT_SPOKEN_LANGS. */
+  spoken_langs?: SpokenLang[];
   created_at: IsoDateTime;
   updated_at: IsoDateTime;
 }
@@ -207,6 +238,8 @@ export interface Question {
   block: LifeBlock;
   ru: string;
   ko: string;
+  /** #230: текст на казахском (пакеты с kk, после флага spoken_kk) */
+  kk?: string;
   /** Минимум полноты ответа: «кто», «когда», «где», «что произошло», «живая деталь или чувство» */
   minimum: string[];
 }

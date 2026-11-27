@@ -3,7 +3,7 @@ import { abbrKo, fixCyrillic, hangulizeRu, hasCyrillic, replaceCyrillic } from "
 
 describe("#163 транслитерация русских слов хангылем", () => {
   it.each([
-    // примеры из prompts/translate.md
+    // примеры из prompts/translate.ko.md
     ["Уштобе", "우슈토베"],
     ["Алматы", "알마티"],
     ["Талдыкорган", "탈디코르간"],

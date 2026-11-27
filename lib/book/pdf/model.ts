@@ -2,7 +2,7 @@
 // Чистые функции без сервера и React — тестируются напрямую.
 import { orderByLife } from "../order";
 import { BLOCKS } from "@/content/questions/blocks";
-import type { LifeBlock, Story, Storyteller } from "@/lib/types";
+import { DEFAULT_BOOK_LANGS, type BookLang, type LifeBlock, type Story, type Storyteller } from "@/lib/types";
 
 export type ChapterStory = Pick<
   Story,
@@ -21,6 +21,12 @@ export interface BookInput {
   /** Дед или бабушка — для «Слова деда» / «Слова бабушки». Не задано — угадываем по имени. */
   elder?: Elder;
   builtAt?: Date;
+  /**
+   * #230: языки книги (families.book_langs), первый — основной. Не задано — ru, ko (как сейчас).
+   * 1 язык — сплошной текст без второго языка; 2 — глава на основном, следом на втором (RU | KR как сейчас).
+   * Пока второй язык печатается только корейский: казахский текст и шрифт — #231.
+   */
+  langs?: readonly BookLang[];
 }
 
 export type Elder = "grandfather" | "grandmother";
@@ -57,6 +63,10 @@ export interface BookModel {
   /** Раздел «Слова деда» в конце (пусто — раздела нет) */
   legacy: { ru: string; ko: string; chapters: BookChapter[] };
   builtAt: Date;
+  /** Языки книги, первый — основной (#230) */
+  langs: BookLang[];
+  /** Второй язык книги, который печатаем (сейчас только ko); null — книга на одном языке */
+  second: "ko" | null;
 }
 
 export const LEGACY_TITLE: Record<Elder, { ru: string; ko: string }> = {
@@ -105,19 +115,22 @@ export function paragraphs(text: string | null | undefined): string[] {
 
 export function composeBook(input: BookInput): BookModel {
   const elder = input.elder ?? guessElder(input.storyteller.name);
+  const langs = input.langs?.length ? [...input.langs] : [...DEFAULT_BOOK_LANGS];
+  const second = langs.length > 1 && langs[1] === "ko" ? "ko" : null;
+  const ko = second === "ko";
   const chapters: BookChapter[] = orderChapters(input.stories.filter(isBookChapter)).map((s, i) => {
     const block = BLOCKS.find((b) => b.id === s.block);
     return {
       id: s.id,
       block: s.block,
       blockRu: block?.ru ?? "Рассказ",
-      blockKo: block?.ko ?? "이야기",
+      blockKo: ko ? (block?.ko ?? "이야기") : "",
       title: s.title?.trim() || `Рассказ ${i + 1}`,
-      titleKo: s.title_ko?.trim() || null,
+      titleKo: (ko && s.title_ko?.trim()) || null,
       quote: s.quote?.trim() || null,
-      quoteKo: s.quote_ko?.trim() || null,
+      quoteKo: (ko && s.quote_ko?.trim()) || null,
       textRu: s.text_ru!.trim(),
-      textKo: s.text_ko?.trim() || null,
+      textKo: (ko && s.text_ko?.trim()) || null,
       voiceUrl: input.voiceUrl(s.id),
     };
   });
@@ -140,7 +153,9 @@ export function composeBook(input: BookInput): BookModel {
     chapters: [...chapters.filter((c) => c.block !== "legacy"), ...legacyChapters],
     groups,
     elder,
-    legacy: { ...LEGACY_TITLE[elder], chapters: legacyChapters },
+    legacy: { ru: LEGACY_TITLE[elder].ru, ko: ko ? LEGACY_TITLE[elder].ko : "", chapters: legacyChapters },
     builtAt: input.builtAt ?? new Date(),
+    langs,
+    second,
   };
 }
