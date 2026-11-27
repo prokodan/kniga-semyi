@@ -80,7 +80,7 @@ const ROLE_PATH: Record<Claim["kin"]["role"], string> = {
   childInLaw: "CS",
 };
 
-const cap = (s: string) => (s ? s[0].toUpperCase() + s.slice(1) : s);
+const cap = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
 
 export function layoutTree(src: TreeSource, claims: Claim[], viewerStorytellerId?: string | null): TreeModel {
   const byId = new Map(src.entities.map((e) => [e.id, e]));
@@ -112,7 +112,10 @@ export function layoutTree(src: TreeSource, claims: Claim[], viewerStorytellerId
     const a = canon(r.from_entity_id);
     const b = canon(r.to_entity_id);
     if (a === b || !people.has(a) || !people.has(b)) continue;
-    if (r.source === "family") (familyTouched.add(a), familyTouched.add(b));
+    if (r.source === "family") {
+      familyTouched.add(a);
+      familyTouched.add(b);
+    }
     const dup = edges.some(
       (e) => e.kind === r.kind && ((e.from_entity_id === a && e.to_entity_id === b) || (r.kind !== "parent" && e.from_entity_id === b && e.to_entity_id === a)),
     );
@@ -236,8 +239,13 @@ export function layoutTree(src: TreeSource, claims: Claim[], viewerStorytellerId
       if (!left.has(id)) continue;
       const u = [id];
       left.delete(id);
-      for (const s of spouses(id)) if (left.has(s)) (u.push(s), left.delete(s));
-      if (u.length === 2 && node.get(u[0])?.gender === "f" && node.get(u[1])?.gender === "m" && !node.get(u[0])?.isViewer) u.reverse();
+      for (const s of spouses(id)) {
+        if (!left.has(s)) continue;
+        u.push(s);
+        left.delete(s);
+      }
+      const [u0, u1] = u;
+      if (u0 && u1 && node.get(u0)?.gender === "f" && node.get(u1)?.gender === "m" && !node.get(u0)?.isViewer) u.reverse();
       out.push(u);
     }
     return out;
@@ -326,9 +334,11 @@ export function layoutTree(src: TreeSource, claims: Claim[], viewerStorytellerId
   }
   for (const [k, kids] of groups) {
     const ps = k.split("|").map((id) => node.get(id)!);
-    const pair = ps.length === 2 && ps[0].gen === ps[1].gen && Math.abs(ps[0].x - ps[1].x) <= step + 1;
-    const sx = pair ? (ps[0].x + ps[1].x) / 2 + CARD.w / 2 : ps[0].x + CARD.w / 2;
-    const sy = pair ? midY(ps[0]) : ps[0].y + CARD.h;
+    const [p0, p1] = ps;
+    if (!p0) continue;
+    const pair = !!p1 && ps.length === 2 && p0.gen === p1.gen && Math.abs(p0.x - p1.x) <= step + 1;
+    const sx = pair && p1 ? (p0.x + p1.x) / 2 + CARD.w / 2 : p0.x + CARD.w / 2;
+    const sy = pair ? midY(p0) : p0.y + CARD.h;
     const ch = kids.map((id) => node.get(id)!);
     const top = Math.min(...ch.map((c) => c.y));
     const bus = top - CARD.gapY / 2;

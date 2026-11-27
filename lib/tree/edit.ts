@@ -103,7 +103,7 @@ export function createTreeEditor(deps: { repo: TreeRepo; load: (familyId: string
               .map((r) => (canon(r.from_entity_id) === y ? canon(r.to_entity_id) : canon(r.from_entity_id))),
           ),
         ].filter((id) => id !== x);
-        if (sp.length === 1) out.push(edgeFor(x, role, sp[0]));
+        if (sp.length === 1 && sp[0]) out.push(edgeFor(x, role, sp[0]));
       }
       return out;
     };

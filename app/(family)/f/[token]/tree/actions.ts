@@ -29,8 +29,9 @@ export async function treeAction(token: string, input: TreeOp): Promise<TreeOpRe
     if (!view) return { ok: false, message: "Ссылка не открылась — откройте её ещё раз из сообщения" };
     const { family } = view;
     if (!flag("family_tree", { familyId: family.id, labs: family.labs })) return { ok: false, message: "Древо пока недоступно" };
+    if (!input || typeof input !== "object") return { ok: false, message: "Не поняли, что сохранить. Обновите страницу." };
     const ed = treeEditor();
-    switch (input?.op) {
+    switch (input.op) {
       case "update":
         await ed.update(family.id, input.id, { name: input.name, nameKo: input.nameKo, birthYear: input.birthYear, deathYear: input.deathYear, gender: input.gender });
         break;

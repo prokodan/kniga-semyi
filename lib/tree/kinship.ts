@@ -171,7 +171,7 @@ const FATHER_SIDE = /(по (папе|отцу|отцовской)|отцовск
 function wordAt(text: string, word: string): number {
   const w = norm(word);
   const m = new RegExp(`(^|[^\\p{L}])(${w})(?=$|[^\\p{L}])`, "u").exec(text);
-  return m ? m.index + m[1].length : -1;
+  return m ? m.index + (m[1] ?? "").length : -1;
 }
 
 /**

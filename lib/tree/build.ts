@@ -122,7 +122,7 @@ export function planTree(src: TreeSource, newId: () => string = () => crypto.ran
   }
   const onlyNarrator = narratorOf.size === 1 ? [...narratorOf.values()][0] : null;
   const chapterNarrator = new Map(src.chapters.map((c) => [c.id, narratorOf.get(c.storyteller_id) ?? null]));
-  const narratorOfStories = (ids: string[]) => ids.map((id) => chapterNarrator.get(id)).find(Boolean) ?? onlyNarrator;
+  const narratorOfStories = (ids: string[]): string | null => ids.map((id) => chapterNarrator.get(id)).find((x): x is string => !!x) ?? onlyNarrator ?? null;
 
   const claims: Claim[] = [];
   const claim = (person: string, narrator: string | null, kin: Kin | null) => {
@@ -253,8 +253,8 @@ export function planTree(src: TreeSource, newId: () => string = () => crypto.ran
   }
   // двое родителей разного пола — супруги
   for (const id of new Set(edges.filter((e) => e.kind === "parent").map((e) => e.to_entity_id))) {
-    const ps = [...new Set(parentsOf(id))];
-    if (ps.length === 2 && gender(ps[0]) && gender(ps[1]) && gender(ps[0]) !== gender(ps[1]) && !familyTouched.has(ps[0])) addEdge("spouse", ps[0], ps[1], ps[1]);
+    const [a, b, ...rest] = [...new Set(parentsOf(id))];
+    if (a && b && !rest.length && gender(a) && gender(b) && gender(a) !== gender(b) && !familyTouched.has(a)) addEdge("spouse", a, b, b);
   }
 
   plan.claims = claims;
