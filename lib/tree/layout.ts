@@ -386,14 +386,9 @@ export function layoutTree(src: TreeSource, claims: Claim[], viewerStorytellerId
   const placeUnit = (u: string[], x0: number) => u.forEach((id, i) => left.set(id, x0 + i * (CARD.w + CARD.couple)));
 
   /** Ряд по желаемым центрам капсул: без наложений, порядок по желанию; кому нечего хотеть — следом за соседом. */
-  const arrange = (g: number, want: (u: string[]) => number | null, keepOrder = false) => {
+  const arrange = (g: number, want: (u: string[]) => number | null) => {
     const items = rows.get(g)!.map((u, i) => ({ u, i, w: unitW(u), want: want(u) }));
-    let order = items;
-    if (!keepOrder) {
-      const withWant = items.filter((it) => it.want !== null).sort((a, b) => a.want! - b.want! || a.i - b.i);
-      const rest = items.filter((it) => it.want === null);
-      order = [...withWant, ...rest];
-    }
+    const order = [...items.filter((it) => it.want !== null).sort((a, b) => a.want! - b.want! || a.i - b.i), ...items.filter((it) => it.want === null)];
     let right = -Infinity;
     const lefts: number[] = [];
     for (const it of order) {
