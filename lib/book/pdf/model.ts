@@ -27,9 +27,28 @@ export interface BookInput {
    * Пока второй язык печатается только корейский: казахский текст и шрифт — #231.
    */
   langs?: readonly BookLang[];
+  /** #235: страница древа после оглавления; нет — книга как раньше */
+  tree?: BookTree | null;
 }
 
 export type Elder = "grandfather" | "grandmother";
+
+/** #235: человек на странице древа в PDF */
+export interface BookTreePerson {
+  name: string;
+  nameKo: string | null;
+  years: string | null;
+  /** Кем приходится рассказчику книги («мама», «жена»); у рассказчика — null */
+  label: string | null;
+  viewer: boolean;
+  /** Супруг стоящего справа — рисуем скрепу */
+  spouseOfNext: boolean;
+}
+
+/** #235: страница «Древо семьи» — ряды поколений сверху вниз (только при флаге family_tree у семьи) */
+export interface BookTree {
+  rows: BookTreePerson[][];
+}
 
 export interface BookChapter {
   id: string;
@@ -67,6 +86,8 @@ export interface BookModel {
   langs: BookLang[];
   /** Второй язык книги, который печатаем (сейчас только ko); null — книга на одном языке */
   second: "ko" | null;
+  /** #235: страница древа (null / нет — нет) */
+  tree?: BookTree | null;
 }
 
 export const LEGACY_TITLE: Record<Elder, { ru: string; ko: string }> = {
@@ -157,5 +178,6 @@ export function composeBook(input: BookInput): BookModel {
     builtAt: input.builtAt ?? new Date(),
     langs,
     second,
+    tree: input.tree && input.tree.rows.length ? input.tree : null,
   };
 }

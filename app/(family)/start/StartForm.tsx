@@ -28,7 +28,14 @@ async function shrinkPhoto(file: File): Promise<Blob> {
 const field = "w-full rounded-card border border-line bg-paper px-4 py-3 text-lg text-ink placeholder:text-muted focus:border-ink focus:outline-none";
 const label = "flex flex-col gap-1.5 text-ink-soft";
 
-export function StartForm() {
+export interface StartPrefill {
+  name?: string;
+  storytellerName?: string;
+  birthYear?: string;
+  storytellerNameKo?: string;
+}
+
+export function StartForm({ prefill = {} }: { prefill?: StartPrefill }) {
   const router = useRouter();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -75,19 +82,19 @@ export function StartForm() {
     <form onSubmit={(e) => void onSubmit(e)} className="flex flex-col gap-5">
       <label className={label}>
         Как назовём книгу?
-        <input name="name" required maxLength={120} className={field} placeholder="Например: Книга семьи Ким" autoComplete="off" />
+        <input name="name" defaultValue={prefill.name} required maxLength={120} className={field} placeholder="Например: Книга семьи Ким" autoComplete="off" />
       </label>
 
       <fieldset className="flex flex-col gap-4 rounded-card bg-paper-deep p-4">
         <legend className="px-1 font-serif text-xl text-ink">Кто будет рассказывать</legend>
         <label className={label}>
           Имя, как зовут в семье
-          <input name="storytellerName" required maxLength={120} className={field} placeholder="Бабушка Мария" autoComplete="off" />
+          <input name="storytellerName" defaultValue={prefill.storytellerName} required maxLength={120} className={field} placeholder="Бабушка Мария" autoComplete="off" />
         </label>
         <div className="grid grid-cols-2 gap-3">
           <label className={label}>
             Год рождения
-            <input name="birthYear" inputMode="numeric" pattern="(19|20)[0-9]{2}" maxLength={4} className={field} placeholder="1941" />
+            <input name="birthYear" defaultValue={prefill.birthYear} inputMode="numeric" pattern="(19|20)[0-9]{2}" maxLength={4} className={field} placeholder="1941" />
           </label>
           <label className={label}>
             Где родились
@@ -96,7 +103,7 @@ export function StartForm() {
         </div>
         <label className={label}>
           Имя по-корейски <span className="text-sm text-muted">(если есть, можно пропустить)</span>
-          <input name="storytellerNameKo" maxLength={120} className={field} placeholder="김마리아" lang="ko" />
+          <input name="storytellerNameKo" defaultValue={prefill.storytellerNameKo} maxLength={120} className={field} placeholder="김마리아" lang="ko" />
         </label>
         <div className="flex items-center gap-4">
           {photo ? (

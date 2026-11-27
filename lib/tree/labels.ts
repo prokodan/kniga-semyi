@@ -1,0 +1,98 @@
+// #235: подписи родства от того, чью книгу смотрят. Путь по рёбрам древа (P — к родителю, C — к ребёнку,
+// S — к супругу, B — к брату / сестре) → «мама», «бабушка», «тётя», «свекровь»… Мама одного = бабушка внука.
+import type { TreeGender } from "@/lib/types";
+import type { TreeEdge } from "./build";
+
+export interface KinLabel {
+  ru: string;
+  ko: string | null;
+  /** Родительный падеж — для «Записать историю мамы» */
+  gen: string;
+}
+
+type G = { f: KinLabel; m: KinLabel; x: KinLabel };
+const L = (ru: string, gen: string, ko: string | null = null): KinLabel => ({ ru, gen, ko });
+
+const BY_PATH: Record<string, G> = {
+  P: { f: L("мама", "мамы", "어머니"), m: L("папа", "папы", "아버지"), x: L("родитель", "родителя") },
+  PP: { f: L("бабушка", "бабушки", "할머니"), m: L("дедушка", "дедушки", "할아버지"), x: L("дедушка или бабушка", "дедушки или бабушки") },
+  PPP: { f: L("прабабушка", "прабабушки", "증조할머니"), m: L("прадедушка", "прадедушки", "증조할아버지"), x: L("прадед", "прадеда") },
+  PPPP: { f: L("прапрабабушка", "прапрабабушки"), m: L("прапрадедушка", "прапрадедушки"), x: L("предок", "предка") },
+  C: { f: L("дочь", "дочери", "딸"), m: L("сын", "сына", "아들"), x: L("ребёнок", "ребёнка", "자녀") },
+  CC: { f: L("внучка", "внучки", "손녀"), m: L("внук", "внука", "손자"), x: L("внук", "внука", "손주") },
+  CCC: { f: L("правнучка", "правнучки"), m: L("правнук", "правнука"), x: L("правнук", "правнука") },
+  S: { f: L("жена", "жены", "아내"), m: L("муж", "мужа", "남편"), x: L("супруг", "супруга", "배우자") },
+  B: { f: L("сестра", "сестры", "자매"), m: L("брат", "брата", "형제"), x: L("брат или сестра", "брата или сестры", "형제자매") },
+  PC: { f: L("сестра", "сестры", "자매"), m: L("брат", "брата", "형제"), x: L("брат или сестра", "брата или сестры", "형제자매") },
+  PB: { f: L("тётя", "тёти"), m: L("дядя", "дяди"), x: L("дядя или тётя", "дяди или тёти") },
+  PPC: { f: L("тётя", "тёти"), m: L("дядя", "дяди"), x: L("дядя или тётя", "дяди или тёти") },
+  BC: { f: L("племянница", "племянницы", "조카"), m: L("племянник", "племянника", "조카"), x: L("племянник", "племянника", "조카") },
+  PCC: { f: L("племянница", "племянницы", "조카"), m: L("племянник", "племянника", "조카"), x: L("племянник", "племянника", "조카") },
+  PBC: { f: L("двоюродная сестра", "двоюродной сестры", "사촌"), m: L("двоюродный брат", "двоюродного брата", "사촌"), x: L("двоюродный брат", "двоюродного брата", "사촌") },
+  PPCC: { f: L("двоюродная сестра", "двоюродной сестры", "사촌"), m: L("двоюродный брат", "двоюродного брата", "사촌"), x: L("двоюродный брат", "двоюродного брата", "사촌") },
+  CS: { f: L("невестка", "невестки", "며느리"), m: L("зять", "зятя", "사위"), x: L("зять или невестка", "зятя или невестки") },
+  BS: { f: L("жена брата", "жены брата"), m: L("муж сестры", "мужа сестры"), x: L("родня", "родни") },
+  SB: { f: L("сестра супруга", "сестры супруга"), m: L("брат супруга", "брата супруга"), x: L("родня", "родни") },
+  PS: { f: L("жена отца", "жены отца"), m: L("муж мамы", "мужа мамы"), x: L("родня", "родни") },
+};
+
+/** Родители супруга — зависят и от пола того, чью книгу смотрят: свекровь (у жены) / тёща (у мужа). */
+function inLaw(viewer: TreeGender | null, g: TreeGender | null): KinLabel {
+  if (viewer === "f") return g === "f" ? L("свекровь", "свекрови", "시어머니") : g === "m" ? L("свёкор", "свёкра", "시아버지") : L("родитель мужа", "родителя мужа");
+  if (viewer === "m") return g === "f" ? L("тёща", "тёщи", "장모") : g === "m" ? L("тесть", "тестя", "장인") : L("родитель жены", "родителя жены");
+  return g === "f" ? L("мама супруга", "мамы супруга") : g === "m" ? L("папа супруга", "папы супруга") : L("родитель супруга", "родителя супруга");
+}
+
+export const ROOT_LABEL: Record<"f" | "m" | "x", KinLabel> = {
+  f: L("рассказчица", "рассказчицы"),
+  m: L("рассказчик", "рассказчика"),
+  x: L("рассказчик", "рассказчика"),
+};
+
+/**
+ * Пути от viewer до всех людей (кратчайшие, до 4 шагов). Дети супруга считаются детьми (S·C → C), родитель
+ * родителя через супруга не выдумываем.
+ */
+export function kinPaths(viewer: string, edges: TreeEdge[], maxLen = 4): Map<string, string> {
+  const next = new Map<string, { to: string; step: string }[]>();
+  const push = (a: string, to: string, step: string) => {
+    const list = next.get(a) ?? [];
+    list.push({ to, step });
+    next.set(a, list);
+  };
+  for (const e of edges) {
+    if (e.kind === "parent") {
+      push(e.to_entity_id, e.from_entity_id, "P");
+      push(e.from_entity_id, e.to_entity_id, "C");
+    } else {
+      const s = e.kind === "spouse" ? "S" : "B";
+      push(e.from_entity_id, e.to_entity_id, s);
+      push(e.to_entity_id, e.from_entity_id, s);
+    }
+  }
+  const paths = new Map<string, string>([[viewer, ""]]);
+  let frontier = [viewer];
+  for (let len = 1; len <= maxLen && frontier.length; len++) {
+    const nf: string[] = [];
+    for (const id of frontier) {
+      for (const { to, step } of next.get(id) ?? []) {
+        if (paths.has(to)) continue;
+        let path = paths.get(id)! + step;
+        if (path === "SC") path = "C"; // ребёнок супруга
+        paths.set(to, path);
+        nf.push(to);
+      }
+    }
+    frontier = nf;
+  }
+  return paths;
+}
+
+export function labelFor(path: string | undefined, gender: TreeGender | null, viewerGender: TreeGender | null): KinLabel | null {
+  if (path === undefined) return null;
+  if (path === "") return ROOT_LABEL[gender ?? "x"];
+  if (path === "SP") return inLaw(viewerGender, gender);
+  const g = BY_PATH[path];
+  if (!g) return L("родня", "родни");
+  return g[gender ?? "x"];
+}
