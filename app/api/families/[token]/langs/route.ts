@@ -28,7 +28,8 @@ export async function PATCH(req: Request, ctx: { params: Promise<{ token: string
     if (!flag("lang_kk", { familyId: family.id, labs: family.labs })) {
       return ok({ error: "forbidden", message: "Выбор языков книги пока недоступен" }, 403);
     }
-    const choice = BOOK_LANG_CHOICES.find((c) => c.id === Body.parse(await readJson(req)).langs)!;
+    const wanted = Body.parse(await readJson(req)).langs;
+    const choice = BOOK_LANG_CHOICES.find((c) => c.id === wanted)!;
     const langs: BookLang[] = [...choice.langs];
 
     const db = getDbOrNull();
