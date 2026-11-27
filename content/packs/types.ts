@@ -18,8 +18,12 @@ export interface PackQuestion {
 export type PackOp =
   /** Вставить вопрос сразу после `after` (после уже добавленных к нему же — в порядке слоёв) */
   | { op: "add"; after: string; question: PackQuestion }
-  /** Переформулировать вопрос (смысл тот же); `minimum` — заменить минимум формулировкой этой культуры */
-  | { op: "reword"; id: string; text: Partial<PackText>; minimum?: string[] }
+  /**
+   * Переформулировать вопрос (смысл тот же); `minimum` — заменить минимум формулировкой этой культуры.
+   * #233: `text` заменяет тексты вопроса ЦЕЛИКОМ: языки, которых в reword нет, у вопроса пропадают (иначе ru был бы
+   * про Наурыз, а ko / kk — старый общий вопрос). Нет текста для языка рассказа — resolveBank скажет, что слой не готов.
+   */
+  | { op: "reword"; id: string; text: PackText; minimum?: string[] }
   /** Дополнить минимум полноты */
   | { op: "minimum+"; id: string; add: string[] }
   /** Скрыть вопрос костяка */
@@ -40,4 +44,9 @@ export interface CulturePack {
   sensitive?: { topic: string; questionIds?: string[] }[];
   /** Правила обращения для вопросов и перевода */
   tone?: string[];
+  /**
+   * #233: контент слоя ещё черновой — чей и что сделать (например, «контент Влада: вычитать вопросы, #NNN»).
+   * Флаг culture_packs для семей не включаем, пока у слоя есть draft (видно в коде и в тесте).
+   */
+  draft?: string;
 }

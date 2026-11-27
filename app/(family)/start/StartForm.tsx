@@ -1,6 +1,8 @@
 "use client";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
+import { START_DEFAULT_PACKS } from "@/lib/interview/start-choices";
+import { FamilyChoices } from "./FamilyChoices";
 
 const MAX_SIDE = 1280;
 
@@ -35,12 +37,16 @@ export interface StartPrefill {
   storytellerNameKo?: string;
 }
 
-export function StartForm({ prefill = {} }: { prefill?: StartPrefill }) {
+/** #233: анкета «Кто ваша семья?» — только с флагом culture_packs (null — формы нет, семья получает умолчания). */
+export function StartForm({ prefill = {}, choices = null }: { prefill?: StartPrefill; choices?: { kkOn: boolean } | null }) {
   const router = useRouter();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [photo, setPhoto] = useState<{ blob: Blob; preview: string } | null>(null);
   const [photoNote, setPhotoNote] = useState<string | null>(null);
+  // #233: «Имя по-корейски» — без анкеты (флаг выключен) всегда, с анкетой — когда выбраны корё-сарам
+  const [packs, setPacks] = useState<string[]>(START_DEFAULT_PACKS);
+  const showKo = !choices || packs.includes("koryo");
 
   async function onPhoto(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
@@ -101,10 +107,12 @@ export function StartForm({ prefill = {} }: { prefill?: StartPrefill }) {
             <input name="birthPlace" maxLength={160} className={field} placeholder="Уштобе" />
           </label>
         </div>
-        <label className={label}>
-          Имя по-корейски <span className="text-sm text-muted">(если есть, можно пропустить)</span>
-          <input name="storytellerNameKo" defaultValue={prefill.storytellerNameKo} maxLength={120} className={field} placeholder="김마리아" lang="ko" />
-        </label>
+        {showKo && (
+          <label className={label}>
+            Имя по-корейски <span className="text-sm text-muted">(если есть, можно пропустить)</span>
+            <input name="storytellerNameKo" defaultValue={prefill.storytellerNameKo} maxLength={120} className={field} placeholder="김마리아" lang="ko" />
+          </label>
+        )}
         <div className="flex items-center gap-4">
           {photo ? (
             // eslint-disable-next-line @next/next/no-img-element -- локальное превью blob:, next/image не нужен
@@ -121,6 +129,8 @@ export function StartForm({ prefill = {} }: { prefill?: StartPrefill }) {
         </div>
         {photoNote && <p className="text-sm text-warning">{photoNote}</p>}
       </fieldset>
+
+      {choices && <FamilyChoices kkOn={choices.kkOn} onPacks={setPacks} />}
 
       <label className={label}>
         Когда хотите подарить книгу? <span className="text-sm text-muted">(можно пропустить)</span>

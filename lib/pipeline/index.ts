@@ -18,12 +18,13 @@ let instance: Pipeline | null = null;
 
 function getRepo(): PipelineRepo {
   const db = getDbOrNull();
-  // #231: перевод на казахский — только семьям с флагом lang_kk (labs или окружение)
+  // #231: перевод на казахский — только семьям с флагом lang_kk; #233: банк и подсказки по пакетам — с culture_packs
   if (db) {
     return new SupabasePipelineRepo(
       db,
       BUCKETS.audio,
       (f) => flag("lang_kk", { familyId: f.id, labs: f.labs }),
+      (f) => flag("culture_packs", { familyId: f.id, labs: f.labs }),
       // #265: древо дописывается в шаге словаря — только семьям с флагом family_tree
       async (f) => {
         if (flag("family_tree", { familyId: f.id, labs: f.labs })) await loadTree(f.id, { write: true });

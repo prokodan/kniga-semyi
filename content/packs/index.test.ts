@@ -84,7 +84,8 @@ describe("applyPacks: операции и правило конфликта", ()
       ]),
     ]);
     expect(out.map((x) => x.id)).toEqual(["roots-01", "roots-02"]);
-    expect(out[1]).toMatchObject({ text: { ru: "B2", ko: "B-ko" }, minimum: ["кто", "род"] });
+    // #233: reword заменяет тексты целиком — ko без нового текста пропадает (не остаётся старый общий вопрос)
+    expect(out[1]).toEqual({ id: "roots-02", block: "roots", text: { ru: "B2" }, minimum: ["кто", "род"] });
   });
 
   it("два слоя переформулируют один вопрос → первый слой, второй — вопрос сразу после (оба прозвучат)", () => {

@@ -26,6 +26,11 @@ export interface SessionState extends InterviewState {
   /** Блоки, куда засчитаны рассказы «не по теме» (offTopicBlock) */
   offtopic_blocks?: LifeBlock[];
   finished?: boolean;
+  /**
+   * #233: культурные пакеты, по которым собран банк этой сессии (general + слои). Нет — банк V0 (как до #233).
+   * Пишется при старте сессии и больше не меняется.
+   */
+  packs?: string[];
   /** Переспрос неуверенно распознанного имени / места («Правильно ли я поняла: Уштобе?») — ждём ответ */
   name_check?: { storyId: string; heard: string; guess: string } | null;
   /** Истории, по которым уже переспрашивали (один раз на историю) */

@@ -36,7 +36,9 @@ describe("пакет kz (#231): глоссарий для перевода ru �
     expect(KZ_GLOSSARY.filter((t) => KK_LETTERS.test(t.kk)).length).toBeGreaterThan(30);
   });
 
-  it("слой kz пока без вопросов: general + kz = general (вопросы — #233)", () => {
-    expect(resolveBank(["general", "kz"], "ru").map((q) => q.id)).toEqual(GENERAL_QUESTIONS.map((q) => q.id));
+  it("#233: general + kz = костяк + вопросы слоя (вопросы — content/packs/culture.test.ts)", () => {
+    const ids = resolveBank(["general", "kz"], "ru").map((q) => q.id);
+    for (const q of GENERAL_QUESTIONS) expect(ids, q.id).toContain(q.id);
+    expect(ids.length).toBeGreaterThan(GENERAL_QUESTIONS.length);
   });
 });
