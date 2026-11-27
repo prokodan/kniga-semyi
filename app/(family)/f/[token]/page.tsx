@@ -3,6 +3,7 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { requestOrigin } from "@/lib/book/chapter";
 import { blockProgress, getFamilyByToken, getFamilyStore } from "@/lib/db/access";
+import { flag } from "@/lib/flags";
 import { healFamily } from "@/lib/pipeline/heal";
 import { BlockProgress } from "../../_ui/BlockProgress";
 import { LinkNotFound } from "../../_ui/LinkNotFound";
@@ -34,6 +35,7 @@ export default async function FamilyPage({ params, searchParams }: { params: Pro
   healFamily(await requestOrigin(), token);
 
   const { family, storyteller } = view;
+  const tree = flag("family_tree", { familyId: family.id, labs: family.labs }); // #235
   const progress = blockProgress(view.stories, storyteller?.id);
   const photo = storyteller?.photo_url ? await getFamilyStore().photoUrl(storyteller.photo_url) : null;
   const chapters = view.stories.filter((s) => !s.parent_story_id && s.storyteller_id === storyteller?.id);
@@ -138,6 +140,17 @@ export default async function FamilyPage({ params, searchParams }: { params: Pro
             </span>
             <span className="text-seal">→</span>
           </Link>
+          {tree && (
+            <Link
+              href={`/f/${token}/tree`}
+              className="flex min-h-12 items-center justify-between gap-3 rounded-card border border-line bg-paper px-4 py-3"
+            >
+              <span>
+                Древо семьи <span className="text-ink-soft">· кто кому кем приходится</span>
+              </span>
+              <span className="text-seal">→</span>
+            </Link>
+          )}
           <Link
             href={`/checkout/${token}`}
             className="flex min-h-12 items-center justify-between gap-3 rounded-card border border-line bg-paper px-4 py-3"

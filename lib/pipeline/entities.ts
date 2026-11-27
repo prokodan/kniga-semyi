@@ -30,6 +30,14 @@ function splitNames(v: string): string[] {
     .filter((p) => p.length >= 2 && p.length <= 40 && !/\d/.test(p) && p.split(" ").length <= 4);
 }
 
+/**
+ * #235: люди одного факта главы («Олег и Лена» → два имени) — тот же разбор, что у словаря, чтобы древо и словарь
+ * понимали факт одинаково. Не person — пусто.
+ */
+export function factPeople(f: Pick<StoryFact, "type" | "value">): string[] {
+  return f.type === "person" ? splitNames(f.value ?? "") : [];
+}
+
 /** Сущности одной главы: люди и места из facts, слова корё мар из текста. */
 export function entitiesFromChapter(ch: { text_ru: string | null; facts: Pick<StoryFact, "type" | "value" | "relation">[] }): EntityDraft[] {
   const out: EntityDraft[] = [];

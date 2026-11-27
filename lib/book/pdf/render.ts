@@ -41,7 +41,8 @@ export async function renderBook(input: BookInput, opts: { fontsDir?: string } =
   // Хангыль ищем во всех текстах: после #97 он печатается и внутри русского («고맙습니다»).
   const koText =
     book.chapters.map((c) => [c.title, c.titleKo, c.quote, c.quoteKo, c.textRu, c.textKo].join(" ")).join(" ") +
-    ` ${book.storyteller.name} ${book.storyteller.name_ko ?? ""}`;
+    ` ${book.storyteller.name} ${book.storyteller.name_ko ?? ""}` +
+    ` ${(book.tree?.rows ?? []).flat().map((p) => p.nameKo ?? "").join(" ")}`;
   return {
     pdf,
     pageCount: total || countPages(pdf),

@@ -2,7 +2,7 @@
 // на голос → «Слова деда» → последняя страница. Формат A5, колонтитул с названием, номера страниц.
 import { Document, Image, Page, Path, StyleSheet, Svg, Text, View } from "@react-pdf/renderer";
 import QRCode from "qrcode";
-import type { BookChapter, BookModel } from "./model";
+import type { BookChapter, BookModel, BookTree, BookTreePerson } from "./model";
 import { paragraphs } from "./model";
 import { FAMILY_KO, FAMILY_RU } from "./fonts";
 import { COLOR, PAGE, TYPE } from "./theme";
@@ -247,6 +247,62 @@ function Toc({ book, pages }: { book: BookModel; pages: PageMap }) {
   );
 }
 
+// ---------------- #235 древо семьи ----------------
+
+function TreePerson({ p, ko }: { p: BookTreePerson; ko: boolean }) {
+  return (
+    <View
+      style={{
+        width: 70,
+        paddingVertical: 5,
+        paddingHorizontal: 3,
+        borderWidth: p.viewer ? 1.2 : 0.75,
+        borderColor: p.viewer ? COLOR.seal : COLOR.line,
+        backgroundColor: p.viewer ? COLOR.paperDeep : COLOR.paper,
+        borderRadius: 4,
+        alignItems: "center",
+        marginVertical: 3,
+      }}
+    >
+      <Text style={{ fontSize: 8, fontWeight: 700, lineHeight: 1.2, textAlign: "center" }}>{p.name}</Text>
+      {ko && p.nameKo && <Text style={{ fontFamily: FAMILY_KO, fontSize: 6.5, color: COLOR.inkSoft, lineHeight: 1.3, textAlign: "center" }}>{p.nameKo}</Text>}
+      {p.years && <Text style={{ fontSize: 6.5, color: COLOR.muted, lineHeight: 1.3 }}>{p.years}</Text>}
+      {p.label && <Text style={{ fontSize: 5.8, color: COLOR.seal, letterSpacing: 0.4, lineHeight: 1.3, textTransform: "uppercase", textAlign: "center" }}>{p.label}</Text>}
+    </View>
+  );
+}
+
+function TreePage({ tree, ko }: { tree: BookTree; ko: boolean }) {
+  return (
+    <View>
+      <Text style={s.kicker}>Древо семьи</Text>
+      <Text style={s.h1}>Древо семьи</Text>
+      {ko && <Text style={s.h1ko}>가계도</Text>}
+      <View style={s.rule} />
+      {tree.rows.map((row, i) => (
+        <View key={i} wrap={false}>
+          {i > 0 && <View style={{ width: 1, height: 10, backgroundColor: COLOR.gold, alignSelf: "center" }} />}
+          <View style={{ flexDirection: "row", flexWrap: "wrap", justifyContent: "center", alignItems: "center" }}>
+            {row.map((p, j) => (
+              <View key={j} style={{ flexDirection: "row", alignItems: "center" }}>
+                <TreePerson p={p} ko={ko} />
+                {p.spouseOfNext && j < row.length - 1 ? (
+                  <View style={{ width: 8, height: 1.2, backgroundColor: COLOR.seal }} />
+                ) : (
+                  j < row.length - 1 && <View style={{ width: 6 }} />
+                )}
+              </View>
+            ))}
+          </View>
+        </View>
+      ))}
+      <Text style={{ fontSize: 7.5, color: COLOR.muted, marginTop: 16, textAlign: "center" }}>
+        Древо собрано из рассказов книги и поправлено семьёй.
+      </Text>
+    </View>
+  );
+}
+
 /**
  * Невидимая fixed-метка первого прохода: повторяется на каждой странице <Page> главы,
  * минимальный номер = страница начала главы (для оглавления).
@@ -400,6 +456,11 @@ export function BookDocument({ book, pages = {}, collect }: BookDocumentProps) {
       <BookPage title={book.title} collect={collect}>
         <Toc book={book} pages={pages} />
       </BookPage>
+      {book.tree && (
+        <BookPage title={book.title} collect={collect}>
+          <TreePage tree={book.tree} ko={ko} />
+        </BookPage>
+      )}
       {regular.map((ch) => (
         <Chapter key={ch.id} ch={ch} legacy={false} title={book.title} her={her} ko={ko} collect={collect} />
       ))}

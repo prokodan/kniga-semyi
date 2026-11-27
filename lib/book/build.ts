@@ -8,7 +8,10 @@ import { getFamilyStore, MemoryFamilyStore } from "@/lib/db/access";
 import { photoSignedUrl } from "./chapter";
 import { listenUrl } from "./qr";
 import { DEMO_BOOK } from "./pdf/demo";
-import { isBookChapter, type Elder } from "./pdf/model";
+import { isBookChapter, type BookTree, type Elder } from "./pdf/model";
+import { flag } from "@/lib/flags";
+import { loadTree } from "@/lib/tree";
+import { treeForBook } from "@/lib/tree/book";
 import { renderBook } from "./pdf/render";
 import { bookLangs, loadStoryTexts, withStoryTexts } from "./texts";
 
@@ -48,7 +51,7 @@ export class BookBusyError extends Error {
 // ---------------- данные семьи ----------------
 
 interface BookSource {
-  family: Pick<Family, "id" | "name" | "book_langs">;
+  family: Pick<Family, "id" | "name" | "book_langs" | "labs">;
   storyteller: Storyteller | null;
   stories: Story[];
 }
@@ -63,7 +66,7 @@ async function loadSource(familyId: string): Promise<BookSource | null> {
       .filter((s) => s.family_id === familyId)
       .sort((a, b) => a.created_at.localeCompare(b.created_at));
     const stories = [...(store.stories?.values() ?? [])].filter((s) => s.family_id === familyId);
-    return structuredClone({ family: { id: family.id, name: family.name, book_langs: family.book_langs }, storyteller: storytellers[0] ?? null, stories });
+    return structuredClone({ family: { id: family.id, name: family.name, book_langs: family.book_langs, labs: family.labs }, storyteller: storytellers[0] ?? null, stories });
   }
   const [fam, st, stories] = await Promise.all([
     // "*", а не список колонок: book_langs (#230) появится только после migrate — запрос не должен падать до него
@@ -80,7 +83,7 @@ async function loadSource(familyId: string): Promise<BookSource | null> {
   const texts = await loadStoryTexts(db, list.map((s) => s.id));
   const f = fam.data as Family;
   return {
-    family: { id: f.id, name: f.name, book_langs: f.book_langs },
+    family: { id: f.id, name: f.name, book_langs: f.book_langs, labs: f.labs },
     storyteller: (st.data?.[0] as Storyteller) ?? null,
     stories: list.map((s) => withStoryTexts(s, texts)),
   };
@@ -207,6 +210,16 @@ export async function buildBook(familyId: string, opts: { origin: string }): Pro
   try {
     const origin = env.prodUrl() ?? opts.origin;
     const st = src.storyteller;
+    // #235: страница древа — только если флаг family_tree включён семье; сбой древа книгу не роняет
+    let tree: BookTree | null = null;
+    if (flag("family_tree", { familyId, labs: src.family.labs })) {
+      try {
+        const { model } = await loadTree(familyId, { write: true, viewer: st?.id ?? null });
+        tree = treeForBook(model, bookLangs(src.family).includes("ko"));
+      } catch (e) {
+        console.warn(`[book] ${familyId}: древо не собралось — ${e instanceof Error ? e.message : e}`);
+      }
+    }
     const rendered = await renderBook({
       title,
       storyteller: {
@@ -221,6 +234,7 @@ export async function buildBook(familyId: string, opts: { origin: string }): Pro
       voiceUrl: (id) => listenUrl(origin, id),
       elder,
       langs: bookLangs(src.family),
+      tree,
     });
     if (rendered.missingKorean.length) console.warn(`[book] ${familyId}: нет в шрифте слогов ${rendered.missingKorean.join("")}`);
 

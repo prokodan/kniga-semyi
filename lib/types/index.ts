@@ -85,6 +85,8 @@ export interface Storyteller {
   consent_at: IsoDateTime | null;
   /** #230: язык рассказа. В базе `text[] not null default '{ru,koryo}'`; нет в объекте — DEFAULT_SPOKEN_LANGS. */
   spoken_langs?: SpokenLang[];
+  /** #235: человек древа (family_entities), который этот рассказчик. Нет колонки / не связан — null или нет поля. */
+  entity_id?: Uuid | null;
   created_at: IsoDateTime;
   updated_at: IsoDateTime;
 }
@@ -230,6 +232,28 @@ export interface FamilyEntity {
   /** auto — заполнила сборка глав; family — поправила семья (автоматика не перезаписывает) */
   source: FamilyEntitySource;
   updated_at: IsoDateTime;
+  /** #235 древо: годы жизни (правит семья). Необязательные — до миграции и в фикстурах их нет. */
+  birth_year?: number | null;
+  death_year?: number | null;
+  /** #235 древо: f / m — для подписей «мама / папа»; авто — из слова родства, семья — «он / она». */
+  gender?: TreeGender | null;
+  /** #235 древо: «это один человек» — на древе запись показывается как same_as (в словаре остаётся). */
+  same_as?: Uuid | null;
+}
+
+export type TreeGender = "f" | "m";
+export type FamilyRelationKind = "parent" | "spouse" | "sibling";
+
+/** #235: ребро древа. parent: from — родитель, to — ребёнок; spouse / sibling — без направления. */
+export interface FamilyRelation {
+  id: Uuid;
+  family_id: Uuid;
+  from_entity_id: Uuid;
+  to_entity_id: Uuid;
+  kind: FamilyRelationKind;
+  /** auto — собрала автоматика; family — поправила семья (автоматика человека с такими рёбрами не трогает) */
+  source: FamilyEntitySource;
+  created_at: IsoDateTime;
 }
 
 /** Вопрос из банка (V0 заполняет content/questions/bank.ts). */
