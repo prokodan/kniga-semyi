@@ -53,4 +53,16 @@ export const pipeline: Pipeline = {
 export const processStory = (storyId: string) => pipeline.processStory(storyId);
 export const runStep = (storyId: string, step?: import("./engine").PipelineStep) => pipeline.runStep(storyId, { step });
 
+/**
+ * #298: семья поправила главу в черновике — переводы без колонок (kk) устарели. Триггер stories_stale_translations
+ * ловит только новый text_ru; правка одного заголовка или цитаты (и локальный режим без базы) — здесь.
+ * Правки людей (origin family / proofread) не удаляются. Сбой — не страшно: перевод заново просто не начнётся.
+ */
+export async function dropStaleTranslations(storyId: string): Promise<void> {
+  const repo = getRepo();
+  if (!repo.dropTranslations) return;
+  const story = await repo.getStory(storyId);
+  if (story) await repo.dropTranslations(story);
+}
+
 export { PipelineError, PIPELINE_STEPS, STATUS_MESSAGE, nextStep, type PipelineStep, type StepResult, type StoryView } from "./engine";

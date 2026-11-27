@@ -9,6 +9,7 @@ import type { SessionState } from "@/lib/interview/policy";
 import { MemoryInterviewRepo } from "@/lib/interview/repo";
 import { fixCyrillic } from "@/lib/pipeline/cyrillic";
 import { entitiesFromChapter, mergeEntities, namesForTranslate } from "@/lib/pipeline/entities";
+import { finishKk, learnSpellingsKk, namesForTranslateKk, requiredSpellingsKk } from "@/lib/pipeline/kk";
 import { applySpellings, learnSpellings, requiredSpellings, type NamePair } from "@/lib/pipeline/names";
 import type { BookLang, FamilyEntity, LifeBlock, Story } from "@/lib/types";
 import { SimBudgetError, withBudget } from "./budget";
@@ -245,7 +246,16 @@ export async function runSimulation(opts: SimOptions): Promise<SimResult> {
       for (const i of inserts) entities.push({ ...i, id: `ent-${entities.length + 1}`, updated_at: now().toISOString() });
       // #231: книга ru,kk — перевод ru → kk (как конвейер для семьи с флагом lang_kk); ru — без перевода
       if (langs.includes("kk")) {
-        const kk = await budget.ai.run("translate", translateInput("ru", "kk", { text_ru: edited.text_ru, title: edited.title, quote: edited.quote }));
+        // #298: как конвейер (lib/pipeline/steps/translate.ts → toKazakh): словарь семьи во входе, после — алфавит,
+        // обращение к внукам, одно написание имён (lib/pipeline/kk.ts). Иначе eval покажет то, чего на проде нет.
+        const kkNames = namesForTranslateKk(entities);
+        const raw = await budget.ai.run(
+          "translate",
+          translateInput("ru", "kk", { text_ru: edited.text_ru, title: edited.title, quote: edited.quote, ...(kkNames.length ? { names: kkNames } : {}) }),
+        );
+        let kk = finishKk(raw, edited.text_ru, requiredSpellingsKk(entities)).out;
+        for (const l of learnSpellingsKk(entities, kk.text_ko, story.id)) Object.assign(entities.find((e) => e.id === l.id)!, { name_kk: l.name_kk });
+        kk = finishKk(kk, edited.text_ru, requiredSpellingsKk(entities)).out;
         Object.assign(ch, { original: "ru", title_kk: kk.title_ko, text_kk: kk.text_ko, quote_kk: kk.quote_ko });
       }
       if (!langs.includes("ko")) continue;

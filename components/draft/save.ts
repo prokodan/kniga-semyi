@@ -4,7 +4,7 @@ import "server-only";
 // запись правки — та же строка stories (Supabase или общая память процесса), перевод — runStep(id, "translate").
 import { getDbOrNull } from "@/lib/db";
 import { MemoryInterviewRepo } from "@/lib/interview/repo";
-import { pipeline, PipelineError, runStep, STATUS_MESSAGE } from "@/lib/pipeline";
+import { dropStaleTranslations, pipeline, PipelineError, runStep, STATUS_MESSAGE } from "@/lib/pipeline";
 import type { Story } from "@/lib/types";
 import { draftChanged, quoteMatch, type DraftFields, type DraftSaveResult } from "./draft";
 
@@ -62,6 +62,12 @@ export async function saveDraft(storyId: string, token: string, fields: DraftFie
     status: "translating",
     error: null,
   });
+  // #298: и казахский перевод (story_texts) — заново, даже если поменялись только заголовок или цитата
+  try {
+    await dropStaleTranslations(storyId);
+  } catch (e) {
+    console.warn("[draft] старые переводы", e instanceof Error ? e.message : e);
+  }
 
   try {
     const res = await runStep(storyId, "translate");

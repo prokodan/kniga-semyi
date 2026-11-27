@@ -47,6 +47,12 @@ describe("kk-check (#231): правила без ИИ", () => {
     expect(rules({ quote_kk: "Басқа сөз." })).toContain("quote");
   });
 
+  it("#298: латиница и из двух букв («da»), к внукам «сендер» и «сіздер» в одном абзаце — флажки", () => {
+    expect(rules({ text_kk: `${translateKk.text} Машинада da емес.` })).toContain("latin");
+    expect(rules({ text_kk: `${translateKk.text}\nБалаларым, бірге болыңдар, бір-біріңізге қамқор болыңыздар.` })).toContain("style:grandkids");
+    expect(rules({ text_kk: `${translateKk.text}\nБалаларым, бірге болыңдар, бір-біріңе қамқор болыңдар.` })).not.toContain("style:grandkids");
+  });
+
   it("обратный перевод kk → ru (mock): год на месте — без флажков; модель и текст записаны", async () => {
     const ai = createRouter({ store: new MemoryStore(), mode: () => "mock" });
     const r = await backTranslateKk(ai, [{ ...good, text_ru: "Я родилась в 1931 году." }]);

@@ -2,12 +2,14 @@
 // перевод, а не оценка качества языка: «ничего не нашлось» ≠ «перевод хороший» (проверка носителем — #232).
 //   1) правила без ИИ: казахские буквы есть; нет русских служебных слов и русского родства; родство и реалии —
 //      по глоссарию пакета kz («не:» варианты); «сен» к старшим — флажок; годы цифрами как в оригинале; имена
-//      из оригинала на месте; латиница / хангыль; цитата есть в тексте;
+//      из оригинала на месте; латиница / хангыль; цитата есть в тексте; #298: латиница любой длины, обращение к внукам
+//      вперемешку («сендер» и «сіздер» в одном абзаце) — флажки `latin`, `style:grandkids`;
 //   2) обратный перевод kk → ru ДРУГИМ провайдером (translate.ru.md; как в kr-check: OpenAI, нет ключа — другая
 //      модель Gemini) — сверка годов и «ключевых фактов» персонажа (eval/sim/facts.ts) с обратным текстом.
 import type { AiRouter } from "@/lib/ai/router";
 import { translateInput } from "@/lib/ai/types";
 import { KZ_GLOSSARY, type KzTerm } from "@/content/packs/kz/glossary";
+import { grandkidsMixedKk, kkScriptLeft } from "@/lib/pipeline/kk";
 import { yearsRu } from "./kr-check";
 
 export type KkSeverity = "minor" | "major";
@@ -96,7 +98,12 @@ export function checkKk(item: KkItem, glossary: readonly KzTerm[] = KZ_GLOSSARY)
     if (stem.length >= 3 && !all.toLowerCase().includes(stem) && !kkSpelling(name, glossary, all)) add("names", name, `«${name}» из оригинала не видно в переводе`, "minor");
   }
 
-  if (/[a-z]{3,}/i.test(item.text_kk.replace(/\b(ZIL|KGB|GAI)\b/g, ""))) add("latin", excerpt(item.text_kk, item.text_kk.match(/[a-z]{3,}/i)![0]), "латиница в казахском тексте", "minor");
+  // #298: любое слово с латиницей (и «da» из двух букв, и смешанное «кеlді»), кроме слов оригинала; конвейер такое
+  // исправляет сам (lib/pipeline/kk.ts) — здесь остаётся только то, что он не смог
+  for (const w of kkScriptLeft(all, item.text_ru).latin) add("latin", excerpt(all, w), `латиница в казахском тексте: «${w}»`, "minor");
+  // #298: к внукам — одно обращение на главу («сендер»), без «сіздер» в том же абзаце (как 해라체 #154 для ko)
+  for (const m of grandkidsMixedKk(item.text_kk))
+    add("style:grandkids", excerpt(item.text_kk, m.polite), `абз. ${m.paragraph}: к внукам и «${m.familiar}», и «${m.polite}» — одно обращение (сендер)`, "minor");
   if (/[가-힣]/.test(all)) add("hangul", "", "хангыль в казахском тексте", "major");
 
   if (item.quote_kk?.trim() && !item.text_kk.replace(/\s+/g, " ").includes(item.quote_kk.replace(/\s+/g, " ").trim().replace(/[.!?…]+$/, "")))
