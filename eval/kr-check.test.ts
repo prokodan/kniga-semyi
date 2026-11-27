@@ -319,7 +319,7 @@ describe("#198: судья KR и глоссарий корё мар, ㅂ-неп�
 
 describe("#193: главы живых семей — не в kr-check / eval", () => {
   it("scripts/kr-check.ts не ходит в базу и не читает главы семей", () => {
-    const src = readFileSync("scripts/kr-check.ts", "utf8");
+    const src = readFileSync("scripts/kr-check.ts", "utf8").replace(/^\s*\/\/.*$/gm, "");
     expect(src).not.toMatch(/@\/lib\/db|getDb|SUPABASE|from\("stories"\)|story_texts/);
   });
   it("отчёт kr-check отправляет проверку семей в repair-chapters (dry run)", () => {
