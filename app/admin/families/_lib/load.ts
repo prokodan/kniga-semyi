@@ -4,6 +4,8 @@ import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { getDbOrNull } from "@/lib/db";
 import { getFamilyStore, type MemoryFamilyStore } from "@/lib/db/access";
+import { toggleLab } from "@/lib/flags/core";
+import type { FlagName } from "@/lib/flags/registry";
 import type { Book } from "@/lib/types";
 import type { AdminFamilyRows, BookPick, FamilyPick, OrderPick, StoryPick, UsagePick } from "./families";
 
@@ -47,7 +49,8 @@ export async function loadAdminFamilyRows(): Promise<{ source: "supabase" | "mem
     };
   }
   const [families, stories, books, orders, usage] = await Promise.all([
-    all<FamilyPick>(db, "families", "id, name, source, is_demo, access_token, created_at"),
+    // "*", а не список колонок: labs (#223) появится после workflow migrate — до этого страница не должна падать
+    all<FamilyPick>(db, "families", "*"),
     all<StoryPick>(db, "stories", "id, family_id, status, parent_story_id"),
     all<BookPick>(db, "books", "family_id, status, page_count, created_at"),
     all<OrderPick>(db, "demo_orders", "family_id, product, amount_kzt, extras, status, created_at"),
@@ -55,4 +58,26 @@ export async function loadAdminFamilyRows(): Promise<{ source: "supabase" | "mem
     all<UsagePick>(db, "ai_usage", "story_id, cost_usd", "story_id"),
   ]);
   return { source: "supabase", rows: { families, stories, books, orders, usage } };
+}
+
+/**
+ * #223: включить / выключить флаг семье (families.labs). Только из server action под ADMIN_PIN.
+ * Колонки ещё нет (migrate не прошёл) → понятная ошибка, ничего не меняется.
+ */
+export async function setFamilyLab(familyId: string, name: FlagName, on: boolean): Promise<string[]> {
+  const db = getDbOrNull();
+  if (!db) {
+    const store = getFamilyStore() as Partial<MemoryFamilyStore>;
+    const f = store.families?.get(familyId);
+    if (!f) throw new Error("семья не найдена");
+    f.labs = toggleLab(f.labs, name, on);
+    return f.labs;
+  }
+  const { data, error } = await db.from("families").select("labs").eq("id", familyId).maybeSingle();
+  if (error) throw new Error(/labs/.test(error.message) ? "колонки families.labs ещё нет — дождитесь workflow migrate" : error.message);
+  if (!data) throw new Error("семья не найдена");
+  const labs = toggleLab((data as { labs: string[] | null }).labs, name, on);
+  const up = await db.from("families").update({ labs }).eq("id", familyId);
+  if (up.error) throw new Error(up.error.message);
+  return labs;
 }

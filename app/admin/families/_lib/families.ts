@@ -4,7 +4,7 @@
 import { EXTRA_OPTIONS, formatKzt, planOfOrder, PRODUCT_TITLES } from "@/lib/payments/plans";
 import type { BookStatus, DemoOrder, Family, Story } from "@/lib/types";
 
-export type FamilyPick = Pick<Family, "id" | "name" | "source" | "is_demo" | "access_token" | "created_at">;
+export type FamilyPick = Pick<Family, "id" | "name" | "source" | "is_demo" | "access_token" | "created_at" | "labs">;
 export type StoryPick = Pick<Story, "id" | "family_id" | "status" | "parent_story_id">;
 export type BookPick = { family_id: string; status: BookStatus; page_count: number | null; created_at: string };
 export type OrderPick = Pick<DemoOrder, "family_id" | "product" | "amount_kzt" | "extras" | "status" | "created_at">;
@@ -42,6 +42,8 @@ export interface AdminFamily {
   price: FamilyPrice | null;
   aiUsd: number;
   links: { family: string; book: string; names: string };
+  /** #223: флаги, включённые семье (families.labs), как в базе — в том числе неизвестные реестру. */
+  labs: string[];
 }
 
 export const ORDER_STATUS: Record<DemoOrder["status"], string> = {
@@ -126,6 +128,7 @@ export function buildAdminFamilies(r: AdminFamilyRows): AdminFamily[] {
         price: o ? priceOfOrder(o) : null,
         aiUsd: Math.round((ai.get(f.id) ?? 0) * 10_000) / 10_000,
         links: { family: `/f/${t}`, book: `/book/${t}`, names: `/f/${t}/names` },
+        labs: Array.isArray(f.labs) ? [...f.labs] : [],
       };
     });
 }
@@ -157,4 +160,11 @@ export function totals(list: AdminFamily[]): AdminFamiliesTotals {
     readyChapters: list.reduce((s, f) => s + f.chapters.ready, 0),
     aiUsd: Math.round(list.reduce((s, f) => s + f.aiUsd, 0) * 100) / 100,
   };
+}
+
+/** #223: сколько семей с флагом в labs — для списка флагов в /admin/families. */
+export function labsCount(list: AdminFamily[]): Map<string, number> {
+  const m = new Map<string, number>();
+  for (const f of list) for (const l of new Set(f.labs)) m.set(l, (m.get(l) ?? 0) + 1);
+  return m;
 }

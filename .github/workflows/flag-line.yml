@@ -1,0 +1,44 @@
+name: flag-line
+
+# #223: в описании PR должна быть строка «Флаг: <имя из lib/flags/registry.ts>» или «Флаг: не нужен — <почему>».
+# Отдельный workflow (не в ci.yml), чтобы перезапускаться при правке описания (edited) без пересборки.
+# Пропуск: PR Dependabot и PR только с docs/** и *.md в корне.
+
+on:
+  pull_request:
+    types: [opened, edited, synchronize, reopened, ready_for_review]
+
+concurrency:
+  group: flag-line-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  flag-line:
+    name: flag-line
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci --ignore-scripts --no-audit --no-fund
+      - name: Файлы PR
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ github.event.pull_request.number }}
+        run: |
+          gh api "repos/${{ github.repository }}/pulls/$PR/files" --paginate --jq '.[].filename' > "$RUNNER_TEMP/pr-files.txt"
+          echo "файлов: $(wc -l < "$RUNNER_TEMP/pr-files.txt")"
+      - name: Строка «Флаг:»
+        env:
+          PR_AUTHOR: ${{ github.event.pull_request.user.login }}
+          PR_BODY: ${{ github.event.pull_request.body }}
+        run: |
+          export PR_FILES="$(cat "$RUNNER_TEMP/pr-files.txt")"
+          npx tsx scripts/flag-line.ts
