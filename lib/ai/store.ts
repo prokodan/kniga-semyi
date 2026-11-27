@@ -23,6 +23,8 @@ export interface UsageRow {
   latency_ms?: number;
   error?: string;
   story_id?: string;
+  /** #204: семья вызова (сказка и картинки — без story_id). Нет колонки (до migrate) — строка пишется без неё. */
+  family_id?: string;
   created_at?: string;
   /** #211: откуда вызов — 'prod' | 'staging'. Не задано → default колонки ('prod'); прод его не передаёт. */
   env?: "prod" | "staging";
@@ -152,13 +154,20 @@ export class SupabaseStore implements AiStore {
   }
 
   async recordUsage(input: UsageRow) {
-    const row: UsageRow = this.env && input.env === undefined ? { ...input, env: this.env } : input;
+    let row: UsageRow = this.env && input.env === undefined ? { ...input, env: this.env } : input;
     let { error } = await this.db.from("ai_usage").insert(row);
-    // #211: база ещё без колонки env (migrate не дошёл) — пишем без неё, расход не теряем.
-    if (error && row.env !== undefined && /\benv\b/.test(error.message)) {
-      const { env: _env, ...rest } = row;
-      void _env;
-      ({ error } = await this.db.from("ai_usage").insert(rest));
+    // #211 / #204: база ещё без новой колонки (migrate не дошёл) или семьи уже нет (внешний ключ family_id) —
+    // пишем без неё, расход не теряем.
+    const retryWithout = [
+      ["family_id", /family_id/],
+      ["env", /\benv\b/],
+    ] as const;
+    for (const [column, pattern] of retryWithout) {
+      if (!error || row[column] === undefined || !pattern.test(error.message)) continue;
+      const { [column]: _dropped, ...rest } = row;
+      void _dropped;
+      row = rest;
+      ({ error } = await this.db.from("ai_usage").insert(row));
     }
     if (error) console.error("[ai] не удалось записать ai_usage:", error.message);
   }

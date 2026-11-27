@@ -5,7 +5,15 @@ import type { ProviderSettings, RouteEntry } from "@/lib/ai/config";
 import type { MemoryStore } from "@/lib/ai/store";
 import type { AiProviderName, AiStep } from "@/lib/ai/types";
 import { AdminEditError, mergeProviders, mergeRoutes, parseRouteRow, type ProviderView, type RouteView } from "./routes";
+import type { BookCostFamily, BookCostStory, BookCostUsage } from "./book-cost";
 import type { UsageError, UsageLite } from "./stats";
+
+/** #105 п. 6: строки для себестоимости книги (за всё время). */
+export interface BookCostRows {
+  usage: BookCostUsage[];
+  stories: BookCostStory[];
+  families: BookCostFamily[];
+}
 
 export interface RoutePatch {
   providers?: RouteEntry[];
@@ -24,6 +32,7 @@ export interface AdminSource {
   recentErrors(limit: number): Promise<UsageError[]>;
   saveRoute(step: AiStep, patch: RoutePatch): Promise<void>;
   saveProvider(provider: string, patch: ProviderPatch): Promise<void>;
+  bookCostRows(): Promise<BookCostRows>;
 }
 
 const USAGE_COLUMNS = "step, provider, model, status, cost_usd, created_at";
@@ -79,6 +88,43 @@ export class SupabaseSource implements AdminSource {
       if (!data || data.length < PAGE) break;
     }
     return rows;
+  }
+
+  /** Все строки таблицы страницами по 1000 (max_rows Supabase). */
+  private async pages<T>(build: (from: number, to: number) => PromiseLike<{ data: unknown; error: { message: string } | null }>, what: string) {
+    const out: T[] = [];
+    for (let page = 0; page < MAX_PAGES; page++) {
+      const { data, error } = await build(page * PAGE, page * PAGE + PAGE - 1);
+      this.fail(what, error);
+      const rows = (data ?? []) as T[];
+      out.push(...rows);
+      if (rows.length < PAGE) break;
+    }
+    return out;
+  }
+
+  async bookCostRows(): Promise<BookCostRows> {
+    const stories = await this.pages<BookCostStory>(
+      (a, b) => this.db.from("stories").select("id, family_id, status, parent_story_id").order("created_at", { ascending: true }).range(a, b),
+      "stories",
+    );
+    const families = await this.pages<BookCostFamily>(
+      (a, b) => this.db.from("families").select("id, is_demo").order("created_at", { ascending: true }).range(a, b),
+      "families",
+    );
+    // #204: family_id и env появляются после workflow migrate — без них считаем по story_id и как prod.
+    const optional: string[] = [];
+    for (const column of ["family_id", "env"]) {
+      const { error } = await this.db.from("ai_usage").select(column).limit(1);
+      if (!error) optional.push(column);
+    }
+    const columns = ["story_id", "status", "cost_usd", ...optional].join(", ");
+    const linked = optional.includes("family_id") ? "story_id.not.is.null,family_id.not.is.null" : "story_id.not.is.null";
+    const usage = await this.pages<BookCostUsage>(
+      (a, b) => this.db.from("ai_usage").select(columns).or(linked).neq("status", "cache_hit").order("id", { ascending: true }).range(a, b),
+      "ai_usage",
+    );
+    return { usage, stories, families };
   }
 
   async recentErrors(limit: number) {
@@ -150,6 +196,11 @@ export class MemorySource implements AdminSource {
 
   async usageSince(since: Date) {
     return this.store.usage.filter((r) => new Date(r.created_at) >= since).map((r) => ({ ...r }));
+  }
+
+  async bookCostRows(): Promise<BookCostRows> {
+    // Локально без базы: семьи и истории — в памяти другого модуля; расход есть, а семей нет → пустая сводка.
+    return { usage: this.store.usage.map((r) => ({ ...r, story_id: r.story_id ?? null })), stories: [], families: [] };
   }
 
   async recentErrors(limit: number) {

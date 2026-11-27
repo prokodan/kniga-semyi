@@ -40,6 +40,19 @@ describe("ai router", () => {
     expect(store.cache.size).toBe(0);
   });
 
+  it("#204: семья и история вызова пишутся в ai_usage (и при попадании в кэш)", async () => {
+    const { router, store } = setup();
+    const ids = { storyId: "s-1", familyId: "f-1" };
+    await router.run("translate", translateInput, ids);
+    await router.run("translate", translateInput, ids);
+    expect(store.usage.map((r) => [r.status, r.story_id, r.family_id])).toEqual([
+      ["ok", "s-1", "f-1"],
+      ["cache_hit", "s-1", "f-1"],
+    ]);
+    await router.run("translate", { ...translateInput, title: "Без семьи" });
+    expect(store.usage.at(-1)!.family_id).toBeUndefined();
+  });
+
   it("берёт первого провайдера из маршрута (бесплатный Flash-Lite)", async () => {
     const { router } = setup();
     const res = await router.runWithMeta("translate", translateInput);

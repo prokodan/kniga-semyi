@@ -28,7 +28,7 @@ export async function checkDeferred(
     res = await deps.ai.run(
       "completeness",
       { questionText: question.ru, block: question.block, minimum: question.minimum, answer, followupsAsked: 0, maxFollowups: MAX_FOLLOWUPS },
-      { storyId: story.id, deadline: deps.deadline },
+      { storyId: story.id, familyId: story.family_id, deadline: deps.deadline },
     );
   } catch (e) {
     if (!(e instanceof AiUnavailableError)) throw e;

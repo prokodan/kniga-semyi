@@ -1,4 +1,5 @@
 // Чтение: расход, квоты, кэш, остывание, ошибки. Серверные компоненты, без клиентского JS.
+import type { BookCostEnv } from "@/app/admin/ai/_lib/book-cost";
 import type { AdminSummary } from "@/app/admin/ai/_lib/stats";
 import { Badge, Bar, Card, fmtIn, fmtPct, fmtTime, fmtUsd, Section, toneOfPct } from "./ui";
 
@@ -52,6 +53,48 @@ export function SpendSection({ s }: { s: AdminSummary }) {
     </Section>
   );
 }
+
+/** #105 п. 6: себестоимость книги — запросы и $ на семью с ≥ 1 готовой главой, медиана и p90, по окружениям. */
+export function BookCostSection({ envs }: { envs: BookCostEnv[] }) {
+  return (
+    <Section
+      id="book-cost"
+      title="Себестоимость книги"
+      hint="На семью с ≥ 1 готовой главой (без демо), за всё время. Запрос — обращение к модели (ответ из кэша не считается). Семья строки — ai_usage.family_id, иначе через историю."
+    >
+      {envs.map((e) => (
+        <Card key={e.env}>
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <span className="font-medium">{ENV_LABEL[e.env] ?? e.env}</span>
+            <span className="text-sm text-muted tabular-nums">семей: {e.families}</span>
+          </div>
+          {e.families === 0 ? (
+            <p className="mt-1 text-sm text-muted">
+              {e.env === "staging"
+                ? "Нет данных в этой базе: расход превью приходит в прод без семьи — смотрите /admin/ai на превью staging."
+                : "Пока нет семей с готовой главой и расходом."}
+            </p>
+          ) : (
+            <>
+              <div className="mt-2 grid grid-cols-2 gap-2 text-center">
+                <Stat label="Запросов: медиана" value={fmtNum(e.requests.median)} />
+                <Stat label="Запросов: p90" value={fmtNum(e.requests.p90)} />
+                <Stat label="$: медиана" value={fmtUsd(e.usd.median)} />
+                <Stat label="$: p90" value={fmtUsd(e.usd.p90)} />
+              </div>
+              <p className="mt-1 text-sm text-muted">
+                Готовых глав на семью: медиана {fmtNum(e.chapters.median)}, p90 {fmtNum(e.chapters.p90)} · за главу в среднем{" "}
+                {fmtUsd(e.usdPerChapter)}
+              </p>
+            </>
+          )}
+        </Card>
+      ))}
+    </Section>
+  );
+}
+
+const fmtNum = (v: number) => (Number.isInteger(v) ? String(v) : v.toFixed(1).replace(".", ","));
 
 function Stat({ label, value }: { label: string; value: string }) {
   return (

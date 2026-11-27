@@ -32,6 +32,11 @@ import { estimateCostUsd, sha256, stableStringify, startOfDayInTz, startOfUtcMon
 export interface RunOptions {
   /** Для привязки расхода к истории в ai_usage */
   storyId?: string;
+  /**
+   * #204: семья вызова → ai_usage.family_id. Нужна там, где истории нет (сказка, картинки), и для себестоимости книги
+   * (#105 п. 6). Не задана — строка без семьи (её находит story_id → stories.family_id, если он есть).
+   */
+  familyId?: string;
   /** Не читать кэш (запись в кэш всё равно будет) — для «перегенерировать» */
   noCache?: boolean;
   /**
@@ -85,7 +90,7 @@ export function createRouter(deps: RouterDeps) {
     entry: { provider: string; model: string },
     status: UsageStatus,
     extra: Partial<Parameters<AiStore["recordUsage"]>[0]> = {},
-    storyId?: string,
+    ids: Pick<RunOptions, "storyId" | "familyId"> = {},
   ) {
     await store.recordUsage({
       step,
@@ -93,7 +98,8 @@ export function createRouter(deps: RouterDeps) {
       model: entry.model,
       status,
       cost_usd: 0,
-      story_id: storyId,
+      story_id: ids.storyId,
+      ...(ids.familyId ? { family_id: ids.familyId } : {}),
       created_at: now().toISOString(),
       ...extra,
     });
@@ -160,7 +166,7 @@ export function createRouter(deps: RouterDeps) {
       if (cached) {
         const parsed = outputSchemas[step].safeParse(cached);
         if (parsed.success) {
-          await record(step, { provider: "cache", model: "cache" }, "cache_hit", {}, opts.storyId);
+          await record(step, { provider: "cache", model: "cache" }, "cache_hit", {}, opts);
           return { output: parsed.data as AiOutput<S>, provider: "cache", model: "cache", cached: true, attempts };
         }
       }
@@ -195,7 +201,7 @@ export function createRouter(deps: RouterDeps) {
         const parsed = outputSchemas[step].safeParse(res.output);
         if (!parsed.success) throw new ProviderError(`неверный формат: ${parsed.error.message.slice(0, 200)}`, "bad_output", entry.provider);
 
-        const cost = estimateCostUsd(entry.model, settings.paid, res.usage);
+        const cost = estimateCostUsd(entry.model, settings.paid, res.usage, now());
         await record(
           step,
           entry,
@@ -208,7 +214,7 @@ export function createRouter(deps: RouterDeps) {
             cost_usd: cost,
             latency_ms: Date.now() - started,
           },
-          opts.storyId,
+          opts,
         );
         if (!isMock) await store.cacheSet(hash, step, entry.provider, entry.model, parsed.data);
         return { output: parsed.data as AiOutput<S>, provider: entry.provider, model: entry.model, cached: false, attempts };
@@ -218,7 +224,7 @@ export function createRouter(deps: RouterDeps) {
         const fullTimeout = err.kind === "timeout" && callTimeout >= timeoutMs;
         const status: UsageStatus =
           err.kind === "rate_limited" ? "rate_limited" : fullTimeout ? "timeout" : "error";
-        await record(step, entry, status, { error: err.message.slice(0, 500), latency_ms: Date.now() - started }, opts.storyId);
+        await record(step, entry, status, { error: err.message.slice(0, 500), latency_ms: Date.now() - started }, opts);
         attempts.push({ provider: entry.provider, model: entry.model, reason: `${status}: ${err.message.slice(0, 120)}` });
         return null;
       } finally {

@@ -67,11 +67,26 @@ export const DEFAULT_PROVIDERS: Record<AiProviderName, ProviderSettings> = {
   openai: { provider: "openai", enabled: true, paid: true, daily_budget_usd: 2, monthly_budget_usd: 10, cooldown_minutes: 10 },
 };
 
+export interface Price {
+  inPerM?: number;
+  outPerM?: number;
+  perAudioMin?: number;
+  perImage?: number;
+}
+
 /**
- * Примерные цены, USD (для оценки стоимости в ai_usage и бюджета).
- * Сверить с прайсами провайдеров перед включением платного режима.
+ * Цены, USD (для оценки стоимости в ai_usage и бюджета роутера). Считаются только у платных провайдеров (paid).
+ *
+ * Gemini (#194) — официальная страница Google, Standard, Paid Tier, за 1M токенов, по состоянию на 27.11.2026:
+ * https://ai.google.dev/gemini-api/docs/pricing
+ *   gemini-3.5-flash-lite: вход $0.30 (текст / картинка / видео / аудио — одна цена), выход $2.50 (вместе с thinking);
+ *   gemini-3.6-flash: вход $0.75, выход $3.75 по 31.12.2026 (акция), с 01.01.2027 — $1.50 / $7.50 (PRICING_FROM).
+ * Аудио Gemini считается токенами во входе (promptTokenCount), поэтому perAudioMin у Gemini не задаём — иначе двойной счёт.
+ * Выход Gemini = candidates + thoughts (lib/ai/providers/gemini.ts → outputTokens).
  */
-export const PRICING: Record<string, { inPerM?: number; outPerM?: number; perAudioMin?: number; perImage?: number }> = {
+export const PRICING: Record<string, Price> = {
+  "gemini-3.5-flash-lite": { inPerM: 0.3, outPerM: 2.5 },
+  "gemini-3.6-flash": { inPerM: 0.75, outPerM: 3.75 },
   "gpt-5.4-mini": { inPerM: 0.75, outPerM: 4.5 },
   "gpt-5-mini": { inPerM: 0.25, outPerM: 2 },
   "gpt-4o-mini": { inPerM: 0.15, outPerM: 0.6 },
@@ -79,8 +94,23 @@ export const PRICING: Record<string, { inPerM?: number; outPerM?: number; perAud
   "gpt-image-2": { perImage: 0.05 }, // оценка для бюджета: 1024², quality medium
   "gpt-image-1.5": { perImage: 0.05 },
 };
+
+/** Плановые смены цен: с даты (UTC, включительно) действует новая цена модели. */
+export const PRICING_FROM: { from: string; model: string; price: Price }[] = [
+  // Google: акционная цена 3.6 Flash — по 31.12.2026
+  { from: "2027-01-01", model: "gemini-3.6-flash", price: { inPerM: 1.5, outPerM: 7.5 } },
+];
+
+/** Цена модели на момент `at` (последняя наступившая смена из PRICING_FROM, иначе PRICING, иначе FALLBACK). */
+export function priceOf(model: string, at: Date = new Date()): Price {
+  const changes = PRICING_FROM.filter((c) => c.model === model && Date.parse(`${c.from}T00:00:00Z`) <= at.getTime()).sort(
+    (a, b) => a.from.localeCompare(b.from),
+  );
+  return changes.at(-1)?.price ?? PRICING[model] ?? FALLBACK_PRICING;
+}
+
 /** Для неизвестной платной модели считаем с запасом */
-export const FALLBACK_PRICING = { inPerM: 1, outPerM: 4, perAudioMin: 0.01, perImage: 0.08 };
+export const FALLBACK_PRICING: Price = { inPerM: 1, outPerM: 4, perAudioMin: 0.01, perImage: 0.08 };
 
 /** Бесплатные квоты Gemini сбрасываются в полночь по Тихоокеанскому времени. */
 export const QUOTA_TIMEZONE: Record<AiProviderName, string> = {
