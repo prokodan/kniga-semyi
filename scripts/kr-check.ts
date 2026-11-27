@@ -1,4 +1,7 @@
 // Проверка корейского (V2): демо-главы книги + банк вопросов. Логика — eval/kr-check.ts.
+// #193: только вымышленные тексты (демо, киоск, запас сцены, банк). Главы живых семей сюда не попадают никогда —
+// ни ko, ни kk: их проверяет Actions → repair-chapters (dry run, reasons grandkids | kk-script | kk-style; без ИИ, в лог —
+// id и номера абзацев). Скрипт не ходит в базу: ни lib/db, ни SUPABASE_* (тест eval/kr-check.test.ts).
 //   npx tsx scripts/kr-check.ts                     # правила + обратный перевод (провайдер — по ключам)
 //   npx tsx scripts/kr-check.ts --no-ai             # только правила, бесплатно
 //   npx tsx scripts/kr-check.ts --out r.md --json r.json --comment c.md --link <url>
@@ -79,6 +82,7 @@ async function main() {
   let provider = "mock";
   let model = "mock";
   let aiError: string | undefined;
+  let glossaryOk = 0;
   const meaning: Record<string, number> = {};
   if (!args["no-ai"]) {
     const ai = createRouter({ store: new EvalStore({ cacheFile: process.env.KR_CHECK_CACHE_FILE, routesFile: process.env.KR_CHECK_ROUTES_FILE }), mode: () => mode });
@@ -86,11 +90,12 @@ async function main() {
     const waitMs = Number(process.env.KR_CHECK_RETRY_WAIT_MS ?? 30_000);
     for (let attempt = 1; attempt <= 4; attempt++) {
       try {
-        const r = await backTranslate(ai, all);
+        const r = await backTranslate(ai, all, glossary);
         flags.push(...r.flags);
         Object.assign(meaning, r.meaning);
         provider = r.provider;
         model = r.model;
+        glossaryOk = r.glossaryOk ?? 0;
         aiError = undefined;
         break;
       } catch (e) {
@@ -112,6 +117,7 @@ async function main() {
     flags,
     meaning,
     glossary: { total: glossary.length, confirmed: glossary.filter((g) => g.confirmed).length },
+    glossaryOk,
   };
   const md = renderKrReport(report, { link: args.link });
   const write = (file: string | undefined, text: string) => {

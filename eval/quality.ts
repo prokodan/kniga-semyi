@@ -11,7 +11,7 @@
 // ИИ — только через роутер. В mock всё работает бесплатно и честно помечается «не показательна».
 import type { AiRouter, RunOptions } from "@/lib/ai/router";
 import { AiUnavailableError, type AiInput, type AiOutput, type AiStep } from "@/lib/ai/types";
-import { checkItem, nameSpellingFlags, type GlossaryEntry } from "./kr-check";
+import { checkItem, nameSpellingFlags, withoutGlossaryNoise, type GlossaryEntry } from "./kr-check";
 import { backTranslateKk, checkKk, KK_NOTE, kkFlagRows, kkTotals, type KkFlag, type KkItem } from "./kk-check";
 import { checkDialogue, checkTale, pickTaleChapters, type DialogueChecks, type TaleChecks, type TextIssue } from "./prompt-checks";
 import { SimBudgetError } from "./sim/budget";
@@ -132,7 +132,7 @@ export function krRuleKind(rule: string): KrRuleKind {
   if (rule === "cyrillic") return "cyrillic";
   // style:parents — 아버님 / 어머님 о своих родителях: решение по глоссарию (#103)
   if (rule.startsWith("glossary:") || rule === "style:parents") return "glossary";
-  if (rule === "style:mixed" || rule === "style:hapsyo" || rule === "style:rieul" || rule === "style:grandkids") return "style";
+  if (rule === "style:mixed" || rule === "style:hapsyo" || rule === "style:rieul" || rule === "style:grandkids" || rule === "style:bieup") return "style";
   return "other";
 }
 
@@ -182,6 +182,12 @@ export interface RunMetrics {
   meaningAvg: number | null;
   krMajor: number;
   krMinor: number;
+  /** #198: снято флажков судьи «корё мар → эквивалент глоссария» (решение команды, не ошибка) */
+  krGlossaryOk?: number;
+  /** #288: глав, где голос не судим — рассказ по-казахски, а глава по-русски (перевод kk → ru; редактура kk — #234) */
+  voiceSkipped?: number;
+  /** #282: пакеты банка вопросов персонажа (`пакеты:` в карточке); нет — банк V0 (kim, pak, tsoi) */
+  packs?: string[];
   /** Модели обратного перевода и перевода — должны различаться */
   backModels: string[];
   translateModels: string[];
@@ -224,6 +230,8 @@ export function mannerOf(persona: Pick<Persona, "markdown">): string {
   const end = body.search(/^## /m);
   return (end < 0 ? body : body.slice(0, end)).trim() || "Манера речи не описана.";
 }
+
+export const VOICE_KK_SKIPPED = "рассказ по-казахски — голос не оценивается (#288): глава — перевод kk → ru, редактура kk — #234";
 
 export const avg = (xs: number[]): number | null => (xs.length ? xs.reduce((a, b) => a + b, 0) / xs.length : null);
 
@@ -306,25 +314,33 @@ export async function evaluateRun(o: EvaluateOptions): Promise<RunMetrics> {
   for (const c of sim.chapters) if (c.error) errors.push(`глава не собрана: ${c.error}`);
 
   const quality = new Map<string, ChapterQuality>(
-    done.map((c) => [c.id, { id: c.id, title: c.title ?? "(без названия)", voice: null, voiceComment: "", meaning: null, backRu: "", flags: [] }]),
+    done.map((c) => [c.id, { id: c.id, title: c.title?.trim() || "(без названия)", voice: null, voiceComment: "", meaning: null, backRu: "", flags: [] }]),
   );
   let extra = 0;
+  // #288: рассказ по-казахски (original kk) — судья голоса сравнил бы казахскую расшифровку с русским переводом и
+  // поставил бы 2 «за чужой язык». Такие главы не судим и в среднее не считаем; судить голос — по kk-тексту после #234.
+  const judged = done.filter((c) => c.original !== "kk");
+  for (const c of done)
+    if (c.original === "kk") Object.assign(quality.get(c.id)!, { voiceComment: VOICE_KK_SKIPPED });
+  let krGlossaryOk = 0;
 
   if (done.length) {
-    try {
-      extra += 1;
-      const j = await o.ai.run("judge", {
-        storytellerName: sim.persona.name,
-        manner: mannerOf(sim.persona),
-        chapters: done.map((c) => ({ id: c.id, transcript: c.transcript, text_ru: c.text_ru! })),
-      });
-      for (const s of j.scores) {
-        const q = quality.get(s.id);
-        if (q) Object.assign(q, { voice: s.voice, voiceComment: s.comment });
+    if (judged.length) {
+      try {
+        extra += 1;
+        const j = await o.ai.run("judge", {
+          storytellerName: sim.persona.name,
+          manner: mannerOf(sim.persona),
+          chapters: judged.map((c) => ({ id: c.id, transcript: c.transcript, text_ru: c.text_ru! })),
+        });
+        for (const s of j.scores) {
+          const q = quality.get(s.id);
+          if (q && judged.some((c) => c.id === s.id)) Object.assign(q, { voice: s.voice, voiceComment: s.comment });
+        }
+      } catch (e) {
+        if (!isAiStop(e)) throw e;
+        errors.push(`судья: ${e.message}`);
       }
-    } catch (e) {
-      if (!isAiStop(e)) throw e;
-      errors.push(`судья: ${e.message}`);
     }
 
     const kr = done.filter((c) => c.text_ko);
@@ -336,7 +352,10 @@ export async function evaluateRun(o: EvaluateOptions): Promise<RunMetrics> {
         });
         for (const r of b.chapters) {
           const q = quality.get(r.id);
-          if (q) Object.assign(q, { meaning: r.meaning, backRu: r.back_ru, flags: r.flags });
+          // #198: «аппади → 아버지» — эквивалент глоссария, решение команды; такие флажки судьи снимаем
+          const { kept, dropped } = withoutGlossaryNoise(r.flags, o.glossary);
+          krGlossaryOk += dropped.length;
+          if (q) Object.assign(q, { meaning: r.meaning, backRu: r.back_ru, flags: kept });
         }
       } catch (e) {
         if (!isAiStop(e)) throw e;
@@ -384,12 +403,15 @@ export async function evaluateRun(o: EvaluateOptions): Promise<RunMetrics> {
     meaningAvg: avg(chapterQuality.flatMap((c) => (c.meaning === null ? [] : [c.meaning]))),
     krMajor: flags.filter((f) => f.severity === "major").length,
     krMinor: flags.filter((f) => f.severity === "minor").length,
+    ...(krGlossaryOk ? { krGlossaryOk } : {}),
+    ...(done.length > judged.length ? { voiceSkipped: done.length - judged.length } : {}),
+    ...(sim.persona.packs ? { packs: sim.persona.packs } : {}),
     backModels,
     translateModels,
     sameModel: !o.mock && backModels.some((m) => translateModels.includes(m)),
     chapterQuality,
     krRules: o.glossary ? checkKrRules(done, o.glossary, sim.names ?? []) : null,
-    dialogue: checkDialogue(sim),
+    dialogue: checkDialogue(sim, sim.persona.packs),
     tale,
     ...(kk ? { kk } : {}),
     aiCalls: sim.aiCalls.used + extra + (kk?.backModels.length ? Math.min(kk.chapters, KK_BACK_MAX) : 0),
@@ -439,6 +461,12 @@ export interface EvalSummary {
     krStyle?: number | null;
     krNames?: number | null;
     krCyrillic?: number | null;
+    /** #198: снято флажков судьи KR «корё мар → эквивалент глоссария» */
+    krGlossaryOk?: number;
+    /** #288: глав kk-рассказа, где голос не судим (в среднее не входят) */
+    voiceSkipped?: number;
+    /** #282: чужие реалии в уточнениях и связках (null — ни у одного персонажа нет строки «пакеты:») */
+    foreignRealia?: number | null;
   };
 }
 
@@ -481,6 +509,9 @@ export function summarize(
       bridgeIssues: sum((r) => r.dialogue?.bridgeIssues.length ?? 0),
       tales: runs.filter((r) => r.tale).length,
       taleIssues: sum((r) => r.tale?.issues.length ?? 0),
+      krGlossaryOk: sum((r) => r.krGlossaryOk ?? 0),
+      voiceSkipped: sum((r) => r.voiceSkipped ?? 0),
+      foreignRealia: runs.some((r) => r.dialogue?.foreignRealia) ? sum((r) => r.dialogue?.foreignRealia?.length ?? 0) : null,
       ...krTotals(runs),
     },
   };
@@ -503,6 +534,11 @@ const sec = (ms: number) => `${(ms / 1000).toFixed(1)} с`;
 export const MOCK_NOTE = "⚠️ **mock, оценка не показательна**: ответы, главы и оценки — из заглушки (fixtures), без настоящих моделей.";
 
 function targetLine(s: EvalSummary): string {
+  const skipped = s.totals.voiceSkipped ? ` (без ${s.totals.voiceSkipped} гл. рассказа по-казахски — голос по kk не судим, #288)` : "";
+  return targetCore(s) + skipped;
+}
+
+function targetCore(s: EvalSummary): string {
   if (s.mock) return `🎯 Цель MLP — средний голос ≥ ${VOICE_TARGET} из 5: в mock не проверяется (заглушка ставит 3).`;
   if (s.totals.voiceAvg === null) return `🎯 Цель MLP — средний голос ≥ ${VOICE_TARGET} из 5: оценок нет (судья не ответил).`;
   return `🎯 Цель MLP — средний голос ≥ ${VOICE_TARGET} из 5: **${n2(s.totals.voiceAvg)}** ${s.totals.voiceOk ? "✅ достигнута" : "❌ не достигнута"}`;
@@ -532,6 +568,7 @@ export const METRICS: MetricDef[] = [
   { name: "KR без ИИ: кириллица в корейском", get: (s) => s.totals.krCyrillic ?? null, better: "down", fmt: (x) => String(x ?? "—") },
   { name: "Уточнения: флажки (длина, два вопроса, «ты», «подробнее», повтор)", get: (s) => s.totals.followupIssues ?? null, better: "down", fmt: (x) => String(x ?? "—") },
   { name: "Уточнения: давление после отказа / боли", get: (s) => s.totals.pressure ?? null, better: "down", fmt: (x) => String(x ?? "—") },
+  { name: "Уточнения и связки: чужие реалии (не из пакетов персонажа)", get: (s) => s.totals.foreignRealia ?? null, better: "down", fmt: (x) => String(x ?? "—") },
   { name: "Связки: флажки (длина, вопрос, лесть, повтор)", get: (s) => s.totals.bridgeIssues ?? null, better: "down", fmt: (x) => String(x ?? "—") },
   { name: "Сказка: флажки (страницы, длина, страшное, чужие годы / имена, финал)", get: (s) => s.totals.taleIssues ?? null, better: "down", fmt: (x) => String(x ?? "—") },
   { name: "Запросов к ИИ", get: (s) => s.totals.aiCalls, better: "none", fmt: (x) => String(x ?? "—") },
@@ -569,7 +606,7 @@ function runsTable(s: EvalSummary): string[] {
     "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |",
     ...s.runs.map(
       (r) =>
-        `| ${r.persona} | ${cell(r.behavior ?? "—")} | ${r.questions} | ${n2(r.followupsAvg)} | ${r.facts.found}/${r.facts.distorted}/${r.facts.lost} из ${r.facts.total} | ${n1(r.voiceAvg)} | ${n1(r.meaningAvg)} | ${r.krMajor}/${r.krMinor} | ${r.aiCalls} | ${sec(r.wallMs)} |`,
+        `| ${r.persona}${r.packs ? ` · ${r.packs.join("+")}` : ""} | ${cell(r.behavior ?? "—")} | ${r.questions} | ${n2(r.followupsAvg)} | ${r.facts.found}/${r.facts.distorted}/${r.facts.lost} из ${r.facts.total} | ${n1(r.voiceAvg)}${r.voiceSkipped ? ` (kk: ${r.voiceSkipped} не суд.)` : ""} | ${n1(r.meaningAvg)} | ${r.krMajor}/${r.krMinor} | ${r.aiCalls} | ${sec(r.wallMs)} |`,
     ),
   ];
 }
@@ -600,9 +637,11 @@ function flagRows(s: EvalSummary, limit = Number.POSITIVE_INFINITY): string[] {
     ({ r, c, f }) =>
       `| ${f.severity === "major" ? "🔴" : "🟡"} | ${r.persona} · ${cell(c.title)} | ${cell(f.ko)} | ${cell(f.back_ru)} | ${cell(f.ru)} | ${cell(f.issue)} |`,
   );
-  if (!rows.length) return ["Сомнительных мест в корейском не найдено."];
+  const ok = s.totals.krGlossaryOk ? [`Снято флажков «корё мар → эквивалент глоссария» (аппади → 아버지 и т. п. — решение команды, #198): ${s.totals.krGlossaryOk}.`] : [];
+  if (!rows.length) return ["Сомнительных мест в корейском не найдено.", ...(ok.length ? ["", ...ok] : [])];
   const out = ["| | Глава | KR | Обратно | Оригинал RU | Что не так |", "| --- | --- | --- | --- | --- | --- |", ...rows];
   if (all.length > limit) out.push("", `…и ещё ${all.length - limit} — в полном отчёте.`);
+  if (ok.length) out.push("", ...ok);
   return out;
 }
 
@@ -630,6 +669,11 @@ function agentSection(s: EvalSummary, limit: number): string[] {
   const br = s.runs.flatMap((r) => (r.dialogue?.bridgeIssues ?? []).map((it) => ({ persona: r.persona, it })));
   out.push(`**Уточнения** — всего ${s.totals.followupsTotal ?? 0}, флажков ${fu.length}, давление ${s.totals.pressure ?? 0}:`, "", ...issueRows(fu, limit), "");
   out.push(`**Связки** — флажков ${br.length}:`, "", ...issueRows(br, limit), "");
+  if (s.runs.some((r) => r.dialogue?.foreignRealia)) {
+    const fr = s.runs.flatMap((r) => (r.dialogue?.foreignRealia ?? []).map((it) => ({ persona: r.persona, it })));
+    const banks = s.runs.filter((r) => r.packs).map((r) => `${r.persona}: ${r.packs!.join(" + ")}`).join(", ");
+    out.push(`**Чужие реалии (#282)** — банк по пакетам (${banks}), флажков ${fr.length}:`, "", ...issueRows(fr, limit), "");
+  }
   for (const r of s.runs) {
     const fx = r.dialogue?.followupTexts ?? [];
     const bx = r.dialogue?.bridgeTexts ?? [];

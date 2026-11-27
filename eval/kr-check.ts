@@ -330,6 +330,29 @@ export function rieulFlags(item: KrItem): KrFlag[] {
   return flags;
 }
 
+/**
+ * #198: ㅂ-неправильные формы, которые модель пишет «по-старому» или с неверной гармонией: 참 고와게 → 참 곱게.
+ * -게 / -고 / -지 присоединяются прямо к основе (곱게, 덥고), 와 / 워 — только перед -아 / -어 (고와서, 더워서),
+ * причём 와 — только у 곱다 / 돕다 (고마워, не 고마와). Список — частые ошибки, не морфология: флажок 🟡, смотреть глазами.
+ */
+const BIEUP_WRONG: [RegExp, string][] = [
+  [/고와(게|고)(?![가-힣])/g, "곱$1"],
+  [/도와(게|지)(?![가-힣])/g, "돕$1"],
+  [/더와(서|요|도|졌)/g, "더워$1"],
+  [/추와(서|요|도|졌)/g, "추워$1"],
+  [/(고마|반가|가까|즐거|무서|무거|가벼|어려|외로|그리|새로|부드러|귀여|아름다|괴로|부끄러|서러)와(서|요|도|했|하|졌|지|라)/g, "$1워$2"],
+];
+
+export function bieupFlags(item: KrItem): KrFlag[] {
+  const flags: KrFlag[] = [];
+  for (const [re, fix] of BIEUP_WRONG)
+    for (const m of item.text_ko.matchAll(re)) {
+      const right = m[0].replace(new RegExp(re.source), fix);
+      flags.push({ id: item.id, source: "rule", rule: "style:bieup", ko: m[0], issue: `ㅂ-неправильный глагол: ${m[0]} → ${right} (참 곱게, 더워서, 고마워)`, severity: "minor" });
+    }
+  return flags;
+}
+
 /** О своих родителях в повествовании — 아버지 / 어머니; 아버님 / 어머님 — о чужих, свёкре, тесте (решение команды 25.11, #103). */
 export function parentsFlags(item: KrItem): KrFlag[] {
   const flags: KrFlag[] = [];
@@ -389,7 +412,7 @@ export function checkItem(item: KrItem, glossary: GlossaryEntry[]): KrFlag[] {
     flags.push({ id: item.id, source: "rule", rule: "quote", ko: item.quote_ko.slice(0, 40), issue: "цитата quote_ko не совпадает с фразой в тексте", severity: "major" });
   flags.push(...glossaryFlags(item, glossary), ...yearFlags(item));
   if (item.kind === "chapter") flags.push(...parenFlags(item, glossary), ...parentsFlags(item));
-  flags.push(...rieulFlags(item));
+  flags.push(...rieulFlags(item), ...bieupFlags(item));
   flags.push(...(item.kind === "chapter" ? styleFlagsChapter(item) : styleFlagsQuestion(item)));
   return flags;
 }
@@ -414,9 +437,48 @@ export interface BackResult {
   provider: string;
   model: string;
   error?: string;
+  /** #198: снято флажков «корё мар заменено на эквивалент глоссария» */
+  glossaryOk?: number;
 }
 
-export async function backTranslate(ai: Pick<AiRouter, "runWithMeta">, items: KrItem[]): Promise<BackResult> {
+/** Флажок судьи «слово корё мар заменено / передано стандартным корейским» (#198). */
+const SUBSTITUTION = /корё|стандартн|литературн|замен|вместо|передан|колорит|диалект/i;
+
+/**
+ * #198: слово корё мар (или реалия) передано ровно эквивалентом глоссария (аппади → 아버지, кукси → 국수) — это решение
+ * команды (`docs/glossary.md`, `prompts/translate.ko.md`), а не ошибка перевода. Такой флажок обратного перевода снимаем.
+ * Флажок остаётся, если в корейском вариант из «не:» (아버님), эквивалента нет или флажок не о замене слова.
+ */
+export function glossaryEquivalent(
+  flag: { ko: string; ru?: string; back_ru?: string; issue: string },
+  glossary: GlossaryEntry[],
+): GlossaryEntry | undefined {
+  if (!SUBSTITUTION.test(flag.issue)) return undefined;
+  const ru = yo(`${flag.ru ?? ""} ${flag.issue}`);
+  const ko = compact(flag.ko);
+  if (!ko) return undefined;
+  return glossary.find(
+    (e) =>
+      (e.section === "koryo" || e.section === "realia") &&
+      e.ru.some((v) => variantRegex(v, false).test(ru)) &&
+      e.ko.some((k) => ko.includes(compact(k))) &&
+      !e.avoid.some((a) => ko.includes(compact(a))),
+  );
+}
+
+/** Флажки судьи без «замены на эквивалент глоссария» (#198); dropped — сколько снято, для строки отчёта. */
+export function withoutGlossaryNoise<T extends { ko: string; ru?: string; back_ru?: string; issue: string }>(
+  flags: T[],
+  glossary: GlossaryEntry[] | undefined,
+): { kept: T[]; dropped: T[] } {
+  if (!glossary?.length) return { kept: flags, dropped: [] };
+  const kept: T[] = [];
+  const dropped: T[] = [];
+  for (const f of flags) (glossaryEquivalent(f, glossary) ? dropped : kept).push(f);
+  return { kept, dropped };
+}
+
+export async function backTranslate(ai: Pick<AiRouter, "runWithMeta">, items: KrItem[], glossary?: GlossaryEntry[]): Promise<BackResult> {
   const res = await ai.runWithMeta("back_translate", {
     chapters: items.slice(0, 20).map((i) => ({ id: i.id, text_ru: i.text_ru, text_ko: i.text_ko, quote_ko: i.quote_ko ?? "" })),
   });
@@ -424,16 +486,19 @@ export async function backTranslate(ai: Pick<AiRouter, "runWithMeta">, items: Kr
   const meaning: Record<string, number> = {};
   const back: Record<string, string> = {};
   const known = new Set(items.map((i) => i.id));
+  let glossaryOk = 0;
   for (const c of res.output.chapters) {
     if (!known.has(c.id)) continue;
     meaning[c.id] = c.meaning;
     back[c.id] = c.back_ru;
-    for (const f of c.flags)
+    const { kept, dropped } = withoutGlossaryNoise(c.flags, glossary);
+    glossaryOk += dropped.length;
+    for (const f of kept)
       flags.push({ id: c.id, source: "ai", rule: "back_translate", ko: f.ko, back_ru: f.back_ru, ru: f.ru, issue: f.issue, severity: f.severity });
-    if (c.meaning <= 3 && !c.flags.some((f) => f.severity === "major"))
+    if (c.meaning <= 3 && !kept.some((f) => f.severity === "major"))
       flags.push({ id: c.id, source: "ai", rule: "meaning", ko: "", back_ru: c.back_ru.slice(0, 120), issue: `смысл расходится с оригиналом (${c.meaning} из 5)`, severity: "major" });
   }
-  return { flags, meaning, back, provider: res.provider, model: res.model };
+  return { flags, meaning, back, provider: res.provider, model: res.model, glossaryOk };
 }
 
 // ── Итог для человека ───────────────────────────────────────────────────────
@@ -473,7 +538,17 @@ export interface KrReport {
   flags: KrFlag[];
   meaning: Record<string, number>;
   glossary: { total: number; confirmed: number };
+  /** #198: снято флажков судьи «корё мар → эквивалент глоссария» (это решение команды, не ошибка) */
+  glossaryOk?: number;
 }
+
+/**
+ * #193: здесь — только вымышленные тексты (демо, киоск, запас сцены, банк вопросов). Главы живых семей в kr-check и eval
+ * не попадают никогда: их проверяет repair-chapters в режиме dry run (без ИИ, в лог — id и номера абзацев, без текстов).
+ */
+export const FAMILIES_NOTE =
+  "Главы семей здесь не проверяются (только демо и банк). Семьи — Actions → **repair-chapters**, dry run (apply выключен): " +
+  "`reasons` = `grandkids` (해요체 к внукам) для ko, `kk-script` / `kk-style` для kk — без ИИ, в лог только id и номера абзацев.";
 
 const icon = (s: Severity) => (s === "major" ? "🔴" : "🟡");
 const cell = (s: string) => s.replace(/\|/g, "\\|").replace(/\n/g, " ");
@@ -507,7 +582,8 @@ export function renderKrReport(r: KrReport, opts: { link?: string; marker?: bool
       ` · правила: глоссарий (${r.glossary.total} записей, подтверждено носителем ${r.glossary.confirmed}), годы, стиль речи, кириллица, цитата`,
     "",
   );
-  out.push(`Флажков: **${flags.length}** (🔴 ${majors} · 🟡 ${flags.length - majors}).`, "");
+  out.push(`Флажков: **${flags.length}** (🔴 ${majors} · 🟡 ${flags.length - majors}).${r.glossaryOk ? ` Снято флажков судьи «корё мар → эквивалент глоссария» (#198): ${r.glossaryOk}.` : ""}`, "");
+  out.push(FAMILIES_NOTE, "");
   out.push("### Человеку: проверить", "", ...humanLines(r), "");
   out.push("### По текстам", "", "| Текст | Смысл 1–5 | 🔴 | 🟡 |", "| --- | --- | --- | --- |");
   for (const i of r.items) {

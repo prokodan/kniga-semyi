@@ -7,7 +7,10 @@ import { createRouter } from "@/lib/ai/router";
 import { MemoryStore } from "@/lib/ai/store";
 import {
   backTranslate,
+  bieupFlags,
   checkItem,
+  FAMILIES_NOTE,
+  glossaryEquivalent,
   chooseBackMode,
   grandkidsHaeyo,
   isHapsyo,
@@ -16,6 +19,7 @@ import {
   pickForHuman,
   renderKrReport,
   variantRegex,
+  withoutGlossaryNoise,
   yearsKo,
   yearsRu,
   type KrItem,
@@ -240,3 +244,89 @@ describe("#121: одно имя — одно написание (словарь 
   });
 });
 
+
+describe("#198: судья KR и глоссарий корё мар, ㅂ-неправильные формы", () => {
+  it("замена корё мар ровно на эквивалент глоссария — не флажок; 아버님, транслитерация и другие флажки — остаются", () => {
+    const sub = "слово корё мар заменено на стандартный корейский";
+    expect(glossaryEquivalent({ ko: "아버지는", ru: "аппади", issue: sub }, glossary)?.ru).toContain("аппади");
+    expect(glossaryEquivalent({ ko: "어머니가", ru: "омани", issue: sub }, glossary)).toBeDefined();
+    expect(glossaryEquivalent({ ko: "국수", ru: "", issue: "«кукси» передано стандартным 국수" }, glossary)).toBeDefined();
+    expect(glossaryEquivalent({ ko: "김치를", ru: "чимчи", issue: sub }, glossary)).toBeDefined();
+    // вариант из «не:» — ошибка, флажок остаётся
+    expect(glossaryEquivalent({ ko: "아버님이", ru: "аппади", issue: sub }, glossary)).toBeUndefined();
+    // транслитерация — не эквивалент
+    expect(glossaryEquivalent({ ko: "아파디", ru: "аппади", issue: sub }, glossary)).toBeUndefined();
+    // флажок не о замене слова
+    expect(glossaryEquivalent({ ko: "국수를 1941년", ru: "кукси в 1940", issue: "год искажён" }, glossary)).toBeUndefined();
+    const { kept, dropped } = withoutGlossaryNoise(
+      [
+        { ko: "아버지", ru: "аппади", back_ru: "отец", issue: sub },
+        { ko: "1941년", ru: "1940", back_ru: "1941", issue: "год искажён" },
+      ],
+      glossary,
+    );
+    expect(dropped).toHaveLength(1);
+    expect(kept.map((f) => f.ko)).toEqual(["1941년"]);
+    expect(withoutGlossaryNoise(kept, undefined).kept).toHaveLength(1);
+  });
+
+  it("backTranslate снимает такие флажки и считает их; смысл ≤ 3 без major — всё ещё флажок", async () => {
+    const ai = {
+      async runWithMeta() {
+        return {
+          output: {
+            chapters: [
+              {
+                id: "c1",
+                back_ru: "Отец любил лапшу.",
+                meaning: 5,
+                flags: [
+                  { ko: "아버지", back_ru: "отец", ru: "аппади", issue: "слово корё мар заменено на стандартный корейский", severity: "minor" as const },
+                  { ko: "국수", back_ru: "лапша", ru: "кукси", issue: "корё мар заменено", severity: "minor" as const },
+                ],
+              },
+            ],
+          },
+          provider: "openai",
+          model: "x",
+          cached: false,
+        };
+      },
+    } as unknown as Parameters<typeof backTranslate>[0];
+    const items = [chapter("Аппади любил кукси.", "아버지는 국수를 좋아하셨다.")];
+    const r = await backTranslate(ai, items, glossary);
+    expect(r.flags).toHaveLength(0);
+    expect(r.glossaryOk).toBe(2);
+    const raw = await backTranslate(ai, items);
+    expect(raw.flags).toHaveLength(2);
+  });
+
+  it("ㅂ-неправильные: 참 고와게 → 곱게, 더와서 → 더워서, 고마와요 → 고마워요; верные формы — без флажка", () => {
+    const issues = bieupFlags(chapter("", "할머니는 참 고와게 웃으셨다. 날이 더와서 힘들었다. 정말 고마와요.")).map((f) => f.issue);
+    expect(issues).toHaveLength(3);
+    expect(issues.join()).toMatch(/고와게 → 곱게/);
+    expect(issues.join()).toMatch(/더와서 → 더워서/);
+    expect(issues.join()).toMatch(/고마와요 → 고마워요/);
+    expect(bieupFlags(chapter("", "할머니는 참 곱게 웃으셨다. 고와서 고와졌다. 더워서 도와주셨다. 고마워요. 재미와 웃음."))).toHaveLength(0);
+    expect(checkItem(chapter("Она улыбалась красиво.", "할머니는 참 고와게 웃으셨다."), glossary).map((f) => f.rule)).toContain("style:bieup");
+  });
+
+  it("демо, киоск и банк не дают флажков style:bieup", () => {
+    for (const s of DEMO_STORIES) expect(bieupFlags(chapter(s.text_ru ?? "", s.text_ko ?? "")), s.title ?? "").toHaveLength(0);
+    expect(bieupFlags({ ...chapter("", QUESTIONS.map((q) => q.ko).join("\n")), kind: "question" })).toHaveLength(0);
+  });
+});
+
+describe("#193: главы живых семей — не в kr-check / eval", () => {
+  it("scripts/kr-check.ts не ходит в базу и не читает главы семей", () => {
+    const src = readFileSync("scripts/kr-check.ts", "utf8").replace(/^\s*\/\/.*$/gm, "");
+    expect(src).not.toMatch(/@\/lib\/db|getDb|SUPABASE|from\("stories"\)|story_texts/);
+  });
+  it("отчёт kr-check отправляет проверку семей в repair-chapters (dry run)", () => {
+    const md = renderKrReport({ date: "2026-11-28", mode: "mock", provider: "mock", model: "mock", items: [], flags: [], meaning: {}, glossary: { total: 0, confirmed: 0 } });
+    expect(md).toContain(FAMILIES_NOTE);
+    expect(FAMILIES_NOTE).toMatch(/repair-chapters/);
+    expect(FAMILIES_NOTE).toMatch(/grandkids/);
+    expect(FAMILIES_NOTE).toMatch(/kk-script/);
+  });
+});

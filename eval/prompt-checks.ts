@@ -65,6 +65,41 @@ export interface DialogueChecks {
   /** Все уточнения и связки модели — чтобы оценить тон глазами */
   followupTexts: string[];
   bridgeTexts: string[];
+  /**
+   * #282: уточнения и связки с реалиями чужого пакета (персонажу без koryo — кукси, хальмони; без kz — Наурыз, жайлау),
+   * которых рассказчик сам не называл. undefined — у персонажа нет строки «пакеты:» (банк V0, проверка не нужна).
+   */
+  foreignRealia?: TextIssue[];
+}
+
+// ---------------- #282: чужие реалии ----------------
+
+/** Корё-реалии — только у пакета koryo (тот же список, что KORYO_REALIA в content/packs/culture.test.ts, без «1937»). */
+export const KORYO_REALIA =
+  /корё|корейск|чимчи|кукси|асянди|хвангаб|ханщи|хансик|хальмони|харабо[дч]|аппади|омани|пигоди/iu;
+/** Казахские реалии — только у пакета kz (KZ_REALIA в content/packs/culture.test.ts). */
+export const KZ_REALIA = /наурыз|жеті\s*ата|нағашы|жайлау|(^|[^\p{L}])жуз(?!\p{L})|ашаршылық|желтоқсан|бесбармак|(^|[^\p{L}])той(?!\p{L})/iu;
+
+const REALIA_BY_PACK: { pack: string; re: RegExp; label: string }[] = [
+  { pack: "koryo", re: KORYO_REALIA, label: "корё" },
+  { pack: "kz", re: KZ_REALIA, label: "казахская" },
+];
+
+/**
+ * #282: чужая реалия в тексте агента — слово пакета, которого у персонажа нет, и рассказчик сам его не произносил
+ * (повторить за рассказчиком — можно). Пустой массив — всё в порядке.
+ */
+export function foreignRealiaIssues(text: string, packs: readonly string[], personaSaid: string): string[] {
+  const out: string[] = [];
+  for (const { pack, re, label } of REALIA_BY_PACK) {
+    if (packs.includes(pack)) continue;
+    const m = re.exec(text);
+    if (!m) continue;
+    const word = m[0].replace(/^[^\p{L}]+/u, "");
+    if (re.test(personaSaid) && personaSaid.toLowerCase().includes(word.toLowerCase())) continue;
+    out.push(`чужие реалии: ${label} «${word}» — у персонажа пакеты ${packs.join(" + ")}`);
+  }
+  return out;
 }
 
 export function checkFollowup(text: string, previous: string[]): string[] {
@@ -88,21 +123,31 @@ export function checkBridge(text: string, previous: string[]): string[] {
   return out;
 }
 
-/** Уточнения и связки агента из диалога симуляции. */
-export function checkDialogue(sim: Pick<SimResult, "turns" | "questions">): DialogueChecks {
+/**
+ * Уточнения и связки агента из диалога симуляции. packs (#282) — пакеты персонажа: тогда ещё и «чужие реалии»;
+ * без packs (kim, pak, tsoi — банк V0) поле foreignRealia не появляется и отчёт прежний.
+ */
+export function checkDialogue(sim: Pick<SimResult, "turns" | "questions">, packs?: readonly string[]): DialogueChecks {
   const qText = new Map(sim.questions.map((q) => [q.id, q.text]));
   const res: DialogueChecks = { followups: 0, followupIssues: [], pressure: 0, bridges: 0, bridgeIssues: [], followupTexts: [], bridgeTexts: [] };
+  const foreign: TextIssue[] = [];
+  const said: string[] = [];
+  const realia = (text: string) => {
+    if (packs) for (const issue of foreignRealiaIssues(text, packs, said.join("\n"))) foreign.push({ text, issue });
+  };
   const prevFollowups: string[] = [];
   const prevBridges: string[] = [];
   let lastAnswer = "";
   for (const t of sim.turns) {
     if (t.role === "persona") {
       lastAnswer = t.text;
+      said.push(t.text);
       continue;
     }
     if (t.role === "followup") {
       if (ENGINE_FOLLOWUP.test(t.text)) continue;
       res.followups += 1;
+      realia(t.text);
       const issues = checkFollowup(t.text, prevFollowups);
       if (isNoPressure(lastAnswer)) {
         res.pressure += 1;
@@ -119,12 +164,13 @@ export function checkDialogue(sim: Pick<SimResult, "turns" | "questions">): Dial
       const bridge = t.text.slice(0, t.text.length - q.length).trim();
       if (!bridge || ENGINE_BRIDGES.some((r) => r.test(bridge))) continue;
       res.bridges += 1;
+      realia(bridge);
       for (const issue of checkBridge(bridge, prevBridges)) res.bridgeIssues.push({ text: bridge, issue });
       prevBridges.push(bridge);
       res.bridgeTexts.push(bridge);
     }
   }
-  return res;
+  return packs ? { ...res, foreignRealia: foreign } : res;
 }
 
 // ---------------- сказка ----------------
@@ -147,7 +193,15 @@ export interface TaleChecks {
 const sentences = (s: string) => s.split(/(?<=[.!?…])\s+/).map((x) => x.trim()).filter(Boolean);
 
 /** Имена и места в середине предложения (с большой буквы), которых нет в главах. */
-function strangers(text: string, source: string): string[] {
+/**
+ * Казахские буквы → русские для сверки имён: «Серік» в главе и «Серик» в сказке, «Жақып» и «Жакып» — одно имя.
+ * Без этого сказка RU + KZ получала флажок «нет в главах» на имя самого рассказчика.
+ */
+const KZ_FOLD: Record<string, string> = { ә: "а", ғ: "г", қ: "к", ң: "н", ө: "о", ұ: "у", ү: "у", һ: "х", і: "и", Ә: "А", Ғ: "Г", Қ: "К", Ң: "Н", Ө: "О", Ұ: "У", Ү: "У", Һ: "Х", І: "И" };
+export const foldKz = (s: string) => s.replace(/[әғқңөұүһіӘҒҚҢӨҰҮҺІ]/g, (c) => KZ_FOLD[c] ?? c);
+
+function strangers(text: string, rawSource: string): string[] {
+  const source = foldKz(rawSource);
   const known = stems(source);
   // Короткие имена склоняются в пятой букве («Елена» → «Елене»): для них хватает основы из 4 букв.
   const known4 = new Set(words(source).filter((w) => w.length >= 3).map((w) => w.slice(0, 4)));
@@ -155,7 +209,7 @@ function strangers(text: string, source: string): string[] {
   for (const sent of sentences(text)) {
     const tokens = sent.split(/\s+/).slice(1);
     for (const raw of tokens) {
-      const w = raw.replace(/^[«"„(—-]+|[»"“).,!?…:;—-]+$/g, "");
+      const w = foldKz(raw.replace(/^[«"„(—-]+|[»"“).,!?…:;—-]+$/g, ""));
       if (!/^[А-ЯЁ][а-яё-]{2,}$/.test(w)) continue;
       const s = w.toLowerCase().slice(0, 5);
       if (known.has(s) || (w.length <= 6 && known4.has(s.slice(0, 4))) || TALE_OK.has(s) || TALE_OK.has(s.slice(0, 4))) continue;

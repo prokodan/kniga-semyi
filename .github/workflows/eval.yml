@@ -11,6 +11,10 @@ name: eval
 # max_calls запросов на прогон (по умолчанию 20 × 3 персонажа × 2 = 120 максимум), а кэш ответов
 # (actions/cache) делает «до» и повторы почти бесплатными. Нет ключа или PR из форка — mock, комментарий
 # честно пишет «mock, оценка не показательна».
+#
+# #193: только вымышленные тексты (персонажи eval/personas, демо, банк). Главы живых семей в eval не попадают никогда —
+# ни ko, ни kk: их проверяет Actions → repair-chapters в режиме dry run (reasons grandkids | kk-script | kk-style, без ИИ,
+# в лог — id и номера абзацев). Секрет SUPABASE_DB_URL здесь — только чтобы прочитать ai_routes (модели), не главы.
 on:
   pull_request:
     paths:
@@ -104,6 +108,11 @@ jobs:
             echo "## 🔴 eval: review_set — латиница, цифры и дефис (сейчас: $REVIEW_SET)" >> "$GITHUB_STEP_SUMMARY"
             exit 1
           fi
+          # Казахские промпты (translate.kk / translate.ru / *.kk.md) в PR — к kim, pak, tsoi добавляем serik (ru → kk),
+          # иначе «до / после» RU + KZ не видно. RU + KR считается теми же персонажами, что и раньше.
+          if [ "${{ github.event_name }}" = "pull_request" ] && git diff --name-only "origin/$BASE_REF...HEAD" | grep -Eq '^prompts/.*\.(kk|ru)\.md$'; then
+            case ",$PERSONAS," in *,serik,*) ;; *) echo "PERSONAS=$PERSONAS,serik" >> "$GITHUB_ENV"; echo "Казахские промпты в PR → + serik" ;; esac
+          fi
           # gemini, а не auto: с OPENAI_API_KEY (#276) auto пустил бы основные шаги в платный резерв OpenAI
           if [ -n "$GEMINI_API_KEY" ]; then echo "AI_MODE=gemini" >> "$GITHUB_ENV"; else echo "AI_MODE=mock" >> "$GITHUB_ENV"; fi
 
@@ -130,6 +139,10 @@ jobs:
           git archive HEAD | tar -x -C "$before"
           rm -rf "$before/prompts"
           git archive "origin/$BASE_REF" prompts | tar -x -C "$before"
+          # промпты судьи и обратного перевода (#198) — тоже из базовой ветки, иначе «до» уже судит новым судьёй
+          for f in eval/judge.md eval/judge.golden.md eval/back_translate.md; do
+            if git cat-file -e "origin/$BASE_REF:$f" 2>/dev/null; then git show "origin/$BASE_REF:$f" > "$before/$f"; fi
+          done
           ln -s "$GITHUB_WORKSPACE/node_modules" "$before/node_modules"
           cd "$before"
           set -o pipefail

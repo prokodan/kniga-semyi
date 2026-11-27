@@ -9,7 +9,8 @@ import { AiUnavailableError, type AiInput, type AiOutput, type AiStep } from "@/
 import { MAX_FOLLOWUPS } from "@/lib/interview/policy";
 import { SimBudgetError, withBudget } from "./budget";
 import { checkFact, checkFacts, splitFacts, stems } from "./facts";
-import { BEHAVIORS, listPersonas, loadPersona, parsePersona, resolveBehavior } from "./persona";
+import { BEHAVIORS, listPersonas, loadPersona, parsePacks, parsePersona, resolveBehavior } from "./persona";
+import { bankForPacks, getQuestionBank } from "@/lib/interview/bank";
 import { renderReport, reportFileName, writeReport } from "./report";
 import { runSimulation } from "./run";
 
@@ -219,5 +220,28 @@ describe("отчёт", () => {
     const file = writeReport(r, { dir, explicitBehavior: "long" });
     expect(path.basename(file)).toBe("kim-2026-11-23-long.md");
     expect(readFileSync(file, "utf8")).toMatch(/^# Симуляция интервью: Ким Николай Петрович/);
+  });
+});
+
+describe("#282: банк по пакетам персонажа", () => {
+  it("строка «пакеты:» → packs; планы в скобках не берём; без строки — undefined (банк V0)", () => {
+    expect(loadPersona("galina").packs).toEqual(["general"]);
+    expect(loadPersona("kuljamal").packs).toEqual(["general", "kz"]);
+    expect(loadPersona("serik").packs).toEqual(["general", "kz"]);
+    for (const k of ["kim", "pak", "tsoi"]) expect(loadPersona(k).packs, k).toBeUndefined();
+    expect(parsePacks("- Язык: `ru` · пакеты: `general` (позже + `ua`)")).toEqual(["general"]);
+  });
+
+  it("galina (general): вопросы — из банка general, без корё-реалий; kim — банк V0, как раньше", async () => {
+    const galina = loadPersona("galina");
+    const r = await runSimulation({ persona: galina, ai: mockAi(), maxQuestions: 3 });
+    const general = bankForPacks(["general"]);
+    expect(r.questions.length).toBeGreaterThan(0);
+    for (const q of r.questions) expect(general.get(q.id)?.ru, q.id).toBe(q.text);
+    expect(r.questions.map((q) => q.text).join(" ")).not.toMatch(/корё|корейск|кукси|чимчи|хальмони/i);
+
+    const v0 = getQuestionBank();
+    const k = await runSimulation({ persona: kim, ai: mockAi(), maxQuestions: 3 });
+    for (const q of k.questions) expect(v0.get(q.id)?.ru, q.id).toBe(q.text);
   });
 });
