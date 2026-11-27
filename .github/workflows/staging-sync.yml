@@ -1,0 +1,39 @@
+name: staging-sync
+
+# #220: ветка `staging` = всегда свежий main. Её превью в Vercel — постоянный адрес
+# https://kniga-semyi-git-staging-kniga-semyi-team.vercel.app (секрет STAGING_URL для smoke / seed-demo staging),
+# смотрит в базу kniga-semyi-staging (#211). При каждом push в main ветка `staging` перезаписывается на main
+# (force: своих коммитов в staging не делаем). Vercel собирает превью сам по push в ветку.
+# Вручную: Actions → staging-sync → Run workflow.
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: staging-sync
+  cancel-in-progress: true
+
+permissions:
+  contents: write
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 1
+      - name: main → staging
+        run: |
+          before=$(git ls-remote origin refs/heads/staging | cut -c1-7)
+          git push --force origin "HEAD:refs/heads/staging"
+          echo "staging: ${before:-нет} → ${GITHUB_SHA:0:7}" | tee -a "$GITHUB_STEP_SUMMARY"
+      - name: Telegram — staging не обновился
+        if: failure()
+        uses: ./.github/actions/telegram
+        with:
+          token: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          chat_id: ${{ secrets.TELEGRAM_CHAT_ID }}
+          text: "🟡 Ветка staging не подтянулась к main: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"

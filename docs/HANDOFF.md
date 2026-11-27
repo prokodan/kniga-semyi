@@ -48,9 +48,12 @@ Gemini 3.5 Flash-Lite (бесплатно) → Gemini 3.6 Flash (бесплат�
 | Общий секрет | `AI_USAGE_SECRET` — Production + Preview, одно значение; нет секрета → отправка выключена | |
 | `PROD_URL` | боевой адрес (Production + Preview: превью шлёт туда расход) | ссылки и QR на превью — от `VERCEL_BRANCH_URL` / `VERCEL_URL`, не от `PROD_URL` |
 | pg_cron (kick, digest) | есть | не нужен: главы дособирает `after()` и открытие `/f`; без Vault-секретов задания молчат |
-| GitHub Secrets | `SUPABASE_DB_URL`, `NEXT_PUBLIC_SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY` | `STAGING_SUPABASE_DB_URL`, `STAGING_SUPABASE_URL`, `STAGING_SUPABASE_SERVICE_ROLE_KEY`, по желанию `STAGING_URL` (адрес превью для smoke / книги) |
+| GitHub Secrets | `SUPABASE_DB_URL`, `NEXT_PUBLIC_SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY` | `STAGING_SUPABASE_DB_URL`, `STAGING_SUPABASE_URL`, `STAGING_SUPABASE_SERVICE_ROLE_KEY`, `STAGING_URL` (постоянное превью ветки `staging`) |
 
 - Workflows **migrate** (при слиянии — в обе базы), **seed-demo**, **smoke**, **diag** — вход `target: prod | staging`.
+- **Постоянное превью staging:** https://kniga-semyi-git-staging-kniga-semyi-team.vercel.app — ветка `staging`, которую
+  workflow **staging-sync** при каждом push в main перезаписывает на main (#220; своих коммитов в `staging` не делать).
+  Этот адрес — GitHub Secret `STAGING_URL` (smoke и seed-demo с `target: staging`). Здесь тестируем с телефона.
 - Пересеять staging: Actions → **seed-demo** → target `staging` (без ИИ; книгу PDF соберёт сайт из `STAGING_URL`, только если
   его `/api/health` показывает ref staging, иначе — кнопка «Сбросить демо» в `/admin` превью). Демо прода это не трогает.
 - Проверить, куда смотрит сайт: `/api/health` → `env` и `supabase_ref` (первые 6 символов ref проекта, не ключ).
