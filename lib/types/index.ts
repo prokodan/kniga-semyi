@@ -239,6 +239,8 @@ export interface FamilyEntity {
   gender?: TreeGender | null;
   /** #235 древо: «это один человек» — на древе запись показывается как same_as (в словаре остаётся). */
   same_as?: Uuid | null;
+  /** #269 древо: путь фото человека в бакете photos (`<family>/people/<entity>.jpg`); пусто — инициал. */
+  photo_url?: string | null;
 }
 
 export type TreeGender = "f" | "m";

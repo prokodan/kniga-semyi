@@ -257,6 +257,14 @@ export function createPipeline(deps: PipelineDeps) {
           console.warn(`[pipeline] словарь семьи ${story.id.slice(0, 8)}:`, (e as Error).message);
         }
       }
+      // #265: древо семьи — в том же шаге, что словарь (флаг family_tree проверяет repo); сбой главу не роняет
+      if (step === "edit" && repo.updateTree) {
+        try {
+          await repo.updateTree(story);
+        } catch (e) {
+          console.warn(`[pipeline] древо семьи ${story.id.slice(0, 8)}:`, (e as Error).message);
+        }
+      }
       const rebuildParent = step === "transcribe" && story.parent_story_id ? await lateChild(story) : null;
       return result(story, step, rebuildParent ? { rebuildParent } : {});
     } catch (e) {

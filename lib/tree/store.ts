@@ -2,7 +2,7 @@
 import type { FamilyEntity } from "@/lib/types";
 import type { TreeEdge, TreePerson, TreePlan, TreeSource } from "./build";
 
-export type PersonPatch = Partial<Pick<FamilyEntity, "name_ru" | "name_ko" | "description" | "birth_year" | "death_year" | "gender" | "same_as" | "source">>;
+export type PersonPatch = Partial<Pick<FamilyEntity, "name_ru" | "name_ko" | "description" | "birth_year" | "death_year" | "gender" | "same_as" | "source" | "photo_url">>;
 export type NewPerson = Omit<TreePerson, "same_as"> & { same_as?: string | null };
 
 export interface TreeRepo {

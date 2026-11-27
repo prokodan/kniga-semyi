@@ -44,6 +44,8 @@ export interface PipelineRepo {
   familyEntities?(story: Story): Promise<FamilyEntity[]>;
   /** #102: дописать в словарь семьи сущности собранной главы (source='family' не перезаписывается). */
   saveEntities?(story: Story, drafts: EntityDraft[]): Promise<void>;
+  /** #265: дописать древо семьи после словаря (без ИИ, идемпотентно; только при флаге family_tree). Нет — не трогаем. */
+  updateTree?(story: Story): Promise<void>;
   /** #121 #124: запомнить корейское написание (только где name_ko ещё пусто — первая глава задаёт его для всей книги). */
   saveSpellings?(story: Story, spellings: { id: string; name_ko: string }[]): Promise<void>;
   /**
@@ -212,7 +214,17 @@ export class SupabasePipelineRepo implements PipelineRepo {
     private bucket = "audio",
     /** #231: включён ли флаг lang_kk семье (lib/flags — server-only, поэтому снаружи). Нет — выключен. */
     private langKk: (family: Pick<Family, "id" | "labs">) => boolean = () => false,
+    /** #265: древо семьи после словаря (lib/tree и lib/flags — server-only, поэтому снаружи). Нет — не трогаем. */
+    private tree: ((family: Pick<Family, "id" | "labs">) => Promise<void>) | null = null,
   ) {}
+
+  async updateTree(story: Story) {
+    if (!this.tree) return;
+    // "*": labs появились миграцией — до migrate запрос не должен падать
+    const { data, error } = await this.db.from("families").select("*").eq("id", story.family_id).maybeSingle();
+    if (error) throw new Error(`семья истории: ${error.message}`);
+    await this.tree((data ?? { id: story.family_id }) as Pick<Family, "id" | "labs">);
+  }
 
   async getStory(id: string) {
     const { data, error } = await this.db.from("stories").select("*").eq("id", id).maybeSingle();
