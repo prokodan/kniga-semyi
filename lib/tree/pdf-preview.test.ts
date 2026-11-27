@@ -9,7 +9,7 @@ import { DEMO_BOOK } from "@/lib/book/pdf/demo";
 import { renderBook } from "@/lib/book/pdf/render";
 import { applyPlan, planTree } from "./build";
 import { treeForBook } from "./book";
-import { bigFamily } from "./fixtures/big-family";
+import { BIG_FAMILY_PEOPLE, bigFamily } from "./fixtures/big-family";
 import { layoutTree } from "./layout";
 
 const OUT = process.env.TREE_PDF_OUT;
@@ -41,14 +41,17 @@ describe("#277 PDF древа большой семьи", () => {
   const voiceUrl = (id: string) => `https://kniga.example/listen/${id}`;
 
   for (const langs of [["ru", "ko"], ["ru", "kk"]] as const) {
-    it(`${langs.join(" + ")}: страницы древа, все 39 человек, имена целиком`, async () => {
+    it(`${langs.join(" + ")}: страницы древа, все 39 человек, имена без обрезки`, async () => {
       const book = await renderBook({ ...DEMO_BOOK, voiceUrl, langs: [...langs], tree: treeForBook(model, langs) });
       const pages = treePages(book.pdf, `big-40-${langs.join("-")}`);
       expect(pages.length).toBeGreaterThanOrEqual(2);
+      // карточки стоят рядом — mupdf читает строки поперёк карточек, поэтому проверяем каждое слово каждого имени
       const text = pages.map((p) => p.text).join("");
-      for (const name of ["Нурмагамбетова Динара Кайратовна", "Цой Владислав Константинович", "Ахметжанов Нурсултан Бауыржанович", "Ли Алиса"]) {
-        expect(text, name).toContain(name.replace(/\s+/g, ""));
-      }
+      const missing = BIG_FAMILY_PEOPLE.filter((p) => p.n !== 40)
+        .flatMap((p) => p.name.split(" "))
+        .filter((w) => !text.includes(w));
+      expect(missing).toEqual([]);
+      expect(text).not.toContain("…"); // имена не обрезаются многоточием
       expect(text).toContain(langs[1] === "ko" ? "조부모" : "Ата-әже");
     }, 60_000);
   }
