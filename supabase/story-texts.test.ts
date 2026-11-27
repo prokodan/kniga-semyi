@@ -84,3 +84,25 @@ describe("миграция языков L0 (#230)", () => {
     await expect(db.exec(readFileSync(path.join(dir, f), "utf8"))).resolves.toBeTruthy();
   });
 });
+
+describe("#231: перевод на kk устаревает вместе с русским текстом", () => {
+  it("правка text_ru удаляет строку kk от ИИ; ko (зеркало) и правку людей не трогает", async () => {
+    const id = "00000000-0000-0000-0000-00000000000c";
+    await db.exec(`insert into stories (id, family_id, storyteller_id, text_ru, title, text_ko, status)
+                   values ('${id}', '00000000-0000-0000-0000-000000000001', '00000000-0000-0000-0000-000000000002', 'Глава', 'Т', '장', 'ready')`);
+    await db.exec(`insert into story_texts (story_id, lang, title, text, quote) values ('${id}', 'kk', 'Т', 'Тарау', null)`);
+    await db.exec(`update stories set status = 'ready', title = 'Т2' where id = '${id}'`);
+    expect((await texts(id)).map((r) => r.lang)).toEqual(["kk", "ko", "ru"]);
+
+    await db.exec(`update stories set text_ru = 'Глава после правки' where id = '${id}'`);
+    expect((await texts(id)).map((r) => r.lang)).toEqual(["ko", "ru"]);
+
+    await db.exec(`insert into story_texts (story_id, lang, title, text, quote, origin) values ('${id}', 'kk', 'Т', 'Тарау', null, 'proofread')`);
+    await db.exec(`update stories set text_ru = 'Ещё правка' where id = '${id}'`);
+    expect((await texts(id)).map((r) => [r.lang, r.origin])).toEqual([
+      ["kk", "proofread"],
+      ["ko", "ai"],
+      ["ru", "ai"],
+    ]);
+  });
+});

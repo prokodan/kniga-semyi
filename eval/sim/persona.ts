@@ -3,6 +3,7 @@
 // чтобы он рассказывал биографию, а не зачитывал список ответов.
 import { readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
+import type { BookLang } from "@/lib/types";
 
 /** Профили поведения из eval/behaviors.md. */
 export const BEHAVIORS = ["one-word", "wanders", "confuses-dates", "koryo-mar", "refuses", "long", "emotional"] as const;
@@ -17,6 +18,21 @@ export interface Persona {
   defaultBehaviors: string[];
   /** Строки раздела «Ключевые факты (эталон для проверки)» */
   keyFacts: string[];
+  /**
+   * #231: языки книги из строки «книга: `kk,ru`» (несколько вариантов — «`ru` или `ru,kk`» — берём с большим числом
+   * языков, чтобы прогон проверял перевод). Нет строки — undefined: книга как сейчас (ru, ko).
+   */
+  bookLangs?: BookLang[];
+}
+
+/** «книга: `ru` или `ru,kk`» → ["ru", "kk"]; неизвестные языки отбрасываются. */
+export function parseBookLangs(md: string): BookLang[] | undefined {
+  const line = md.match(/книга:\s*([^·\n]+)/i)?.[1] ?? "";
+  const variants = [...line.matchAll(/`([^`]+)`/g)]
+    .map((m) => m[1]!.split(",").map((l) => l.trim()).filter((l): l is BookLang => (["ru", "ko", "kk"] as string[]).includes(l)))
+    .filter((v) => v.length > 0);
+  if (!variants.length) return undefined;
+  return variants.reduce((a, b) => (b.length > a.length ? b : a));
 }
 
 export const PERSONAS_DIR = path.join(process.cwd(), "eval", "personas");
@@ -54,7 +70,8 @@ export function parsePersona(key: string, md: string): Persona {
     : [];
   const markdown = factsSection ? (md.slice(0, factsSection.start) + md.slice(factsSection.end)).trim() : md.trim();
 
-  return { key, name, markdown, defaultBehaviors, keyFacts };
+  const bookLangs = parseBookLangs(md);
+  return { key, name, markdown, defaultBehaviors, keyFacts, ...(bookLangs ? { bookLangs } : {}) };
 }
 
 export function loadPersona(key: string, dir = PERSONAS_DIR): Persona {

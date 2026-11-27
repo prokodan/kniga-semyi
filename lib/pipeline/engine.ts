@@ -14,12 +14,13 @@ import { DEFAULT_PROVIDERS } from "@/lib/ai/config";
 import type { AiRouter } from "@/lib/ai/router";
 import { AiUnavailableError } from "@/lib/ai/types";
 import { getQuestionBank, type QuestionBank } from "@/lib/interview/bank";
-import type { Story, StoryStatus } from "@/lib/types";
+import type { BookLang, Story, StoryStatus } from "@/lib/types";
 import type { PipelinePatch, PipelineRepo } from "./repo";
 import { checkDeferred, needsDeferredCheck } from "./deferred";
 import { entitiesFromChapter } from "./entities";
+import { pendingTranslations } from "./langs";
 import { attachChildren, represented } from "./sources";
-import { PIPELINE_STEPS, StepError, StepSkip, type PipelineStep, type StepFn } from "./steps/context";
+import { PIPELINE_STEPS, StepError, StepSkip, type PipelineStep, type PlannedStory, type StepFn } from "./steps/context";
 import { edit } from "./steps/edit";
 import { transcribe } from "./steps/transcribe";
 import { translate } from "./steps/translate";
@@ -90,12 +91,17 @@ export interface StepResult {
   message: string;
 }
 
-/** Следующий нужный шаг по сохранённым данным. */
-export function nextStep(story: Pick<Story, "transcript" | "text_ru" | "text_ko" | "parent_story_id">): PipelineStep | null {
+/**
+ * Следующий нужный шаг по сохранённым данным. #231: `pending_langs` (план перевода по языкам книги) — каких переводов
+ * ещё нет; не задан — как до #231 (перевод нужен, пока нет text_ko). Книга «только русский» — перевода нет вовсе.
+ */
+export function nextStep(
+  story: Pick<Story, "transcript" | "text_ru" | "text_ko" | "parent_story_id"> & { pending_langs?: readonly BookLang[] },
+): PipelineStep | null {
   if (!story.transcript?.trim()) return "transcribe";
   if (story.parent_story_id) return null; // ответ на уточнение: только расшифровка
   if (!story.text_ru) return "edit";
-  if (!story.text_ko) return "translate";
+  if (story.pending_langs ? story.pending_langs.length > 0 : !story.text_ko) return "translate";
   return null;
 }
 
@@ -130,16 +136,28 @@ export function createPipeline(deps: PipelineDeps) {
   const retryInMinutes = deps.retryInMinutes ?? DEFAULT_PROVIDERS.gemini.cooldown_minutes;
   const now = deps.now ?? Date.now;
 
-  async function load(storyId: string, token?: string): Promise<Story> {
+  async function load(storyId: string, token?: string, withPlan = true): Promise<PlannedStory> {
     const story = await repo.getStory(storyId);
     if (!story) throw new PipelineError("not_found", "История не найдена");
     if (token !== undefined && !(await repo.checkFamilyToken(story.family_id, token))) {
       throw new PipelineError("forbidden", "Ссылка семьи не подходит к этой истории");
     }
-    return story;
+    return withPlan ? plan(story) : story;
   }
 
-  function result(story: Story, ran: PipelineStep | null, extra: Partial<StepResult> = {}): StepResult {
+  /** #231: какие переводы главы ещё нужны (языки книги семьи, флаг lang_kk). Сбой — как до #231 (по text_ko). */
+  async function plan(story: Story): Promise<PlannedStory> {
+    if (!repo.translationPlan || story.parent_story_id) return story;
+    try {
+      const { langs, have } = await repo.translationPlan(story);
+      return { ...story, pending_langs: pendingTranslations(langs, story, have) };
+    } catch (e) {
+      console.warn(`[pipeline] языки книги ${story.id.slice(0, 8)}:`, (e as Error).message);
+      return story;
+    }
+  }
+
+  function result(story: PlannedStory, ran: PipelineStep | null, extra: Partial<StepResult> = {}): StepResult {
     const next = story.status === "failed" || story.status === "skipped" ? null : nextStep(story);
     return {
       storyId: story.id,
@@ -154,9 +172,9 @@ export function createPipeline(deps: PipelineDeps) {
     };
   }
 
-  async function save(story: Story, patch: PipelinePatch): Promise<Story> {
+  async function save(story: PlannedStory, patch: PipelinePatch): Promise<PlannedStory> {
     await repo.updateStory(story.id, patch);
-    return { ...story, ...patch } as Story;
+    return { ...story, ...patch } as PlannedStory;
   }
 
   /**
@@ -226,7 +244,8 @@ export function createPipeline(deps: PipelineDeps) {
       const patch = await STEP_FNS[step]({ story, ai, repo, bank, deadline: started + STEP_BUDGET_MS });
       const newer = await superseded();
       if (newer) return result(newer, null, { running: Boolean(newer.step_started_at) });
-      const after = { ...story, ...patch } as Story;
+      if (step === "translate" && story.pending_langs) story = { ...story, pending_langs: [] }; // #231: все переводы плана сделаны
+      const after = { ...story, ...patch } as PlannedStory;
       const next = nextStep(after);
       story = await save(story, { ...patch, status: next ? STEP_STATUS[next] : "ready", error: null, step_started_at: null });
       // #102: глава собрана — люди, места и слова корё мар в словарь семьи (подсказки следующим главам).
@@ -290,6 +309,14 @@ export function createPipeline(deps: PipelineDeps) {
     const patch: PipelinePatch = {};
     for (const s of PIPELINE_STEPS.slice(PIPELINE_STEPS.indexOf(from))) Object.assign(patch, STEP_FIELDS[s]);
     story = await save(story, { ...patch, status: STEP_STATUS[from], error: null });
+    // #231: переводы без колонок (kk) тоже заново — иначе в книге остался бы перевод старого текста
+    if (repo.dropTranslations) {
+      try {
+        await repo.dropTranslations(story);
+      } catch (e) {
+        console.warn(`[pipeline] старые переводы ${story.id.slice(0, 8)}:`, (e as Error).message);
+      }
+    }
     // Пересборка важнее идущего шага со старыми данными: аренду не ждём.
     return runStep(story.id, { token: opts.token, restart: true });
   }
@@ -306,11 +333,12 @@ export function createPipeline(deps: PipelineDeps) {
 
   /** Статус и результат для экрана ожидания. */
   async function view(storyId: string, opts: { token?: string } = {}) {
-    const s = await load(storyId, opts.token);
+    // экран главы опрашивает часто — без плана языков (#231, лишний запрос); готовой главе шаг не нужен
+    const s = await load(storyId, opts.token, false);
     return {
       storyId: s.id,
       status: s.status,
-      next: s.status === "failed" || s.status === "skipped" ? null : nextStep(s),
+      next: s.status === "failed" || s.status === "skipped" || s.status === "ready" ? null : nextStep(s),
       done: s.status === "ready",
       message: STATUS_MESSAGE[s.status],
       error: s.error,

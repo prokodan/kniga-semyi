@@ -2,7 +2,7 @@
 // затем главы из собранных историй (edit + translate) и сверка «Ключевых фактов».
 // Всё в памяти: MemoryInterviewRepo, без базы. ИИ — только через переданный роутер.
 import type { AiRouter } from "@/lib/ai/router";
-import { AiUnavailableError, type AiStep } from "@/lib/ai/types";
+import { AiUnavailableError, translateInput, type AiStep } from "@/lib/ai/types";
 import type { QuestionBank } from "@/lib/interview/bank";
 import { createInterview, type AnswerResult } from "@/lib/interview/engine";
 import type { SessionState } from "@/lib/interview/policy";
@@ -10,7 +10,7 @@ import { MemoryInterviewRepo } from "@/lib/interview/repo";
 import { fixCyrillic } from "@/lib/pipeline/cyrillic";
 import { entitiesFromChapter, mergeEntities, namesForTranslate } from "@/lib/pipeline/entities";
 import { applySpellings, learnSpellings, requiredSpellings, type NamePair } from "@/lib/pipeline/names";
-import type { FamilyEntity, LifeBlock, Story } from "@/lib/types";
+import type { BookLang, FamilyEntity, LifeBlock, Story } from "@/lib/types";
 import { SimBudgetError, withBudget } from "./budget";
 import { checkFacts, type FactCheck } from "./facts";
 import type { Persona } from "./persona";
@@ -50,6 +50,12 @@ export interface Chapter {
   title_ko?: string;
   text_ko?: string;
   quote_ko?: string;
+  /** #231: казахский текст главы — перевод ru → kk (книга ru,kk) или оригинал (книга kk,ru: рассказ по-казахски) */
+  title_kk?: string;
+  text_kk?: string;
+  quote_kk?: string;
+  /** #231: kk — оригинал (рассказ по-казахски), ru — перевод kk → ru; иначе ru — оригинал */
+  original?: "ru" | "kk";
   /** #121: как переводчик написал имена главы (после приведения к словарю) */
   names?: NamePair[];
   error?: string;
@@ -87,6 +93,11 @@ export interface SimOptions {
   bank?: QuestionBank;
   mode?: string;
   now?: () => Date;
+  /**
+   * #231: языки книги (по умолчанию — из персонажа, иначе ru, ko). ru,kk — edit → translate ru → kk; kk,ru — рассказ
+   * по-казахски: оригинал главы — сам рассказ, русский — translate kk → ru (редактура kk-рассказа — #234); ru — без перевода.
+   */
+  bookLangs?: BookLang[];
 }
 
 const FAMILY = "sim-family";
@@ -196,12 +207,19 @@ export async function runSimulation(opts: SimOptions): Promise<SimResult> {
   // Главы: каждая основная история → edit → translate. Ответы на уточнения уже в followups.
   const chapters: Chapter[] = [];
   const entities: FamilyEntity[] = [];
+  const langs = opts.bookLangs ?? opts.persona.bookLangs ?? ["ru", "ko"];
   for (const story of mainStories()) {
     const transcript = combined(story);
     const ch: Chapter = { storyId: story.id, questionId: story.question_id, block: story.block, transcript };
     chapters.push(ch);
     if (!transcript.trim()) continue;
     try {
+      // #231: рассказ по-казахски (книга kk,ru) — оригинал главы = рассказ, русский — перевод kk → ru
+      if (langs[0] === "kk") {
+        const ru = await budget.ai.run("translate", translateInput("kk", "ru", { text_ru: transcript, title: "", quote: "" }));
+        Object.assign(ch, { original: "kk", text_kk: transcript, title: ru.title_ko, text_ru: ru.text_ko, quote: ru.quote_ko });
+        continue;
+      }
       const q = story.question_id ? interview.bank.get(story.question_id) : undefined;
       const edited = await budget.ai.run("edit", {
         transcript,
@@ -215,6 +233,12 @@ export async function runSimulation(opts: SimOptions): Promise<SimResult> {
       const { inserts, updates } = mergeEntities(entities, entitiesFromChapter(edited), "sim", story.id);
       for (const u of updates) Object.assign(entities.find((e) => e.id === u.id)!, u.patch);
       for (const i of inserts) entities.push({ ...i, id: `ent-${entities.length + 1}`, updated_at: now().toISOString() });
+      // #231: книга ru,kk — перевод ru → kk (как конвейер для семьи с флагом lang_kk); ru — без перевода
+      if (langs.includes("kk")) {
+        const kk = await budget.ai.run("translate", translateInput("ru", "kk", { text_ru: edited.text_ru, title: edited.title, quote: edited.quote }));
+        Object.assign(ch, { original: "ru", title_kk: kk.title_ko, text_kk: kk.text_ko, quote_kk: kk.quote_ko });
+      }
+      if (!langs.includes("ko")) continue;
       const names = namesForTranslate(entities);
       const raw = await budget.ai.run("translate", { text_ru: edited.text_ru, title: edited.title, quote: edited.quote, ...(names.length ? { names } : {}) });
       const tr = applySpellings(raw, requiredSpellings(entities)).out;

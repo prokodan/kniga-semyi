@@ -10,7 +10,9 @@ import { listenUrl } from "./qr";
 import { DEMO_BOOK } from "./pdf/demo";
 import { isBookChapter, type Elder } from "./pdf/model";
 import { renderBook } from "./pdf/render";
-import { bookLangs, loadStoryTexts, withStoryTexts } from "./texts";
+import { flag } from "@/lib/flags";
+import { effectiveBookLangs } from "@/lib/pipeline/langs";
+import { loadStoryTexts, withStoryTexts, type StoryTextRow } from "./texts";
 
 /** Минимум глав, с которого книга «как настоящая» (собрать можно и раньше — экран предупредит). */
 export const BOOK_MIN_CHAPTERS = 5;
@@ -48,9 +50,11 @@ export class BookBusyError extends Error {
 // ---------------- данные семьи ----------------
 
 interface BookSource {
-  family: Pick<Family, "id" | "name" | "book_langs">;
+  family: Pick<Family, "id" | "name" | "book_langs" | "labs">;
   storyteller: Storyteller | null;
   stories: Story[];
+  /** #231: строки story_texts глав — для языков без колонок (kk) */
+  texts?: StoryTextRow[];
 }
 
 async function loadSource(familyId: string): Promise<BookSource | null> {
@@ -63,7 +67,7 @@ async function loadSource(familyId: string): Promise<BookSource | null> {
       .filter((s) => s.family_id === familyId)
       .sort((a, b) => a.created_at.localeCompare(b.created_at));
     const stories = [...(store.stories?.values() ?? [])].filter((s) => s.family_id === familyId);
-    return structuredClone({ family: { id: family.id, name: family.name, book_langs: family.book_langs }, storyteller: storytellers[0] ?? null, stories });
+    return structuredClone({ family: { id: family.id, name: family.name, book_langs: family.book_langs, labs: family.labs }, storyteller: storytellers[0] ?? null, stories });
   }
   const [fam, st, stories] = await Promise.all([
     // "*", а не список колонок: book_langs (#230) появится только после migrate — запрос не должен падать до него
@@ -80,9 +84,10 @@ async function loadSource(familyId: string): Promise<BookSource | null> {
   const texts = await loadStoryTexts(db, list.map((s) => s.id));
   const f = fam.data as Family;
   return {
-    family: { id: f.id, name: f.name, book_langs: f.book_langs },
+    family: { id: f.id, name: f.name, book_langs: f.book_langs, labs: f.labs },
     storyteller: (st.data?.[0] as Storyteller) ?? null,
     stories: list.map((s) => withStoryTexts(s, texts)),
+    texts,
   };
 }
 
@@ -220,7 +225,9 @@ export async function buildBook(familyId: string, opts: { origin: string }): Pro
       stories: src.stories,
       voiceUrl: (id) => listenUrl(origin, id),
       elder,
-      langs: bookLangs(src.family),
+      // #231: казахский — только с флагом lang_kk (семье выключили — книга как сейчас, ru + ko)
+      langs: effectiveBookLangs(src.family, flag("lang_kk", { familyId: src.family.id, labs: src.family.labs })),
+      texts: src.texts,
     });
     if (rendered.missingKorean.length) console.warn(`[book] ${familyId}: нет в шрифте слогов ${rendered.missingKorean.join("")}`);
 

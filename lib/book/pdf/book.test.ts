@@ -62,8 +62,18 @@ describe("модель книги", () => {
     for (const c of book.chapters) expect([c.textKo, c.titleKo, c.quoteKo, c.blockKo]).toEqual([null, null, null, ""]);
     expect(book.groups.every((g) => g.ko === "")).toBe(true);
     expect(book.legacy.ko).toBe("");
-    // второй язык, для которого ещё нет вёрстки (kk — #231), печатается как одна книга на основном языке
-    expect(composeBook({ ...DEMO_BOOK, voiceUrl, langs: ["ru", "kk"] }).second).toBeNull();
+  });
+
+  it("#231: книга ru + kk — казахский из story_texts, без корейского; нет перевода — глава только по-русски", () => {
+    const [first, second] = DEMO_BOOK.stories;
+    const texts = [{ story_id: first!.id, lang: "kk" as const, title: "Пеш жанындағы кукси", text: "Мен 1940 жылы Үштөбеде дүниеге келдім.", quote: "Есімде." }];
+    const book = composeBook({ ...DEMO_BOOK, voiceUrl, langs: ["ru", "kk"], texts });
+    expect(book.second).toBe("kk");
+    const a = book.chapters.find((c) => c.id === first!.id)!;
+    expect([a.titleKo, a.textKo, a.quoteKo, a.blockKo]).toEqual(["Пеш жанындағы кукси", "Мен 1940 жылы Үштөбеде дүниеге келдім.", "Есімде.", ""]);
+    const b = book.chapters.find((c) => c.id === second!.id)!;
+    expect([b.titleKo, b.textKo, b.quoteKo]).toEqual([null, null, null]); // корейский из колонок не подставляется
+    expect(book.legacy.ko).toBe("");
   });
 
   it("абзацы", () => {
@@ -116,6 +126,16 @@ describe("PDF", () => {
     expect(one.pageCount).toBe(countPages(one.pdf));
     expect(one.pageCount).toBeLessThan(two.pageCount);
     expect(one.pageCount).toBeGreaterThanOrEqual(1 + 1 + 7);
+  }, 60_000);
+
+  it("#231: книга RU + KZ — казахский вторым языком, без корейского шрифта", async () => {
+    const texts = DEMO_BOOK.stories.map((st) => ({ story_id: st.id, lang: "kk" as const, title: "Әжемнің әңгімесі", text: "Мен 1940 жылы Үштөбеде дүниеге келдім. Әкем колхозда жұмыс істеді.", quote: "Құдайға шүкір." }));
+    const r = await renderBook({ ...DEMO_BOOK, voiceUrl, langs: ["ru", "kk"], texts });
+    if (process.env.BOOK_KK_OUT) writeFileSync(process.env.BOOK_KK_OUT, r.pdf);
+    const raw = r.pdf.toString("latin1");
+    expect(r.chapters).toBe(7);
+    expect(raw).toMatch(/NotoSerif-Regular/);
+    expect(raw).not.toMatch(/NotoSerifKR/); // ни одной корейской подписи
   }, 60_000);
 
   it("без готовых глав — понятная ошибка", async () => {

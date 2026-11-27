@@ -1,6 +1,7 @@
 // Модель книги (I5): из глав семьи — порядок, оглавление, раздел «Слова деда».
 // Чистые функции без сервера и React — тестируются напрямую.
 import { orderByLife } from "../order";
+import { chapterText, type StoryTextRow } from "../texts";
 import { BLOCKS } from "@/content/questions/blocks";
 import { DEFAULT_BOOK_LANGS, type BookLang, type LifeBlock, type Story, type Storyteller } from "@/lib/types";
 
@@ -24,13 +25,22 @@ export interface BookInput {
   /**
    * #230: языки книги (families.book_langs), первый — основной. Не задано — ru, ko (как сейчас).
    * 1 язык — сплошной текст без второго языка; 2 — глава на основном, следом на втором (RU | KR как сейчас).
-   * Пока второй язык печатается только корейский: казахский текст и шрифт — #231.
+   * #231: второй язык — ko (как сейчас) или kk (флаг lang_kk); тексты kk — из story_texts (`texts`).
    */
   langs?: readonly BookLang[];
+  /** #231: строки story_texts глав — для языков без колонок в stories (kk). */
+  texts?: readonly StoryTextRow[];
 }
 
 export type Elder = "grandfather" | "grandmother";
 
+/** Второй язык, который книга умеет печатать (шрифт и подписи — document.tsx). */
+export type SecondLang = "ko" | "kk";
+
+/**
+ * Глава книги. Поля *Ko — текст на **втором** языке книги (BookModel.second): корейский (как с I5) или казахский
+ * (#231) — имена остались с тех пор, когда второй язык был только корейский.
+ */
 export interface BookChapter {
   id: string;
   block: LifeBlock | null;
@@ -65,8 +75,8 @@ export interface BookModel {
   builtAt: Date;
   /** Языки книги, первый — основной (#230) */
   langs: BookLang[];
-  /** Второй язык книги, который печатаем (сейчас только ko); null — книга на одном языке */
-  second: "ko" | null;
+  /** Второй язык книги, который печатаем: ko (как сейчас) или kk (#231); null — книга на одном языке */
+  second: SecondLang | null;
 }
 
 export const LEGACY_TITLE: Record<Elder, { ru: string; ko: string }> = {
@@ -116,21 +126,23 @@ export function paragraphs(text: string | null | undefined): string[] {
 export function composeBook(input: BookInput): BookModel {
   const elder = input.elder ?? guessElder(input.storyteller.name);
   const langs = input.langs?.length ? [...input.langs] : [...DEFAULT_BOOK_LANGS];
-  const second = langs.length > 1 && langs[1] === "ko" ? "ko" : null;
+  const second: SecondLang | null = langs.length > 1 && (langs[1] === "ko" || langs[1] === "kk") ? langs[1] : null;
   const ko = second === "ko";
   const chapters: BookChapter[] = orderChapters(input.stories.filter(isBookChapter)).map((s, i) => {
     const block = BLOCKS.find((b) => b.id === s.block);
+    // второй язык: ko — колонки (как сейчас), kk — строка story_texts (#231); нет перевода — глава только по-русски
+    const tr = second === "kk" ? chapterText(s, input.texts ?? [], "kk") : { title: s.title_ko, text: s.text_ko, quote: s.quote_ko };
     return {
       id: s.id,
       block: s.block,
       blockRu: block?.ru ?? "Рассказ",
       blockKo: ko ? (block?.ko ?? "이야기") : "",
       title: s.title?.trim() || `Рассказ ${i + 1}`,
-      titleKo: (ko && s.title_ko?.trim()) || null,
+      titleKo: (second && tr.title?.trim()) || null,
       quote: s.quote?.trim() || null,
-      quoteKo: (ko && s.quote_ko?.trim()) || null,
+      quoteKo: (second && tr.quote?.trim()) || null,
       textRu: s.text_ru!.trim(),
-      textKo: (ko && s.text_ko?.trim()) || null,
+      textKo: (second && tr.text?.trim()) || null,
       voiceUrl: input.voiceUrl(s.id),
     };
   });

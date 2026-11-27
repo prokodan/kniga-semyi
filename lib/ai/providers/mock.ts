@@ -3,6 +3,8 @@
 import transcribeFixture from "@/fixtures/ai/transcribe.json";
 import editFixture from "@/fixtures/ai/edit.json";
 import translateFixture from "@/fixtures/ai/translate.json";
+import translateKkFixture from "@/fixtures/ai/translate.kk.json";
+import translateRuFixture from "@/fixtures/ai/translate.ru.json";
 import taleFixture from "@/fixtures/ai/tale.json";
 import type { AiProvider, AiStep, ProviderCall } from "../types";
 import { sha256 } from "../util";
@@ -39,10 +41,15 @@ export function mockOutput<S extends AiStep>(step: S, input: ProviderCall<S>["in
     }
     case "edit":
       return editFixture;
-    case "translate":
-      return translateFixture;
+    case "translate": {
+      // #231: перевод на казахский / с казахского — нейтральные ключи text / title / quote (как у translate.kk.md)
+      const to = (input as ProviderCall<"translate">["input"]).to;
+      return to === "kk" ? translateKkFixture : to === "ru" ? translateRuFixture : translateFixture;
+    }
     case "completeness": {
       const i = input as ProviderCall<"completeness">["input"];
+      // #105 п. 1: следующий вопрос в том же ответе — как next_question заглушки
+      const next = i.next ? { next: mockOutput("next_question", { ...i.next, sameBlock: true } as never) } : {};
       const short = wordCount(i.answer) < 25;
       const canAsk = i.followupsAsked < i.maxFollowups;
       if (i.answer.trim() === "" || (short && canAsk)) {
@@ -56,9 +63,10 @@ export function mockOutput<S extends AiStep>(step: S, input: ProviderCall<S>["in
           followup: MOCK_FOLLOWUPS[Math.min(i.followupsAsked, MOCK_FOLLOWUPS.length - 1)]!,
           done: false,
           offTopicBlock: null,
+          ...next,
         };
       }
-      return { covered: i.minimum, missing: [], followup: null, done: true, offTopicBlock: null };
+      return { covered: i.minimum, missing: [], followup: null, done: true, offTopicBlock: null, ...next };
     }
     case "next_question": {
       const i = input as ProviderCall<"next_question">["input"];

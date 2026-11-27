@@ -6,10 +6,11 @@
 // Здесь нет server-only: движок собирается из зависимостей, чтобы его гоняли тесты и симулятор (I15).
 // Боевая сборка с ai-роутером и Supabase — lib/interview/index.ts.
 import type { AiRouter } from "@/lib/ai/router";
-import { AiUnavailableError, type AiOutput } from "@/lib/ai/types";
+import { AiUnavailableError, type AiInput, type AiOutput } from "@/lib/ai/types";
 import type { LifeBlock, Question, SessionMode, Story } from "@/lib/types";
 import { getQuestionBank, type QuestionBank } from "./bank";
 import {
+  SHORT_ANSWER_WORDS,
   addUnique,
   blockTransition,
   candidateQuestions,
@@ -104,6 +105,17 @@ export interface InterviewDeps {
   ai: Pick<AiRouter, "run">;
   repo: InterviewRepo;
   bank?: QuestionBank;
+  /**
+   * #105 п. 1–2 (флаг lang_kk): меньше вызовов ИИ на ответ — полнота и следующий вопрос одним вызовом, короткий
+   * первый ответ — уточнение по шаблону без ИИ. Нет / false / ошибка — как до #105 (симулятор eval — тоже как до).
+   */
+  fewerCalls?: (familyId: string) => Promise<boolean>;
+}
+
+/** #105 п. 1: следующий вопрос, выбранный заодно с проверкой полноты, и кандидаты, из которых выбирали. */
+interface PrePick {
+  ids: string[];
+  pick: NonNullable<AiOutput<"completeness">["next"]>;
 }
 
 const PHRASES = {
@@ -192,6 +204,21 @@ export function createInterview(deps: InterviewDeps) {
       .slice(-KNOWN_ANSWERS);
   }
 
+  async function knownInput(storytellerId: string, state: SessionState): Promise<{ knownAnswers?: string[] }> {
+    const known = await knownAnswers(storytellerId, state);
+    return known.length > 0 ? { knownAnswers: known } : {};
+  }
+
+  /** #105: включён ли режим «меньше вызовов» семье. Ошибка — нет (как до #105). */
+  async function fewerCalls(familyId: string): Promise<boolean> {
+    if (!deps.fewerCalls) return false;
+    try {
+      return await deps.fewerCalls(familyId);
+    } catch {
+      return false;
+    }
+  }
+
   /** #140: первое отложенное конвейером уточнение, которое в этой сессии ещё не задавали. Ошибка / нет колонки — null. */
   async function pickDeferred(storytellerId: string, state: SessionState): Promise<{ ask: DeferredAsk; question: Question } | null> {
     if (!repo.deferredFollowups) return null;
@@ -234,6 +261,8 @@ export function createInterview(deps: InterviewDeps) {
       wasBlockDone: boolean;
       /** #204: семья — в ai_usage.family_id (расход next_question на книгу, #105 п. 6) */
       familyId?: string;
+      /** #105 п. 1: следующий вопрос уже выбран вызовом полноты — next_question не нужен (если кандидаты те же) */
+      prePick?: PrePick;
     },
   ): Promise<AnswerResult> {
     // #140: уходим с отложенного уточнения (ответили, пропустили, «позже») — больше его не задаём.
@@ -261,15 +290,17 @@ export function createInterview(deps: InterviewDeps) {
     if (candidates.length > 0) {
       next = candidates[0]!;
       try {
-        const known = await knownAnswers(opts.storytellerId, state);
-        const pick = await ai.run("next_question", {
-          storytellerName: opts.storyteller,
-          coveredBlocks: state.covered_blocks,
-          recentAnswers: state.recent_answers ?? [],
-          candidateQuestions: candidates.map((q) => ({ id: q.id, block: q.block, text: q.ru })),
-          sameBlock: true,
-          ...(known.length > 0 ? { knownAnswers: known } : {}),
-        }, opts.familyId ? { familyId: opts.familyId } : undefined);
+        const pre = opts.prePick && opts.prePick.ids.join("|") === candidates.map((q) => q.id).join("|") ? opts.prePick.pick : null;
+        const pick =
+          pre ??
+          (await ai.run("next_question", {
+            storytellerName: opts.storyteller,
+            coveredBlocks: state.covered_blocks,
+            recentAnswers: state.recent_answers ?? [],
+            candidateQuestions: candidates.map((q) => ({ id: q.id, block: q.block, text: q.ru })),
+            sameBlock: true,
+            ...(await knownInput(opts.storytellerId, state)),
+          }, opts.familyId ? { familyId: opts.familyId } : undefined));
         // #99 п. 2: уже отвеченное в прошлых рассказах не спрашиваем (не больше 2 за раз — страховка от ошибки модели).
         const answeredBefore = (pick.alreadyAnswered ?? [])
           .filter((id) => candidates.some((q) => q.id === id) && id !== prev.id)
@@ -348,10 +379,41 @@ export function createInterview(deps: InterviewDeps) {
     let res: AiOutput<"completeness">;
     // Прошлые ответы (без текущего) — чтобы уточнение не спрашивало уже рассказанное.
     const earlier = (state.recent_answers ?? []).slice(0, -1).map((a) => a.slice(0, KNOWN_ANSWER_CHARS));
+    const fewer = await fewerCalls(main.family_id);
+    const asked = state.followups_asked ?? 0;
+    let prePick: PrePick | undefined;
+    // #105 п. 2: короткий первый ответ всё равно получит уточнение (decideAfterCompleteness, SHORT_ANSWER_WORDS) —
+    // берём его из шаблона по минимуму вопроса без вызова ИИ.
+    if (fewer && !answeringFollowup && asked === 0 && asked < MAX_FOLLOWUPS && !state.emotional_pause && wordCount(answer) < SHORT_ANSWER_WORDS) {
+      res = { covered: [], missing: [...question.minimum], followup: null, done: false, offTopicBlock: null };
+      return decide(res);
+    }
+    // #105 п. 1: следующий вопрос — тем же вызовом: кандидаты те, что будут у advance(), если ответ примут.
+    let next: AiInput<"completeness">["next"];
+    if (fewer) {
+      const accepted: SessionState = {
+        ...state,
+        answered_question_ids: addUnique(state.answered_question_ids, question.id),
+        later_question_ids: removeValue(state.later_question_ids, question.id),
+      };
+      const covered = coveredBlocks(bank, accepted);
+      const candidates = candidateQuestions(bank, { ...accepted, covered_blocks: covered }, question.id, question.block);
+      if (candidates.length > 0) {
+        next = {
+          storytellerName: name,
+          coveredBlocks: covered,
+          recentAnswers: state.recent_answers ?? [],
+          candidateQuestions: candidates.map((q) => ({ id: q.id, block: q.block, text: q.ru })),
+          ...(await knownInput(storytellerId, accepted)),
+        };
+        prePick = { ids: candidates.map((q) => q.id), pick: { questionId: "", bridge: "" } };
+      }
+    }
     try {
       res = await ai.run(
         "completeness",
         {
+          ...(next ? { next } : {}),
           questionText: question.ru,
           block: question.block,
           minimum: question.minimum,
@@ -369,50 +431,55 @@ export function createInterview(deps: InterviewDeps) {
       // #99 п. 5: короткий ответ всё равно получает одно уточнение — запасное, без ИИ.
       res = { covered: [], missing: [], followup: null, done: true, offTopicBlock: null };
     }
+    // модель выбрала следующий вопрос — advance() возьмёт его без next_question; не выбрала — вызовет как раньше
+    prePick = prePick && res.next ? { ids: prePick.ids, pick: res.next } : undefined;
+    return decide(res);
 
-    const decision = decideAfterCompleteness(res, { question, state, answeringFollowup, bank, answer });
+    async function decide(res: AiOutput<"completeness">): Promise<AnswerResult> {
+      const decision = decideAfterCompleteness(res, { question, state, answeringFollowup, bank, answer });
 
-    if (decision.kind === "followup") {
-      state.pending_followup = decision.text;
-      state.asked_followups = pushAsked(state, decision.text);
-      state.followups_asked = (state.followups_asked ?? 0) + 1;
-      state.emotional_pause = false;
-      await repo.saveState(sessionId, state);
-      return {
-        type: "followup",
-        questionId: question.id,
-        text: decision.text,
-        followupsLeft: MAX_FOLLOWUPS - state.followups_asked,
-        storyId: main.id,
-        progress: progress(state),
-      };
-    }
-
-    if (decision.kind === "offtopic") {
-      // Рассказ не теряем: он уходит в свой блок и не считается ответом на текущий вопрос.
-      await repo.updateStory(main.id, { block: decision.block, question_id: null });
-      state.offtopic_blocks = addUnique(state.offtopic_blocks, decision.block);
-      state.current_story_id = null;
-      if (decision.returnText) {
+      if (decision.kind === "followup") {
+        state.pending_followup = decision.text;
+        state.asked_followups = pushAsked(state, decision.text);
         state.followups_asked = (state.followups_asked ?? 0) + 1;
         state.emotional_pause = false;
         await repo.saveState(sessionId, state);
         return {
           type: "followup",
           questionId: question.id,
-          text: decision.returnText,
+          text: decision.text,
           followupsLeft: MAX_FOLLOWUPS - state.followups_asked,
           storyId: main.id,
           progress: progress(state),
         };
       }
-      state.later_question_ids = addUnique(state.later_question_ids, question.id);
-      return advance(sessionId, state, question, { storyteller: name, storytellerId, storyId: main.id, wasBlockDone, familyId: main.family_id });
-    }
 
-    state.answered_question_ids = addUnique(state.answered_question_ids, question.id);
-    state.later_question_ids = removeValue(state.later_question_ids, question.id);
-    return advance(sessionId, state, question, { storyteller: name, storytellerId, storyId: main.id, wasBlockDone, familyId: main.family_id });
+      if (decision.kind === "offtopic") {
+        // Рассказ не теряем: он уходит в свой блок и не считается ответом на текущий вопрос.
+        await repo.updateStory(main.id, { block: decision.block, question_id: null });
+        state.offtopic_blocks = addUnique(state.offtopic_blocks, decision.block);
+        state.current_story_id = null;
+        if (decision.returnText) {
+          state.followups_asked = (state.followups_asked ?? 0) + 1;
+          state.emotional_pause = false;
+          await repo.saveState(sessionId, state);
+          return {
+            type: "followup",
+            questionId: question.id,
+            text: decision.returnText,
+            followupsLeft: MAX_FOLLOWUPS - state.followups_asked,
+            storyId: main.id,
+            progress: progress(state),
+          };
+        }
+        state.later_question_ids = addUnique(state.later_question_ids, question.id);
+        return advance(sessionId, state, question, { storyteller: name, storytellerId, storyId: main.id, wasBlockDone, familyId: main.family_id });
+      }
+
+      state.answered_question_ids = addUnique(state.answered_question_ids, question.id);
+      state.later_question_ids = removeValue(state.later_question_ids, question.id);
+      return advance(sessionId, state, question, { storyteller: name, storytellerId, storyId: main.id, wasBlockDone, familyId: main.family_id, prePick });
+    }
   }
 
   /**

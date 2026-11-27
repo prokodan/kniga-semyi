@@ -4,9 +4,10 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { nameHints } from "@/lib/interview/names";
 import { loadNameHints } from "@/lib/interview/names-db";
-import type { FamilyEntity, Story } from "@/lib/types";
+import type { BookLang, Family, FamilyEntity, Story } from "@/lib/types";
 import { loadStoryTexts, mirrorRows, withStoryTexts, type StoryTextRow } from "@/lib/book/texts";
 import { mergeEntities, rankEntities, type EntityDraft } from "./entities";
+import { effectiveBookLangs } from "./langs";
 
 export type PipelinePatch = Partial<
   Pick<
@@ -45,7 +46,25 @@ export interface PipelineRepo {
   saveEntities?(story: Story, drafts: EntityDraft[]): Promise<void>;
   /** #121 #124: запомнить корейское написание (только где name_ko ещё пусто — первая глава задаёт его для всей книги). */
   saveSpellings?(story: Story, spellings: { id: string; name_ko: string }[]): Promise<void>;
+  /**
+   * #231: языки книги семьи (с учётом флага lang_kk) и языки, на которые глава уже переведена (строки story_texts).
+   * Нет реализации — как до #231: перевод на корейский, пока нет text_ko.
+   */
+  translationPlan?(story: Story): Promise<{ langs: BookLang[]; have: BookLang[] }>;
+  /** #231: перевод главы на язык без колонок в stories (kk) — строка story_texts (origin ai). */
+  saveText?(story: Story, lang: BookLang, t: TextFields): Promise<void>;
+  /** #231: пересборка — убрать переводы ИИ без колонок (kk): иначе перевод старого текста остался бы в книге. */
+  dropTranslations?(story: Story): Promise<void>;
 }
+
+export interface TextFields {
+  title: string | null;
+  text: string | null;
+  quote: string | null;
+}
+
+/** Колонок у этих языков нет — их переводы живут только в story_texts. */
+const COLUMN_LANGS: readonly string[] = ["ru", "ko"];
 
 /** Более ранние основные истории рассказчика: не уточнения, не пропуски, создана раньше. */
 export function isEarlier(s: Pick<Story, "id" | "storyteller_id" | "parent_story_id" | "status" | "created_at">, story: Story): boolean {
@@ -117,6 +136,8 @@ export class MemoryPipelineRepo implements PipelineRepo {
     const touched = new Set<string>();
     if ("text_ru" in patch || "title" in patch || "quote" in patch) touched.add("ru");
     if ("text_ko" in patch || "title_ko" in patch || "quote_ko" in patch) touched.add("ko");
+    // #231: как триггер stories_stale_translations — новый русский текст делает переводы без колонок (kk) устаревшими
+    if ("text_ru" in patch) this.texts.set(id, (this.texts.get(id) ?? []).filter((r) => COLUMN_LANGS.includes(r.lang)));
     if (touched.size) {
       const fresh = mirrorRows(s).filter((r) => touched.has(r.lang));
       this.texts.set(id, [...(this.texts.get(id) ?? []).filter((r) => !touched.has(r.lang)), ...fresh]);
@@ -164,6 +185,21 @@ export class MemoryPipelineRepo implements PipelineRepo {
   async interviewHold(story: Story) {
     return story.session_id && this.sessions ? holdsStory(this.sessions.get(story.session_id) ?? null, story) : false;
   }
+  /** #231: языки книги по семьям (тесты кладут сами); нет — ru, ko. Флаг lang_kk в памяти включён (как локально). */
+  bookLangs = new Map<string, BookLang[]>();
+  langKkOn = true;
+  async translationPlan(story: Story) {
+    const langs = effectiveBookLangs({ book_langs: this.bookLangs.get(story.family_id) ?? null }, this.langKkOn);
+    const have = (this.texts.get(story.id) ?? []).filter((r) => r.text != null).map((r) => r.lang);
+    return { langs, have };
+  }
+  async saveText(story: Story, lang: BookLang, t: TextFields) {
+    const rows = (this.texts.get(story.id) ?? []).filter((r) => r.lang !== lang);
+    this.texts.set(story.id, [...rows, { story_id: story.id, lang, ...t }]);
+  }
+  async dropTranslations(story: Story) {
+    this.texts.set(story.id, (this.texts.get(story.id) ?? []).filter((r) => COLUMN_LANGS.includes(r.lang)));
+  }
 }
 
 // ---------------- Supabase ----------------
@@ -174,6 +210,8 @@ export class SupabasePipelineRepo implements PipelineRepo {
   constructor(
     private db: SupabaseClient,
     private bucket = "audio",
+    /** #231: включён ли флаг lang_kk семье (lib/flags — server-only, поэтому снаружи). Нет — выключен. */
+    private langKk: (family: Pick<Family, "id" | "labs">) => boolean = () => false,
   ) {}
 
   async getStory(id: string) {
@@ -271,6 +309,26 @@ export class SupabasePipelineRepo implements PipelineRepo {
       .limit(80);
     if (error) throw new Error(`прошлые истории: ${error.message}`);
     return (data ?? []) as Pick<Story, "id" | "transcript" | "followups" | "created_at">[];
+  }
+  async translationPlan(story: Story) {
+    // "*": book_langs / labs появились миграциями — до migrate запрос не должен падать (тогда — как сейчас)
+    const { data, error } = await this.db.from("families").select("*").eq("id", story.family_id).maybeSingle();
+    if (error) throw new Error(`семья истории: ${error.message}`);
+    const f = (data ?? { id: story.family_id }) as Pick<Family, "id" | "labs" | "book_langs">;
+    const langs = effectiveBookLangs(f, this.langKk(f));
+    if (langs.every((l) => COLUMN_LANGS.includes(l))) return { langs, have: [] }; // ru / ko — по колонкам, без запроса
+    const rows = await loadStoryTexts(this.db, [story.id]);
+    return { langs, have: rows.filter((r) => r.text != null).map((r) => r.lang) };
+  }
+  async saveText(story: Story, lang: BookLang, t: TextFields) {
+    const { error } = await this.db
+      .from("story_texts")
+      .upsert({ story_id: story.id, lang, ...t, origin: "ai", status: "ready" }, { onConflict: "story_id,lang" });
+    if (error) throw new Error(`перевод ${lang}: ${error.message}`);
+  }
+  async dropTranslations(story: Story) {
+    const { error } = await this.db.from("story_texts").delete().eq("story_id", story.id).eq("origin", "ai").not("lang", "in", "(ru,ko)");
+    if (error) console.warn(`[pipeline] старые переводы ${story.id.slice(0, 8)}:`, error.message); // нет таблицы до migrate — не страшно
   }
   async interviewHold(story: Story) {
     if (!story.session_id) return false;

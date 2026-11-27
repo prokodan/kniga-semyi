@@ -2,7 +2,7 @@
 // на голос → «Слова деда» → последняя страница. Формат A5, колонтитул с названием, номера страниц.
 import { Document, Image, Page, Path, StyleSheet, Svg, Text, View } from "@react-pdf/renderer";
 import QRCode from "qrcode";
-import type { BookChapter, BookModel } from "./model";
+import type { BookChapter, BookModel, SecondLang } from "./model";
 import { paragraphs } from "./model";
 import { FAMILY_KO, FAMILY_RU } from "./fonts";
 import { COLOR, PAGE, TYPE } from "./theme";
@@ -68,6 +68,21 @@ const s = StyleSheet.create({
   paraKo: { marginBottom: 7 },
 });
 
+/**
+ * #231: шрифт второго языка. Корейский — Noto Serif KR (+ кириллица запасным, #97); казахский — тот же Noto Serif,
+ * что русский (в нём есть әіңғүұқөһ — тест lib/book/pdf/scripts.test.ts), иначе буквы казахского брались бы по одной
+ * из разных шрифтов.
+ */
+function secondFont(second: SecondLang | null): string[] {
+  return second === "ko" ? FAMILY_KO : FAMILY_RU;
+}
+
+/** Подпись второго языка над переводом главы и в последней странице. */
+const SECOND_LABEL: Record<SecondLang, { kicker: string; colophon: string }> = {
+  ko: { kicker: "по-корейски", colophon: "на корейский" },
+  kk: { kicker: "по-казахски", colophon: "на казахский" },
+};
+
 // ---------------- QR ----------------
 
 /** QR векторно (Path из модулей): чёткий при печати и с проектора, без картинок. */
@@ -89,7 +104,7 @@ function QrMark({ text, size }: { text: string; size: number }) {
   );
 }
 
-function VoiceBox({ url, her }: { url: string; her: boolean }) {
+function VoiceBox({ url, her, ko = true }: { url: string; her: boolean; ko?: boolean }) {
   return (
     <View
       wrap={false}
@@ -111,7 +126,7 @@ function VoiceBox({ url, her }: { url: string; her: boolean }) {
       </View>
       <View style={{ flex: 1 }}>
         <Text style={{ fontWeight: 700, fontSize: 9.5, lineHeight: 1.35 }}>Послушайте этот рассказ {her ? "её" : "его"} голосом</Text>
-        <Text style={{ fontFamily: FAMILY_KO, fontSize: 8.5, color: COLOR.inkSoft, lineHeight: 1.45 }}>목소리로 직접 들어 보세요</Text>
+        {ko && <Text style={{ fontFamily: FAMILY_KO, fontSize: 8.5, color: COLOR.inkSoft, lineHeight: 1.45 }}>목소리로 직접 들어 보세요</Text>}
         <Text style={{ fontSize: 7.5, color: COLOR.muted, lineHeight: 1.4, marginTop: 2 }}>Наведите камеру телефона на код</Text>
       </View>
     </View>
@@ -123,11 +138,12 @@ function VoiceBox({ url, her }: { url: string; her: boolean }) {
 // lineHeight react-pdf 4.x уводит динамический текст за страницу или в «unsupported number».
 // Каждая глава — отдельная <Page>: так fixed-метка узнаёт её первую страницу для оглавления.
 
-function RunningHead({ title }: { title: string }) {
+function RunningHead({ title, ko }: { title: string; ko: boolean }) {
   return (
     <View style={s.header} fixed>
       <Text>{title}</Text>
-      <Text style={{ fontFamily: FAMILY_KO }}>우리 이야기</Text>
+      {/* #231: книга без корейского (ru, ru + kk) — без корейской подписи */}
+      {ko ? <Text style={{ fontFamily: FAMILY_KO }}>우리 이야기</Text> : <Text>Книга семьи</Text>}
     </View>
   );
 }
@@ -186,12 +202,12 @@ function Cover({ book }: { book: BookModel }) {
   );
 }
 
-function TocLine({ ch, page }: { ch: BookChapter; page: number | undefined }) {
+function TocLine({ ch, page, font }: { ch: BookChapter; page: number | undefined; font: string[] }) {
   return (
     <View style={{ flexDirection: "row", alignItems: "flex-end", marginBottom: 3 }} wrap={false}>
       <View style={{ flex: 1, paddingRight: 8 }}>
         <Text style={{ fontSize: 10, lineHeight: 1.3 }}>{ch.title}</Text>
-        {ch.titleKo && <Text style={{ fontFamily: FAMILY_KO, fontSize: 8, color: COLOR.muted, lineHeight: 1.3 }}>{ch.titleKo}</Text>}
+        {ch.titleKo && <Text style={{ fontFamily: font, fontSize: 8, color: COLOR.muted, lineHeight: 1.3 }}>{ch.titleKo}</Text>}
       </View>
       <Text style={{ fontSize: 10, color: COLOR.inkSoft, minWidth: 18, textAlign: "right" }}>{page ?? "·"}</Text>
     </View>
@@ -223,7 +239,7 @@ function Toc({ book, pages }: { book: BookModel; pages: PageMap }) {
             )}
           </Text>
           {g.chapters.map((ch) => (
-            <TocLine key={ch.id} ch={ch} page={pages[ch.id]} />
+            <TocLine key={ch.id} ch={ch} page={pages[ch.id]} font={secondFont(book.second)} />
           ))}
         </View>
       ))}
@@ -239,7 +255,7 @@ function Toc({ book, pages }: { book: BookModel; pages: PageMap }) {
             )}
           </Text>
           {book.legacy.chapters.map((ch) => (
-            <TocLine key={ch.id} ch={ch} page={pages[ch.id]} />
+            <TocLine key={ch.id} ch={ch} page={pages[ch.id]} font={secondFont(book.second)} />
           ))}
         </View>
       )}
@@ -266,10 +282,21 @@ function PageMark({ id, collect }: { id: string; collect?: BookDocumentProps["co
 }
 
 /** Страница книги с колонтитулом и номером; wrap — содержимое перетекает на следующие страницы. */
-function BookPage({ title, collect, children }: { title: string; collect?: BookDocumentProps["collect"]; children: React.ReactNode }) {
+function BookPage({
+  title,
+  collect,
+  ko = true,
+  children,
+}: {
+  title: string;
+  collect?: BookDocumentProps["collect"];
+  /** #231: в книге есть корейский (по умолчанию — как было) */
+  ko?: boolean;
+  children: React.ReactNode;
+}) {
   return (
     <Page size={PAGE.size} style={s.page} wrap>
-      <RunningHead title={title} />
+      <RunningHead title={title} ko={ko} />
       {children}
       <Folio collect={collect} />
     </Page>
@@ -281,21 +308,23 @@ function Chapter({
   legacy,
   title,
   her,
-  ko,
+  second,
   collect,
 }: {
   ch: BookChapter;
   legacy: boolean;
   title: string;
   her: boolean;
-  /** #230: в книге есть корейский (book.second === "ko") — как сейчас; нет — сплошной русский текст */
-  ko: boolean;
+  /** #230: второй язык книги — ko (как сейчас) или kk (#231); null — сплошной русский текст */
+  second: SecondLang | null;
   collect?: BookDocumentProps["collect"];
 }) {
+  const ko = second === "ko";
+  const font = secondFont(second);
   const paraRu = paragraphs(ch.textRu);
   const paraKo = paragraphs(ch.textKo);
   return (
-    <BookPage title={title} collect={collect}>
+    <BookPage title={title} collect={collect} ko={ko}>
       <PageMark id={ch.id} collect={collect} />
       <View>
         <Text style={s.kicker}>
@@ -310,21 +339,21 @@ function Chapter({
           )}
         </Text>
         <Text style={s.h1}>{ch.title}</Text>
-        {ch.titleKo && <Text style={s.h1ko}>{ch.titleKo}</Text>}
+        {ch.titleKo && <Text style={{ ...s.h1ko, fontFamily: font }}>{ch.titleKo}</Text>}
         <View style={s.rule} />
 
         {ch.quote && (
           <View style={{ borderLeftWidth: 2, borderLeftColor: COLOR.seal, paddingLeft: 10, marginBottom: 12 }} wrap={false}>
             <Text style={{ fontStyle: "italic", fontSize: legacy ? 14 : 12.5, lineHeight: 1.45 }}>«{ch.quote}»</Text>
             {ch.quoteKo && (
-              <Text style={{ fontFamily: FAMILY_KO, fontSize: legacy ? 11 : 10, color: COLOR.inkSoft, lineHeight: 1.6, marginTop: 4 }}>
-                “{ch.quoteKo}”
+              <Text style={{ fontFamily: font, fontSize: legacy ? 11 : 10, color: COLOR.inkSoft, lineHeight: 1.6, marginTop: 4 }}>
+                {ko ? <>“{ch.quoteKo}”</> : <>«{ch.quoteKo}»</>}
               </Text>
             )}
           </View>
         )}
 
-        <VoiceBox url={ch.voiceUrl} her={her} />
+        <VoiceBox url={ch.voiceUrl} her={her} ko={ko} />
 
         {paraRu.map((p, i) => (
           <Text key={i} style={s.para}>
@@ -333,16 +362,17 @@ function Chapter({
         ))}
       </View>
 
-      {paraKo.length > 0 && (
+      {paraKo.length > 0 && second && (
         <View break>
           <Text style={s.kicker}>
-            <Text style={{ fontFamily: FAMILY_KO }}>{legacy ? "당부" : ch.blockKo}</Text> · по-корейски
+            {ko ? <Text style={{ fontFamily: FAMILY_KO }}>{legacy ? "당부" : ch.blockKo}</Text> : legacy ? "Наказ" : ch.blockRu}
+            {` · ${SECOND_LABEL[second].kicker}`}
           </Text>
-          <Text style={{ ...s.h1ko, fontSize: 17, color: COLOR.ink, fontWeight: 700, marginTop: 6 }}>{ch.titleKo ?? ch.title}</Text>
+          <Text style={{ ...s.h1ko, fontFamily: font, fontSize: 17, color: COLOR.ink, fontWeight: 700, marginTop: 6 }}>{ch.titleKo ?? ch.title}</Text>
           <View style={s.rule} />
-          <View style={s.ko}>
+          <View style={ko ? s.ko : { fontFamily: FAMILY_RU }}>
             {paraKo.map((p, i) => (
-              <Text key={i} style={s.paraKo}>
+              <Text key={i} style={ko ? s.paraKo : s.para}>
                 {p}
               </Text>
             ))}
@@ -374,8 +404,8 @@ function Colophon({ book }: { book: BookModel }) {
       <View style={s.rule} />
       <Text style={{ fontSize: 9.5, color: COLOR.inkSoft, lineHeight: 1.6 }}>
         Эту книгу {book.elder === "grandmother" ? "рассказала" : "рассказал"} {book.storyteller.name}
-        {book.second === "ko"
-          ? " — своим голосом, для своей семьи. Каждая глава записана на диктофон телефона, бережно отредактирована без переписывания и переведена на корейский язык."
+        {book.second
+          ? ` — своим голосом, для своей семьи. Каждая глава записана на диктофон телефона, бережно отредактирована без переписывания и переведена ${SECOND_LABEL[book.second].colophon} язык.`
           : " — своим голосом, для своей семьи. Каждая глава записана на диктофон телефона и бережно отредактирована без переписывания."}
       </Text>
       {book.second === "ko" && (
@@ -394,24 +424,25 @@ export function BookDocument({ book, pages = {}, collect }: BookDocumentProps) {
   const regular = book.chapters.filter((c) => c.block !== "legacy");
   const her = book.elder === "grandmother";
   const ko = book.second === "ko";
+  const second = book.second;
   return (
     <Document title={book.title} author={book.storyteller.name} subject={ko ? "Книга семьи · 우리 이야기" : "Книга семьи"} creator="Книга семьи" producer="Книга семьи" language="ru">
       <Cover book={book} />
-      <BookPage title={book.title} collect={collect}>
+      <BookPage title={book.title} collect={collect} ko={ko}>
         <Toc book={book} pages={pages} />
       </BookPage>
       {regular.map((ch) => (
-        <Chapter key={ch.id} ch={ch} legacy={false} title={book.title} her={her} ko={ko} collect={collect} />
+        <Chapter key={ch.id} ch={ch} legacy={false} title={book.title} her={her} second={second} collect={collect} />
       ))}
       {book.legacy.chapters.length > 0 && (
-        <BookPage title={book.title} collect={collect}>
+        <BookPage title={book.title} collect={collect} ko={ko}>
           <LegacyDivider book={book} />
         </BookPage>
       )}
       {book.legacy.chapters.map((ch) => (
-        <Chapter key={ch.id} ch={ch} legacy title={book.title} her={her} ko={ko} collect={collect} />
+        <Chapter key={ch.id} ch={ch} legacy title={book.title} her={her} second={second} collect={collect} />
       ))}
-      <BookPage title={book.title} collect={collect}>
+      <BookPage title={book.title} collect={collect} ko={ko}>
         <Colophon book={book} />
       </BookPage>
     </Document>

@@ -10,7 +10,7 @@
 // Перед вызовом — кэш по sha256(шаг + версия промпта + вход). Все провайдеры отпали → AiUnavailableError.
 import { getAiMode, type AiMode } from "@/lib/env";
 import { DEFAULT_THRESHOLD, QUOTA_TIMEZONE, type RouteEntry } from "./config";
-import { loadPrompt } from "./prompts";
+import { loadPrompt, promptVariant } from "./prompts";
 import { geminiProvider } from "./providers/gemini";
 import { mockProvider } from "./providers/mock";
 import { openaiProvider } from "./providers/openai";
@@ -155,7 +155,7 @@ export function createRouter(deps: RouterDeps) {
 
   async function runWithMeta<S extends AiStep>(step: S, rawInput: AiInput<S>, opts: RunOptions = {}): Promise<RunResult<S>> {
     const input = inputSchemas[step].parse(rawInput) as AiParsedInput<S>;
-    const prompt = await getPrompt(step);
+    const prompt = await getPrompt(step, promptVariant(step, input)); // #231: перевод — по языку `to`
     const isMock = mode() === "mock";
     const hash = sha256(`${step}|${prompt.version}|${stableStringify(input)}`);
     const attempts: RunResult<S>["attempts"] = [];

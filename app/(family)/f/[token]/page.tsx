@@ -3,10 +3,13 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { requestOrigin } from "@/lib/book/chapter";
 import { blockProgress, getFamilyByToken, getFamilyStore } from "@/lib/db/access";
+import { flag } from "@/lib/flags";
 import { healFamily } from "@/lib/pipeline/heal";
+import { choiceOf, effectiveBookLangs } from "@/lib/pipeline/langs";
 import { BlockProgress } from "../../_ui/BlockProgress";
 import { LinkNotFound } from "../../_ui/LinkNotFound";
 import { ShareLink } from "../../_ui/ShareLink";
+import { BookLangs } from "./BookLangs";
 
 export const dynamic = "force-dynamic";
 export const metadata: Metadata = { title: "Книга семьи", robots: { index: false, follow: false } };
@@ -34,6 +37,8 @@ export default async function FamilyPage({ params, searchParams }: { params: Pro
   healFamily(await requestOrigin(), token);
 
   const { family, storyteller } = view;
+  // #231: «Языки книги» (RU + KR / RU + KZ / RU) — только с флагом lang_kk
+  const langKk = flag("lang_kk", { familyId: family.id, labs: family.labs });
   const progress = blockProgress(view.stories, storyteller?.id);
   const photo = storyteller?.photo_url ? await getFamilyStore().photoUrl(storyteller.photo_url) : null;
   const chapters = view.stories.filter((s) => !s.parent_story_id && s.storyteller_id === storyteller?.id);
@@ -147,6 +152,8 @@ export default async function FamilyPage({ params, searchParams }: { params: Pro
           </Link>
         </section>
       )}
+
+      {langKk && <BookLangs token={token} current={choiceOf(effectiveBookLangs(family, true))} />}
 
       {!isNew && (
         <section className="flex flex-col gap-3 border-t border-line pt-5">

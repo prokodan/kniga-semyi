@@ -13,7 +13,7 @@ import { BEHAVIORS, listPersonas, loadPersona, resolveBehavior } from "@/eval/si
 import { REPORTS_DIR } from "@/eval/sim/report";
 import { runSimulation } from "@/eval/sim/run";
 import { EvalStore } from "@/eval/store";
-import { parseGlossary } from "@/eval/kr-check";
+import { chooseBackMode, parseGlossary } from "@/eval/kr-check";
 import { evaluateRun, instrument, QUALITY_CALLS, renderEvalReport, renderPrComment, summarize, type EvalSummary, type RunMetrics } from "@/eval/quality";
 import { promptPath } from "@/lib/ai/prompts";
 import { createRouter } from "@/lib/ai/router";
@@ -111,6 +111,9 @@ async function main() {
   // Бесплатный Gemini: ~15 запросов в минуту → пауза 6,5 с (≈ 9/мин, как в sim) между настоящими вызовами и повтор после 429.
   const interval = Number(process.env.EVAL_MIN_INTERVAL_MS ?? 6500);
   const inst = instrument(createRouter({ store }), real ? { minIntervalMs: interval, retryAfterMs: Number(process.env.EVAL_RETRY_WAIT_MS ?? 65_000) } : {});
+  // #231: обратный перевод kk → ru — другим провайдером, чем перевод (как kr-check): OpenAI, нет ключа — Gemini
+  const backMode = real ? chooseBackMode(process.env) : "mock";
+  const backAi = createRouter({ store, mode: () => backMode });
   console.log(`Режим ИИ: ${mode}${real ? `, до ${maxCalls} запросов на прогон, ${runsCount} прогонов` : " (бесплатно, оценка не показательна)"}`);
   if (store.cachedAtStart) console.log(`Кэш ответов: ${store.cachedAtStart} записей`);
 
@@ -131,13 +134,14 @@ async function main() {
         ai: inst.ai,
         mode,
       });
-      const m = await evaluateRun({ sim, ai: inst.ai, models: inst.models, mock: !real, wallMs: 0, glossary });
+      const m = await evaluateRun({ sim, ai: inst.ai, models: inst.models, mock: !real, wallMs: 0, glossary, backAi });
       m.wallMs = performance.now() - t0;
       runs.push(m);
       console.log(
         `${key}${behavior ? ` [${behavior}]` : ""}: голос ${m.voiceAvg?.toFixed(2) ?? "—"}, факты ✅${m.facts.found} ⚠️${m.facts.distorted} ❌${m.facts.lost}, ` +
           `уточнений/вопрос ${m.followupsAvg.toFixed(2)}, KR смысл ${m.meaningAvg?.toFixed(1) ?? "—"} флажков ${m.krMajor}/${m.krMinor}, ИИ ${m.aiCalls}`,
       );
+      if (m.kk) console.log(`  казахский ${m.kk.direction}: глав ${m.kk.chapters}, флажков ${m.kk.major}/${m.kk.minor}${m.kk.backFacts ? `, факты после обратного перевода ✅${m.kk.backFacts.found} ⚠️${m.kk.backFacts.distorted} ❌${m.kk.backFacts.lost}` : ""}`);
       for (const e of m.errors) console.log(`  ⚠️ ${e.slice(0, 400)}`);
     }
   }

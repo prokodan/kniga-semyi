@@ -13,17 +13,29 @@ export const EVAL_PROMPT_STEPS: readonly AiStep[] = ["judge", "back_translate"];
 
 /**
  * #230: перевод — свой промпт на каждый язык книги: prompts/translate.<to>.md (ru → ko — translate.ko.md, бывший
- * translate.md без изменений текста, поэтому версия и кэш прежние). Роутер пока берёт перевод на корейский
- * (единственная пара L0); выбор промпта по `to` из входа — #231 (L1), вместе с правкой роутера.
+ * translate.md без изменений текста, поэтому версия и кэш прежние). #231: ru → kk — translate.kk.md, kk → ru —
+ * translate.ru.md; какой взять — по `to` из входа (promptVariant).
  * Нет translate.<to>.md (дерево «до» в eval собрано из промптов базовой ветки) — prompts/translate.md.
  */
 export const DEFAULT_TRANSLATE_TO = "ko";
 
-export function promptPath(step: AiStep, root = process.cwd(), translateTo: string = DEFAULT_TRANSLATE_TO): string {
+/**
+ * Вариант промпта по входу шага: перевод — язык `to` (нет — ko, как до v2); completeness с `next` (#105 п. 1,
+ * флаг lang_kk) — completeness.next.md. undefined — обычный prompts/<step>.md (версия и кэш как раньше).
+ */
+export function promptVariant(step: AiStep, input: unknown): string | undefined {
+  const o = (input && typeof input === "object" ? input : {}) as { to?: unknown; next?: unknown };
+  if (step === "translate") return typeof o.to === "string" ? o.to : DEFAULT_TRANSLATE_TO;
+  if (step === "completeness" && o.next) return "next";
+  return undefined;
+}
+
+export function promptPath(step: AiStep, root = process.cwd(), variant?: string): string {
   const dir = EVAL_PROMPT_STEPS.includes(step) ? "eval" : "prompts";
-  if (step === "translate") {
-    const byLang = path.join(root, dir, `translate.${translateTo}.md`);
-    if (existsSync(byLang)) return byLang;
+  const v = step === "translate" ? (variant ?? DEFAULT_TRANSLATE_TO) : variant;
+  if (v && /^[a-z]{2,8}$/.test(v)) {
+    const byVariant = path.join(root, dir, `${step}.${v}.md`);
+    if (existsSync(byVariant)) return byVariant;
   }
   return path.join(root, dir, `${step}.md`);
 }
@@ -33,13 +45,14 @@ export interface LoadedPrompt {
   version: string;
 }
 
-const cache = new Map<AiStep, LoadedPrompt>();
+const cache = new Map<string, LoadedPrompt>();
 
-export async function loadPrompt(step: AiStep): Promise<LoadedPrompt> {
-  const hit = cache.get(step);
+export async function loadPrompt(step: AiStep, variant?: string): Promise<LoadedPrompt> {
+  const key = `${step}:${variant ?? ""}`;
+  const hit = cache.get(key);
   if (hit && process.env.NODE_ENV === "production") return hit;
-  const text = await readFile(promptPath(step), "utf8");
+  const text = await readFile(promptPath(step, process.cwd(), variant), "utf8");
   const loaded = { text, version: sha256(text).slice(0, 12) };
-  cache.set(step, loaded);
+  cache.set(key, loaded);
   return loaded;
 }

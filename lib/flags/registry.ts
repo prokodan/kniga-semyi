@@ -22,6 +22,13 @@ const DEFS = {
     owner: "Данил",
     issue: 223,
   },
+  lang_kk: {
+    description:
+      "Книга на русском и казахском (#231): выбор «Языки книги» на странице семьи, перевод глав ru → kk, казахский в PDF; " +
+      "интервью — проверка полноты и следующий вопрос одним вызовом ИИ, короткий ответ — уточнение без ИИ (#105 п. 1–2).",
+    owner: "Данил",
+    issue: 231,
+  },
 } as const satisfies Record<string, FlagInfo>;
 
 export type FlagName = keyof typeof DEFS;

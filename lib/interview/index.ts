@@ -7,6 +7,7 @@ import "server-only";
 // ИИ — только через роутер (@/lib/ai). Без Supabase — память процесса (локальная разработка).
 import { ai } from "@/lib/ai";
 import { getDbOrNull } from "@/lib/db";
+import { flag } from "@/lib/flags";
 import { createInterview, type Interview } from "./engine";
 import { MemoryInterviewRepo, SupabaseInterviewRepo, type InterviewRepo } from "./repo";
 
@@ -20,8 +21,17 @@ function getRepo(): InterviewRepo {
   return g.__interviewMemoryRepo;
 }
 
+/** #105 п. 1–2: меньше вызовов ИИ на ответ — за флагом lang_kk (окружение или labs семьи). */
+async function fewerCalls(familyId: string): Promise<boolean> {
+  const db = getDbOrNull();
+  if (!db) return flag("lang_kk");
+  // "*": labs — колонка из миграции #223; ошибка / нет семьи — решает окружение
+  const { data } = await db.from("families").select("*").eq("id", familyId).maybeSingle();
+  return flag("lang_kk", { familyId, labs: (data as { labs?: string[] } | null)?.labs ?? null });
+}
+
 function get(): Interview {
-  instance ??= createInterview({ ai, repo: getRepo() });
+  instance ??= createInterview({ ai, repo: getRepo(), fewerCalls });
   return instance;
 }
 

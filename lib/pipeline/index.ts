@@ -7,6 +7,7 @@ import "server-only";
 // ИИ — только через роутер (@/lib/ai). Без Supabase — память процесса, общая с интервью-агентом.
 import { ai } from "@/lib/ai";
 import { BUCKETS, getDbOrNull } from "@/lib/db";
+import { flag } from "@/lib/flags";
 import { MemoryInterviewRepo } from "@/lib/interview/repo";
 import { createPipeline, type Pipeline } from "./engine";
 import { MemoryPipelineRepo, SupabasePipelineRepo, type PipelineRepo } from "./repo";
@@ -16,7 +17,8 @@ let instance: Pipeline | null = null;
 
 function getRepo(): PipelineRepo {
   const db = getDbOrNull();
-  if (db) return new SupabasePipelineRepo(db, BUCKETS.audio);
+  // #231: перевод на казахский — только семьям с флагом lang_kk (labs или окружение)
+  if (db) return new SupabasePipelineRepo(db, BUCKETS.audio, (f) => flag("lang_kk", { familyId: f.id, labs: f.labs }));
   g.__interviewMemoryRepo ??= new MemoryInterviewRepo();
   g.__pipelineMemoryRepo ??= new MemoryPipelineRepo(g.__interviewMemoryRepo.stories);
   g.__pipelineMemoryRepo.sessions = g.__interviewMemoryRepo.sessions as never;
