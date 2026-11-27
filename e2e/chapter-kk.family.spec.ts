@@ -41,16 +41,21 @@ test("книга RU + KZ: глава RU | KZ из story_texts, без корей
   const token = new URL(page.url()).pathname.split("/").pop()!;
   expect(token).toMatch(/^[0-9a-f]{64}$/);
 
-  await test.step("согласие → длинный ответ", async () => {
+  await test.step("согласие → ответ → уточнение (как в family.spec)", async () => {
     await page.getByRole("link", { name: "Начать: согласие на запись" }).click();
     await page.locator('input[type="file"]').setInputFiles(audioFile("soglasie.wav", 4));
     await page.getByRole("button", { name: "Сохранить согласие" }).click();
     await expect(page.getByText("Согласие записано ✓ Спасибо!")).toBeVisible();
     await page.getByRole("link", { name: "Записать первый рассказ" }).click();
     await expect(page.getByRole("heading", { level: 1 })).toBeVisible({ timeout: 30_000 });
-    await page.locator('input[type="file"]').setInputFiles(audioFile("otvet.wav", 8));
+    await page.locator('input[type="file"]').setInputFiles(audioFile("otvet.wav", 1));
     await page.getByRole("button", { name: "Отправить рассказ" }).click();
     await expect(page.getByText("Спасибо! Рассказ сохранён.")).toBeVisible();
+    await expect(page.getByText(/· уточнение/)).toBeVisible({ timeout: 60_000 });
+    await page.locator('input[type="file"]').setInputFiles(audioFile("utochnenie.wav", 8));
+    await page.getByRole("button", { name: "Отправить рассказ" }).click();
+    await expect(page.getByText("Спасибо! Дополнение сохранено.")).toBeVisible();
+    await expect(page.getByText(/· уточнение/)).toBeHidden({ timeout: 60_000 });
   });
 
   await test.step("глава RU | KZ", async () => {
