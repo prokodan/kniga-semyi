@@ -371,9 +371,12 @@ function TreeCanvas({
     const f = model.focus;
     if (!f) return fitAll(anim);
     const { W, H } = size();
-    const s = clamp(Math.min(1, (W - 24) / f.w, (H - 24) / f.h), minScale(), MAX_SCALE);
-    // родители (и дети) — тоже в окне, если влезают; по ширине — середина «дома», если влез и он, иначе пара
-    const h = model.homes.find((b) => b.h * s <= H - 24) ?? f;
+    const base = clamp(Math.min(1, (W - 24) / f.w, (H - 24) / f.h), minScale(), MAX_SCALE);
+    // родители (и дети) — тоже в окне, если влезают (можно чуть мельче, до 0,75); по ширине — середина «дома», если
+    // влез и он, иначе пара
+    const fit = (b: Box) => Math.min(base, (H - 24) / b.h);
+    const h = model.homes.find((b) => fit(b) >= 0.75 && fit(b) >= base * 0.75) ?? f;
+    const s = h === f ? base : fit(h);
     const cx = h.w * s <= W - 24 ? h.x + h.w / 2 : f.x + f.w / 2;
     go({ s, x: W / 2 - cx * s, y: H / 2 - (h.y + h.h / 2) * s }, anim);
   };

@@ -4,7 +4,7 @@
 // Проверки: рассказчик и супруга целиком в окне древа, имя не обрезано сверху, страница вбок не листается,
 // кнопки ≥ 48 px; «+ ещё» у большой семьи; «Списком»; фото человека (#269) → в карточке и в PDF.
 import { execFileSync } from "node:child_process";
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { expect, test, type Page } from "@playwright/test";
 import { createClient } from "@supabase/supabase-js";
 import { DEMO_FAMILY, DEMO_KIOSK_FAMILY } from "@/fixtures/demo/family";
@@ -229,17 +229,22 @@ test("древо 2.0: синтетическая семья на 40 челове
 });
 
 test("древо 2.0: страницы древа в PDF → PNG", async () => {
-  test.setTimeout(120_000);
-  const inputs: string[] = [];
+  test.setTimeout(150_000);
+  let kim = "";
   try {
     readFileSync(`${DIR}/kim-book.pdf`);
-    inputs.push(`kim=${DIR}/kim-book.pdf`);
+    kim = `kim=${DIR}/kim-book.pdf`;
   } catch {
     // книгу Ким не собрали — только синтетическая семья
   }
-  const out = execFileSync("npx", ["tsx", "scripts/tree-pdf-preview.mts", DIR, ...inputs], { encoding: "utf8", timeout: 110_000 });
-  const files = out.trim().split("\n").filter((f) => f.endsWith(".png"));
-  expect(files.length).toBeGreaterThanOrEqual(3); // 40 человек: 2 страницы (KR) + 2 (KZ); Ким — 1
-  if (inputs.length) expect(files.some((f) => f.includes("pdf-kim"))).toBe(true);
+  // PDF → PNG — тестом vitest (ESM: @react-pdf и mupdf), тут же печатается и синтетическая семья на 40
+  execFileSync("npx", ["vitest", "run", "lib/tree/pdf-preview.test.ts"], {
+    encoding: "utf8",
+    timeout: 140_000,
+    env: { ...process.env, TREE_PDF_OUT: DIR, TREE_PDF_IN: kim, AI_MODE: "mock" },
+  });
+  const files = readdirSync(DIR).filter((f) => f.startsWith("pdf-") && f.endsWith(".png")).map((f) => `${DIR}/${f}`);
+  expect(files.length).toBeGreaterThanOrEqual(4); // 40 человек: ≥ 2 страницы (KR) + ≥ 2 (KZ)
+  if (kim) expect(files.some((f) => f.includes("pdf-kim"))).toBe(true);
   shots.push(...files);
 });

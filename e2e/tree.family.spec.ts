@@ -56,15 +56,6 @@ test("демо: древо семьи — само из глав, правка, 
 
   // имя отцу: на древе — имя, подпись «папа» остаётся
   const papa = page.getByRole("button", { name: /, папа/ });
-  // #277 диагностика: где карточка относительно окна древа после сохранения (ветка z3/tree* — в лог)
-  if ((process.env.GITHUB_HEAD_REF ?? "").startsWith("z3/tree")) {
-    const d = await papa.evaluate((el) => {
-      const vp = el.closest('[data-testid="tree"]') as HTMLElement;
-      const r = (e: Element) => e.getBoundingClientRect().toJSON();
-      return { card: r(el), vp: r(vp), st: vp.scrollTop, sy: window.scrollY, tf: (vp.firstElementChild as HTMLElement).style.transform };
-    });
-    console.log("TREE-DEBUG", JSON.stringify(d));
-  }
   await papa.click();
   await page.getByRole("dialog").getByRole("button", { name: "✎ Исправить" }).click();
   await page.getByRole("dialog").getByLabel("Имя").fill("Ким Ён Хо");
