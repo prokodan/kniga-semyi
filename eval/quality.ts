@@ -314,7 +314,7 @@ export async function evaluateRun(o: EvaluateOptions): Promise<RunMetrics> {
   for (const c of sim.chapters) if (c.error) errors.push(`глава не собрана: ${c.error}`);
 
   const quality = new Map<string, ChapterQuality>(
-    done.map((c) => [c.id, { id: c.id, title: c.title ?? "(без названия)", voice: null, voiceComment: "", meaning: null, backRu: "", flags: [] }]),
+    done.map((c) => [c.id, { id: c.id, title: c.title?.trim() || "(без названия)", voice: null, voiceComment: "", meaning: null, backRu: "", flags: [] }]),
   );
   let extra = 0;
   // #288: рассказ по-казахски (original kk) — судья голоса сравнил бы казахскую расшифровку с русским переводом и

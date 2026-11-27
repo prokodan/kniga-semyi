@@ -1,6 +1,6 @@
 // Эвристики уточнений, связок и сказки (V1-2) — без ИИ.
 import { describe, expect, it } from "vitest";
-import { checkBridge, checkDialogue, checkFollowup, checkTale, foreignRealiaIssues, isNoPressure, pickTaleChapters, similarity } from "./prompt-checks";
+import { checkBridge, checkDialogue, checkFollowup, checkTale, foldKz, foreignRealiaIssues, isNoPressure, pickTaleChapters, similarity } from "./prompt-checks";
 
 describe("уточнения", () => {
   it("хорошее уточнение — без флажков", () => {
@@ -151,5 +151,22 @@ describe("#282: чужие реалии в уточнениях и связка�
 
   it("без пакетов (kim, pak, tsoi — банк V0) поля нет: отчёт прежний", () => {
     expect(checkDialogue(sim("А кукси дома готовили?", "Спасибо."))).not.toHaveProperty("foreignRealia");
+  });
+});
+
+describe("сказка RU + KZ: казахские буквы в именах", () => {
+  it("«Серік» / «Жақып» в главах = «Серик» / «Жакып» в сказке — не «нет в главах»", () => {
+    const tale = {
+      title: "Сказка про лошадей",
+      pages: [
+        { text: "Жил на свете мальчик Серик. Он любил степь.", illustrationPrompt: "a boy in the steppe" },
+        { text: "Там дедушка Жакып держал лошадей.", illustrationPrompt: "horses" },
+        { text: "Лошади были быстрые.", illustrationPrompt: "horses running" },
+        { text: "Этот мальчик Серик — твой дедушка.", illustrationPrompt: "grandfather smiling" },
+      ],
+    };
+    const r = checkTale(tale, { storytellerName: "Жұмабеков Серік Әлиұлы", stories: [{ title: "Жайлау", text_ru: "Летом мы ездили к деду Жақыпу, он держал лошадей." }] });
+    expect(r.issues.filter((i) => /нет в главах/.test(i.issue))).toEqual([]);
+    expect(foldKz("Серік Жақып Әлиұлы")).toBe("Серик Жакып Алиулы");
   });
 });

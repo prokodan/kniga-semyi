@@ -193,7 +193,15 @@ export interface TaleChecks {
 const sentences = (s: string) => s.split(/(?<=[.!?…])\s+/).map((x) => x.trim()).filter(Boolean);
 
 /** Имена и места в середине предложения (с большой буквы), которых нет в главах. */
-function strangers(text: string, source: string): string[] {
+/**
+ * Казахские буквы → русские для сверки имён: «Серік» в главе и «Серик» в сказке, «Жақып» и «Жакып» — одно имя.
+ * Без этого сказка RU + KZ получала флажок «нет в главах» на имя самого рассказчика.
+ */
+const KZ_FOLD: Record<string, string> = { ә: "а", ғ: "г", қ: "к", ң: "н", ө: "о", ұ: "у", ү: "у", һ: "х", і: "и", Ә: "А", Ғ: "Г", Қ: "К", Ң: "Н", Ө: "О", Ұ: "У", Ү: "У", Һ: "Х", І: "И" };
+export const foldKz = (s: string) => s.replace(/[әғқңөұүһіӘҒҚҢӨҰҮҺІ]/g, (c) => KZ_FOLD[c] ?? c);
+
+function strangers(text: string, rawSource: string): string[] {
+  const source = foldKz(rawSource);
   const known = stems(source);
   // Короткие имена склоняются в пятой букве («Елена» → «Елене»): для них хватает основы из 4 букв.
   const known4 = new Set(words(source).filter((w) => w.length >= 3).map((w) => w.slice(0, 4)));
@@ -201,7 +209,7 @@ function strangers(text: string, source: string): string[] {
   for (const sent of sentences(text)) {
     const tokens = sent.split(/\s+/).slice(1);
     for (const raw of tokens) {
-      const w = raw.replace(/^[«"„(—-]+|[»"“).,!?…:;—-]+$/g, "");
+      const w = foldKz(raw.replace(/^[«"„(—-]+|[»"“).,!?…:;—-]+$/g, ""));
       if (!/^[А-ЯЁ][а-яё-]{2,}$/.test(w)) continue;
       const s = w.toLowerCase().slice(0, 5);
       if (known.has(s) || (w.length <= 6 && known4.has(s.slice(0, 4))) || TALE_OK.has(s) || TALE_OK.has(s.slice(0, 4))) continue;
