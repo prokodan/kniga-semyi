@@ -24,6 +24,8 @@ export interface UsageRow {
   error?: string;
   story_id?: string;
   created_at?: string;
+  /** #211: откуда вызов — 'prod' | 'staging'. Не задано → default колонки ('prod'); прод его не передаёт. */
+  env?: "prod" | "staging";
 }
 
 export interface AiStore {
@@ -86,7 +88,11 @@ export class MemoryStore implements AiStore {
 // ---------------- Supabase ----------------
 
 export class SupabaseStore implements AiStore {
-  constructor(private db: SupabaseClient) {}
+  /** env — #211: превью пишет свои строки как 'staging'; прод не передаёт (default колонки 'prod'). */
+  constructor(
+    private db: SupabaseClient,
+    private env?: "prod" | "staging",
+  ) {}
 
   async getRoute(step: AiStep): Promise<Route> {
     const { data } = await this.db.from("ai_routes").select("*").eq("step", step).maybeSingle();
@@ -145,8 +151,15 @@ export class SupabaseStore implements AiStore {
     return (count ?? 0) > 0;
   }
 
-  async recordUsage(row: UsageRow) {
-    const { error } = await this.db.from("ai_usage").insert(row);
+  async recordUsage(input: UsageRow) {
+    const row: UsageRow = this.env && input.env === undefined ? { ...input, env: this.env } : input;
+    let { error } = await this.db.from("ai_usage").insert(row);
+    // #211: база ещё без колонки env (migrate не дошёл) — пишем без неё, расход не теряем.
+    if (error && row.env !== undefined && /\benv\b/.test(error.message)) {
+      const { env: _env, ...rest } = row;
+      void _env;
+      ({ error } = await this.db.from("ai_usage").insert(rest));
+    }
     if (error) console.error("[ai] не удалось записать ai_usage:", error.message);
   }
 

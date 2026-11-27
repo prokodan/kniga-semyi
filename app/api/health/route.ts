@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { getDbOrNull } from "@/lib/db";
-import { env, getAiMode } from "@/lib/env";
+import { env, getAiMode, isAiUsageSinkEnabled } from "@/lib/env";
 import { isStageMode } from "@/lib/stage";
 
 export const dynamic = "force-dynamic";
@@ -38,11 +38,20 @@ export async function GET() {
   }
 
   const ok = dbStatus !== "error";
+  // #211: окружение и куда смотрит база — чтобы с телефона отличить прод от превью (staging).
+  const vercelEnv = env.vercelEnv();
+  const sink = vercelEnv === "preview" ? isAiUsageSinkEnabled() : Boolean(env.aiUsageSecret());
   return NextResponse.json(
     {
       status: ok ? "ok" : "degraded",
       db: dbStatus,
       ...(dbError ? { db_error: dbError } : {}),
+      // production | preview | development (локально и в CI)
+      env: vercelEnv,
+      // Первые 6 символов ref проекта Supabase (не ключ): прод и staging различаются с одного взгляда
+      supabase_ref: env.supabaseRefShort() ?? null,
+      // Общий расход ИИ: превью — шлёт строки в прод, прод — принимает (задан AI_USAGE_SECRET); off — выключено
+      ai_usage_sink: sink ? "ok" : "off",
       ai_mode: getAiMode(),
       // Для утреннего чек-листа 27.11 и smoke: только «задано / нет», без значений.
       stage_mode: isStageMode(),

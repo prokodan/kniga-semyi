@@ -57,17 +57,25 @@ export class SupabaseSource implements AdminSource {
     return mergeProviders((data ?? []) as Record<string, unknown>[], routes);
   }
 
+  /** #211: колонка ai_usage.env есть? (до migrate её нет — читаем без неё, всё = prod) */
+  private hasEnv: boolean | null = null;
+
   async usageSince(since: Date) {
+    if (this.hasEnv === null) {
+      const { error } = await this.db.from("ai_usage").select("env").limit(1);
+      this.hasEnv = !error;
+    }
+    const columns = this.hasEnv ? `${USAGE_COLUMNS}, env` : USAGE_COLUMNS;
     const rows: UsageLite[] = [];
     for (let page = 0; page < MAX_PAGES; page++) {
       const { data, error } = await this.db
         .from("ai_usage")
-        .select(USAGE_COLUMNS)
+        .select(columns)
         .gte("created_at", since.toISOString())
         .order("id", { ascending: true })
         .range(page * PAGE, page * PAGE + PAGE - 1);
       this.fail("ai_usage", error);
-      rows.push(...((data ?? []) as UsageLite[]));
+      rows.push(...((data ?? []) as unknown as UsageLite[]));
       if (!data || data.length < PAGE) break;
     }
     return rows;

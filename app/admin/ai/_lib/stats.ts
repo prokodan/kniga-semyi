@@ -16,6 +16,8 @@ export interface UsageLite {
   status: string;
   cost_usd: number | string;
   created_at: string;
+  /** #211: 'prod' | 'staging'; нет колонки / пусто — prod */
+  env?: string | null;
 }
 
 export interface UsageError extends UsageLite {
@@ -35,6 +37,14 @@ export interface SpendRow {
   monthPct: number | null;
   /** Оценка на конец месяца при текущем темпе */
   forecastMonth: number;
+  callsToday: number;
+  callsMonth: number;
+}
+
+export interface EnvSpend {
+  env: string;
+  today: number;
+  month: number;
   callsToday: number;
   callsMonth: number;
 }
@@ -74,6 +84,8 @@ export interface AdminSummary {
   now: string;
   spend: SpendRow[];
   totals: { today: number; month: number; forecastMonth: number };
+  /** #211: расход по окружениям (prod — сам прод, staging — строки, присланные превью). Бюджеты общие. */
+  byEnv: EnvSpend[];
   quotas: QuotaRow[];
   /** Модели из маршрутов без суточной квоты (обычно платные) */
   unlimited: { provider: string; model: string; callsToday: number; steps: string[] }[];
@@ -243,9 +255,22 @@ export function summarize(args: {
     }
   }
 
+  // ---------- По окружениям (#211) ----------
+  const envOf = (r: UsageLite) => (r.env && r.env.trim() ? r.env : "prod");
+  const envNames = new Set<string>(["prod", "staging"]);
+  for (const r of rows) envNames.add(envOf(r));
+  const byEnv: EnvSpend[] = [...envNames].map((name) => {
+    const mine = rows.filter((r) => r.provider !== "cache" && envOf(r) === name && at(r) >= monthUtc && at(r) <= t);
+    const today = mine.filter((r) => at(r) >= dayUtc);
+    const sum = (list: UsageLite[]) => round(list.reduce((acc, r) => acc + num(r.cost_usd), 0));
+    const called = (list: UsageLite[]) => list.filter((r) => QUOTA_STATUSES.has(r.status)).length;
+    return { env: name, today: sum(today), month: sum(mine), callsToday: called(today), callsMonth: called(mine) };
+  });
+
   return {
     now: now.toISOString(),
     spend,
+    byEnv,
     totals: {
       today: round(spend.reduce((s, r) => s + r.today, 0)),
       month: round(spend.reduce((s, r) => s + r.month, 0)),

@@ -57,6 +57,8 @@ scripts/             служебные скрипты
   `grant all on table <имя> to service_role;` (для `identity`/`serial` — и на её sequence).
   Без этого сервер ловит `permission denied`, а `/api/health` отдаёт `db: "error"`. `npm run db:check`
   падает, если у `service_role` нет прав на какую-либо таблицу `public`.
+- **Тестируем на превью = staging, не на проде** (#211, `docs/HANDOFF.md` §2.1). Превью PR смотрит в базу
+  `kniga-semyi-staging`; прод — только живые семьи и демо питча. Workflows с базой — вход `target: prod | staging`.
 - **Секреты** только в Vercel Env и GitHub Secrets. Не коммить `.env*`, не печатай ключи в логи и PR.
 - **Голосовое согласие** обязательно до первой записи рассказчика. Архив АКНЦ — только с `archive_consent`.
 - **Стили** — классы Tailwind из токенов `app/globals.css` (`bg-paper`, `text-ink`, `bg-seal`, `text-elder`…).

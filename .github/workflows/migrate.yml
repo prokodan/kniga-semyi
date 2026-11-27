@@ -1,16 +1,20 @@
 name: migrate
 
 # Применяет новые миграции к Supabase при слиянии в main. Руками базу не правим.
-# Первый запуск после того, как задан секрет SUPABASE_DB_URL: Actions → migrate → Run workflow.
+# #211: две базы — prod (SUPABASE_DB_URL) и staging для превью (STAGING_SUPABASE_DB_URL). При слиянии — в обе,
+# чтобы схемы не расходились (staging — только если секрет задан, иначе предупреждение). Вручную: Actions → migrate →
+# Run workflow → target: both | prod | staging (пустой секрет выбранной базы при ручном запуске = ошибка).
 on:
   push:
     branches: [main]
     paths: ["supabase/migrations/**"]
   workflow_dispatch:
-
-concurrency:
-  group: migrate
-  cancel-in-progress: false
+    inputs:
+      target:
+        description: "Куда применить миграции"
+        type: choice
+        options: [both, prod, staging]
+        default: both
 
 permissions:
   contents: read
@@ -19,18 +23,38 @@ jobs:
   migrate:
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        target: ${{ fromJSON((github.event_name == 'workflow_dispatch' && inputs.target != 'both') && format('["{0}"]', inputs.target) || '["prod","staging"]') }}
+    concurrency:
+      group: migrate-${{ matrix.target }}
+      cancel-in-progress: false
     env:
-      SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
+      TARGET: ${{ matrix.target }}
+      # Оба секрета читаем отдельно и выбираем в shell: «a && b || c» в выражении молча подставил бы прод,
+      # если секрета staging нет.
+      PROD_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
+      STAGING_DB_URL: ${{ secrets.STAGING_SUPABASE_DB_URL }}
+      MANUAL: ${{ github.event_name == 'workflow_dispatch' }}
     steps:
       - uses: actions/checkout@v7
 
       - name: Проверка секрета
         id: guard
         run: |
-          if [ -z "$SUPABASE_DB_URL" ]; then
-            echo "::warning::SUPABASE_DB_URL не задан — миграции пропущены"
+          if [ "$TARGET" = "staging" ]; then url="$STAGING_DB_URL"; name=STAGING_SUPABASE_DB_URL; else url="$PROD_DB_URL"; name=SUPABASE_DB_URL; fi
+          if [ -z "$url" ]; then
+            if [ "$MANUAL" = "true" ]; then
+              echo "::error::$name не задан — миграции в $TARGET не применить. GitHub → Settings → Secrets → Actions."
+              exit 1
+            fi
+            echo "::warning::$name не задан — миграции в $TARGET пропущены"
             echo "skip=true" >> "$GITHUB_OUTPUT"
+            exit 0
           fi
+          # Значение секрета не печатаем; дальше — через файл окружения шага
+          echo "SUPABASE_DB_URL=$url" >> "$GITHUB_ENV"
 
       - uses: actions/setup-node@v7
         if: steps.guard.outputs.skip != 'true'
@@ -44,7 +68,7 @@ jobs:
       - uses: ./.github/actions/supabase-cli
         if: steps.guard.outputs.skip != 'true'
 
-      - name: supabase db push
+      - name: supabase db push (${{ matrix.target }})
         if: steps.guard.outputs.skip != 'true'
         run: supabase --yes db push --db-url "$SUPABASE_DB_URL" --include-all
 
@@ -54,11 +78,11 @@ jobs:
         with:
           token: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           chat_id: ${{ secrets.TELEGRAM_CHAT_ID }}
-          text: "🗄 Миграции применены к Supabase (${{ github.sha }})"
+          text: "🗄 Миграции применены к Supabase ${{ matrix.target }} (${{ github.sha }})"
       - name: Telegram — миграции упали
         if: failure()
         uses: ./.github/actions/telegram
         with:
           token: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           chat_id: ${{ secrets.TELEGRAM_CHAT_ID }}
-          text: "🔴 Миграции упали: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          text: "🔴 Миграции в ${{ matrix.target }} упали: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
