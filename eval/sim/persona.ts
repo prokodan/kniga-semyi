@@ -23,6 +23,18 @@ export interface Persona {
    * языков, чтобы прогон проверял перевод). Нет строки — undefined: книга как сейчас (ru, ko).
    */
   bookLangs?: BookLang[];
+  /**
+   * #282: культурные пакеты банка вопросов из строки «пакеты: `general` + `kz`» (как у семьи с флагом culture_packs).
+   * Нет строки — undefined: банк V0, как сейчас (kim, pak, tsoi не меняются).
+   */
+  packs?: string[];
+}
+
+/** «пакеты: `general` + `kz`» → ["general", "kz"]; в скобках — планы («(позже + `ua`)»), их не берём. */
+export function parsePacks(md: string): string[] | undefined {
+  const line = md.match(/пакеты:\s*([^·\n]+)/i)?.[1] ?? "";
+  const packs = [...line.replace(/\([^)]*\)/g, "").matchAll(/`([a-z0-9_-]+)`/g)].map((m) => m[1]!);
+  return packs.length ? [...new Set(packs)] : undefined;
 }
 
 /** «книга: `ru` или `ru,kk`» → ["ru", "kk"]; неизвестные языки отбрасываются. */
@@ -71,7 +83,8 @@ export function parsePersona(key: string, md: string): Persona {
   const markdown = factsSection ? (md.slice(0, factsSection.start) + md.slice(factsSection.end)).trim() : md.trim();
 
   const bookLangs = parseBookLangs(md);
-  return { key, name, markdown, defaultBehaviors, keyFacts, ...(bookLangs ? { bookLangs } : {}) };
+  const packs = parsePacks(md);
+  return { key, name, markdown, defaultBehaviors, keyFacts, ...(bookLangs ? { bookLangs } : {}), ...(packs ? { packs } : {}) };
 }
 
 export function loadPersona(key: string, dir = PERSONAS_DIR): Persona {

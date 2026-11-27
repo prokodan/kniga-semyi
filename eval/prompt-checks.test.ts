@@ -1,6 +1,6 @@
 // Эвристики уточнений, связок и сказки (V1-2) — без ИИ.
 import { describe, expect, it } from "vitest";
-import { checkBridge, checkDialogue, checkFollowup, checkTale, isNoPressure, pickTaleChapters, similarity } from "./prompt-checks";
+import { checkBridge, checkDialogue, checkFollowup, checkTale, foreignRealiaIssues, isNoPressure, pickTaleChapters, similarity } from "./prompt-checks";
 
 describe("уточнения", () => {
   it("хорошее уточнение — без флажков", () => {
@@ -118,5 +118,38 @@ describe("сказка", () => {
     const ch = (block: string, n: number) => ({ block, title: `${block}${n}`, text_ru: "текст" });
     const picked = pickTaleChapters([ch("hardship", 1), ch("work", 1), ch("childhood", 1), ch("childhood", 2), ch("roots", 1), ch("love", 1), ch("legacy", 1)]);
     expect(picked.map((p) => p.title)).toEqual(["childhood1", "roots1", "love1", "work1", "legacy1"]);
+  });
+});
+
+describe("#282: чужие реалии в уточнениях и связках", () => {
+  const sim = (followup: string, bridge: string, said = "Жили в ауле под Талдыкорганом.") => ({
+    questions: [
+      { id: "q1", block: "childhood" as const, text: "Где вы родились?", followups: 1, outcome: "answered" as const },
+      { id: "q2", block: "traditions" as const, text: "Какие праздники отмечали?", followups: 0, outcome: "answered" as const },
+    ],
+    turns: [
+      { role: "agent" as const, text: "Где вы родились?", questionId: "q1" },
+      { role: "persona" as const, text: said },
+      { role: "followup" as const, text: followup, questionId: "q1" },
+      { role: "persona" as const, text: "Да." },
+      { role: "agent" as const, text: `${bridge} Какие праздники отмечали?`, questionId: "q2" },
+    ],
+  });
+
+  it("general + kz: корё-слово агента — флажок; казахское — нет", () => {
+    const r = checkDialogue(sim("А кукси дома готовили?", "Помню про жайлау."), ["general", "kz"]);
+    expect(r.foreignRealia?.map((i) => i.issue)).toEqual([expect.stringMatching(/корё «кукси»/)]);
+  });
+
+  it("general: казахские и корё-реалии — флажки; рассказчик сам назвал — не флажок", () => {
+    expect(checkDialogue(sim("А на Наурыз что готовили?", "Спасибо."), ["general"]).foreignRealia).toHaveLength(1);
+    expect(checkDialogue(sim("А на Наурыз что готовили?", "Спасибо.", "Мы всегда на Наурыз собирались."), ["general"]).foreignRealia).toHaveLength(0);
+    expect(foreignRealiaIssues("Стоит вспомнить тот день", ["general"], "")).toEqual([]);
+    expect(foreignRealiaIssues("Какой был той?", ["general"], "")).toHaveLength(1);
+    expect(foreignRealiaIssues("Какой был той?", ["general", "kz"], "")).toHaveLength(0);
+  });
+
+  it("без пакетов (kim, pak, tsoi — банк V0) поля нет: отчёт прежний", () => {
+    expect(checkDialogue(sim("А кукси дома готовили?", "Спасибо."))).not.toHaveProperty("foreignRealia");
   });
 });

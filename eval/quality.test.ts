@@ -16,6 +16,7 @@ import {
   summarize,
   checkKrRules,
   krRuleKind,
+  VOICE_KK_SKIPPED,
   VOICE_TARGET,
 } from "./quality";
 import { readFileSync } from "node:fs";
@@ -174,6 +175,82 @@ describe("evaluateRun", () => {
     expect(m.voiceAvg).toBeNull();
     expect(m.errors.join()).toMatch(/судья/);
     expect(summarize([m], { mode: "gemini" }).totals.voiceOk).toBeNull();
+  });
+});
+
+describe("#288 #198 #282: голос kk, глоссарий судьи KR, банк по пакетам", () => {
+  it("#288: рассказ по-казахски (kuljamal) — голос не судим и не считаем в среднем, пометка в отчёте", async () => {
+    const kuljamal = loadPersona("kuljamal");
+    const seen: string[] = [];
+    const router = fakeRouter({
+      judge: (i) => {
+        seen.push(...i.chapters.map((c) => c.id));
+        return { scores: i.chapters.map((c) => ({ id: c.id, voice: 2, comment: "чужой язык" })) };
+      },
+    });
+    const inst = instrument(router);
+    const sim = await runSimulation({ persona: kuljamal, ai: inst.ai, maxQuestions: 2, mode: "mock" });
+    expect(sim.chapters.some((c) => c.original === "kk")).toBe(true);
+    const m = await evaluateRun({ sim, ai: inst.ai, models: inst.models, mock: false });
+    expect(seen).toEqual([]);
+    expect(inst.steps().judge).toBeUndefined();
+    expect(m.voiceAvg).toBeNull();
+    expect(m.voiceSkipped).toBe(m.chapterQuality.length);
+    expect(m.chapterQuality.every((c) => c.voice === null && c.voiceComment === VOICE_KK_SKIPPED)).toBe(true);
+    const s = summarize([m], { mode: "gemini" });
+    expect(s.totals.voiceSkipped).toBe(m.voiceSkipped);
+    expect(renderEvalReport(s)).toMatch(/голос по kk не судим, #288/);
+    expect(renderEvalReport(s)).toMatch(/kk: \d+ не суд\./);
+  });
+
+  it("#288: kim (рассказ по-русски) — судья как раньше, без пометки", async () => {
+    const { inst, sim } = await simulate(fakeRouter());
+    const m = await evaluateRun({ sim, ai: inst.ai, models: inst.models, mock: true });
+    expect(m.voiceSkipped).toBeUndefined();
+    expect(renderEvalReport(summarize([m], { mode: "mock" }))).not.toMatch(/#288/);
+  });
+
+  it("#198: флажок «аппади → 아버지» снят и посчитан; год — остаётся", async () => {
+    const glossary = parseGlossary(readFileSync("docs/glossary.md", "utf8"));
+    const router = fakeRouter({
+      back_translate: (i) => ({
+        chapters: i.chapters.map((c) => ({
+          id: c.id,
+          back_ru: "обратно",
+          meaning: 5,
+          flags: [
+            { ko: "아버지", back_ru: "отец", ru: "аппади", issue: "слово корё мар заменено на стандартный корейский", severity: "minor" as const },
+            { ko: "1941년", back_ru: "1941", ru: "1940", issue: "год искажён", severity: "major" as const },
+          ],
+        })),
+      }),
+    });
+    const { inst, sim } = await simulate(router);
+    const m = await evaluateRun({ sim, ai: inst.ai, models: inst.models, mock: false, glossary });
+    const n = m.chapterQuality.length;
+    expect(m.krMinor).toBe(0);
+    expect(m.krMajor).toBe(n);
+    expect(m.krGlossaryOk).toBe(n);
+    const md = renderEvalReport(summarize([m], { mode: "gemini" }));
+    expect(md).toMatch(/Снято флажков «корё мар → эквивалент глоссария».*: \d+/);
+    expect(krRuleKind("style:bieup")).toBe("style");
+  });
+
+  it("#282: galina — банк general, строка «чужие реалии» в итоге; kim — «—»", async () => {
+    const galina = loadPersona("galina");
+    const inst = instrument(fakeRouter());
+    const sim = await runSimulation({ persona: galina, ai: inst.ai, maxQuestions: 2, mode: "mock" });
+    const m = await evaluateRun({ sim, ai: inst.ai, models: inst.models, mock: true });
+    expect(m.packs).toEqual(["general"]);
+    expect(m.dialogue.foreignRealia).toBeDefined();
+    const s = summarize([m], { mode: "mock" });
+    expect(s.totals.foreignRealia).toBe(m.dialogue.foreignRealia!.length);
+    expect(renderEvalReport(s)).toContain("Чужие реалии (#282)");
+    expect(renderEvalReport(s)).toContain("galina · general");
+
+    const k = await simulate(fakeRouter());
+    const mk = await evaluateRun({ sim: k.sim, ai: k.inst.ai, models: k.inst.models, mock: true });
+    expect(summarize([mk], { mode: "mock" }).totals.foreignRealia).toBeNull();
   });
 });
 

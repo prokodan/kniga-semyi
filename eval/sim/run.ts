@@ -3,7 +3,7 @@
 // Всё в памяти: MemoryInterviewRepo, без базы. ИИ — только через переданный роутер.
 import type { AiRouter } from "@/lib/ai/router";
 import { AiUnavailableError, translateInput, type AiStep } from "@/lib/ai/types";
-import type { QuestionBank } from "@/lib/interview/bank";
+import { bankForPacks, type QuestionBank } from "@/lib/interview/bank";
 import { createInterview, type AnswerResult } from "@/lib/interview/engine";
 import type { SessionState } from "@/lib/interview/policy";
 import { MemoryInterviewRepo } from "@/lib/interview/repo";
@@ -90,7 +90,7 @@ export interface SimOptions {
   /** Лимит вызовов ИИ на прогон (по умолчанию без лимита — для mock) */
   maxCalls?: number;
   ai: Pick<AiRouter, "run">;
-  /** Свой банк (тесты); по умолчанию — content/questions */
+  /** Свой банк (тесты); по умолчанию — по пакетам персонажа (#282), без них — content/questions (банк V0) */
   bank?: QuestionBank;
   mode?: string;
   now?: () => Date;
@@ -120,7 +120,9 @@ export async function runSimulation(opts: SimOptions): Promise<SimResult> {
   const repo = new MemoryInterviewRepo();
   repo.addFamily(FAMILY, TOKEN, [STORYTELLER]);
   repo.names.set(STORYTELLER, opts.persona.name);
-  const interview = createInterview({ ai: budget.ai, repo, bank: opts.bank, ...(opts.fewerCalls ? { fewerCalls: async () => true } : {}) });
+  // #282: банк по пакетам персонажа — как у семьи с флагом culture_packs (bankForPacks); нет строки «пакеты:» — банк V0
+  const bank = opts.bank ?? (opts.persona.packs ? bankForPacks(opts.persona.packs) : undefined);
+  const interview = createInterview({ ai: budget.ai, repo, bank, ...(opts.fewerCalls ? { fewerCalls: async () => true } : {}) });
   const maxQuestions = opts.maxQuestions ?? Number.POSITIVE_INFINITY;
 
   const turns: Turn[] = [];
