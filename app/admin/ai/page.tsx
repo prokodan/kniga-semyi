@@ -1,6 +1,6 @@
 // /admin/ai — админка ИИ: расход, квоты, ошибки, переключатели провайдеров. Вход по ADMIN_PIN.
 import type { Metadata } from "next";
-import { CacheCoolingSection, ErrorsSection, QuotaSection, SpendSection } from "@/components/admin/AiReadouts";
+import { BookCostSection, CacheCoolingSection, ErrorsSection, QuotaSection, SpendSection } from "@/components/admin/AiReadouts";
 import { ProvidersSection, RoutesSection } from "@/components/admin/AiControls";
 import { btnCls, btnGhostCls, fmtTime, inputCls, Notice } from "@/components/admin/ui";
 import { getAiMode } from "@/lib/env";
@@ -92,6 +92,7 @@ export default async function AdminAiPage({ searchParams }: { searchParams: Sear
       <nav className="flex gap-2 overflow-x-auto text-sm" aria-label="Разделы">
         {[
           ["#spend", "Расход"],
+          ["#book-cost", "Книга"],
           ["#quotas", "Квоты"],
           ["#errors", "Ошибки"],
           ["#providers", "Провайдеры"],
@@ -105,6 +106,7 @@ export default async function AdminAiPage({ searchParams }: { searchParams: Sear
       {data ? (
         <>
           <SpendSection s={data.summary} />
+          <BookCostSection envs={data.bookCost} />
           <QuotaSection s={data.summary} />
           <CacheCoolingSection s={data.summary} />
           <ErrorsSection s={data.summary} />

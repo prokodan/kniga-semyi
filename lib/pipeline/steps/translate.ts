@@ -13,7 +13,7 @@ export const translate: StepFn = async ({ story, ai, repo, deadline }) => {
   const raw = await ai.run(
     "translate",
     { text_ru: story.text_ru, title: story.title ?? "", quote: story.quote ?? "", ...(names.length ? { names } : {}) },
-    { storyId: story.id, deadline },
+    { storyId: story.id, familyId: story.family_id, deadline },
   );
   // #124: переводчик всё же написал имя по-своему — его вариант меняем на словарный (правка семьи важнее)
   let { out, fixed } = applySpellings(raw, requiredSpellings(entities));

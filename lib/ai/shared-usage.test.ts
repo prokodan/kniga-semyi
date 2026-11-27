@@ -46,13 +46,17 @@ describe("#211 SharedUsageStore (превью → прод)", () => {
     const local = new MemoryStore();
     const prod = fakeProd();
     const store = new SharedUsageStore(local, { prodUrl: "https://prod.example", secret: "s3cret", sourceRef: "abcdef123", fetch: prod.fetchImpl });
-    await store.recordUsage(row({ story_id: "11111111-1111-1111-1111-111111111111" }));
+    await store.recordUsage(
+      row({ story_id: "11111111-1111-1111-1111-111111111111", family_id: "22222222-2222-2222-2222-222222222222" }),
+    );
     expect(local.usage[0]!.env).toBe("staging");
+    expect(local.usage[0]!.family_id).toBe("22222222-2222-2222-2222-222222222222");
     expect(prod.calls[0]!.url).toBe("https://prod.example/api/ai/usage");
     const headers = prod.calls[0]!.init?.headers as Record<string, string>;
     expect(headers[AI_USAGE_HEADER]).toBe("s3cret");
     const body = JSON.parse(String(prod.calls[0]!.init?.body));
     expect(body.row.story_id).toBeUndefined();
+    expect(body.row.family_id).toBeUndefined();
     expect(body.row.env).toBeUndefined();
     expect(body.source_ref).toBe("abcdef123");
     expect(remoteUsageSchema.safeParse(body).success).toBe(true);

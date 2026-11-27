@@ -7,9 +7,19 @@ import { fetchJson } from "./http";
 
 const BASE = "https://generativelanguage.googleapis.com/v1beta/models";
 
+/**
+ * #194: Google берёт за выход вместе с «мыслями» (output price including thinking tokens), а candidatesTokenCount
+ * их не включает — складываем, иначе расход и бюджет занижены.
+ */
+export function outputTokens(json: Pick<GeminiResponse, "usageMetadata">): number | undefined {
+  const u = json.usageMetadata;
+  if (u?.candidatesTokenCount === undefined && u?.thoughtsTokenCount === undefined) return undefined;
+  return (u?.candidatesTokenCount ?? 0) + (u?.thoughtsTokenCount ?? 0);
+}
+
 interface GeminiResponse {
   candidates?: { content?: { parts?: { text?: string }[] }; finishReason?: string }[];
-  usageMetadata?: { promptTokenCount?: number; candidatesTokenCount?: number };
+  usageMetadata?: { promptTokenCount?: number; candidatesTokenCount?: number; thoughtsTokenCount?: number };
   promptFeedback?: { blockReason?: string };
 }
 
@@ -76,7 +86,7 @@ export const geminiProvider: AiProvider = {
       if (!text) throw new ProviderError(`пустой ответ (${json.candidates?.[0]?.finishReason ?? "empty"})`, "bad_output", "gemini");
       return {
         output: { text, language: input.languageHint },
-        usage: { inputTokens: json.usageMetadata?.promptTokenCount, outputTokens: json.usageMetadata?.candidatesTokenCount, audioSeconds: input.durationSec },
+        usage: { inputTokens: json.usageMetadata?.promptTokenCount, outputTokens: outputTokens(json), audioSeconds: input.durationSec },
       };
     }
     const send = (thinking: boolean) =>
@@ -121,7 +131,7 @@ export const geminiProvider: AiProvider = {
       output,
       usage: {
         inputTokens: json.usageMetadata?.promptTokenCount,
-        outputTokens: json.usageMetadata?.candidatesTokenCount,
+        outputTokens: outputTokens(json),
         audioSeconds:
           req.step === "transcribe" ? (req.input as ProviderCall<"transcribe">["input"]).durationSec : undefined,
       },

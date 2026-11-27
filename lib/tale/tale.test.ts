@@ -119,7 +119,7 @@ describe("сказка в AI_MODE=mock", () => {
     await illustratePage(id, 1);
     expect(spy).not.toHaveBeenCalled();
     await illustratePage(id, 1, { regenerate: true });
-    expect(spy).toHaveBeenCalledWith("illustrate", expect.anything(), { noCache: true });
+    expect(spy).toHaveBeenCalledWith("illustrate", expect.anything(), { noCache: true, familyId: id }); // #204: расход картинок — в семью
     spy.mockRestore();
   });
 

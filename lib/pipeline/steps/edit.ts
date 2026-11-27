@@ -38,7 +38,7 @@ export const edit: StepFn = async ({ story, ai, repo, bank, deadline }) => {
   const out = await ai.run(
     "edit",
     { transcript, storytellerName, questionText, block, ...(hints?.length ? { hints } : {}), ...(entities.length ? { entities } : {}) },
-    { storyId: story.id, deadline },
+    { storyId: story.id, familyId: story.family_id, deadline },
   );
   return { ...keep, text_ru: out.text_ru, title: out.title, quote: out.quote, facts: out.facts };
 };

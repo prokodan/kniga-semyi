@@ -232,6 +232,8 @@ export function createInterview(deps: InterviewDeps) {
       pause?: boolean;
       storyId: string | null;
       wasBlockDone: boolean;
+      /** #204: семья — в ai_usage.family_id (расход next_question на книгу, #105 п. 6) */
+      familyId?: string;
     },
   ): Promise<AnswerResult> {
     // #140: уходим с отложенного уточнения (ответили, пропустили, «позже») — больше его не задаём.
@@ -267,7 +269,7 @@ export function createInterview(deps: InterviewDeps) {
           candidateQuestions: candidates.map((q) => ({ id: q.id, block: q.block, text: q.ru })),
           sameBlock: true,
           ...(known.length > 0 ? { knownAnswers: known } : {}),
-        });
+        }, opts.familyId ? { familyId: opts.familyId } : undefined);
         // #99 п. 2: уже отвеченное в прошлых рассказах не спрашиваем (не больше 2 за раз — страховка от ошибки модели).
         const answeredBefore = (pick.alreadyAnswered ?? [])
           .filter((id) => candidates.some((q) => q.id === id) && id !== prev.id)
@@ -359,7 +361,7 @@ export function createInterview(deps: InterviewDeps) {
           ...((state.asked_followups ?? []).length > 0 ? { askedFollowups: state.asked_followups } : {}),
           ...(earlier.length > 0 ? { earlierAnswers: earlier } : {}),
         },
-        { storyId: main.id },
+        { storyId: main.id, familyId: main.family_id },
       );
     } catch (e) {
       if (!(e instanceof AiUnavailableError)) throw e;
@@ -405,12 +407,12 @@ export function createInterview(deps: InterviewDeps) {
         };
       }
       state.later_question_ids = addUnique(state.later_question_ids, question.id);
-      return advance(sessionId, state, question, { storyteller: name, storytellerId, storyId: main.id, wasBlockDone });
+      return advance(sessionId, state, question, { storyteller: name, storytellerId, storyId: main.id, wasBlockDone, familyId: main.family_id });
     }
 
     state.answered_question_ids = addUnique(state.answered_question_ids, question.id);
     state.later_question_ids = removeValue(state.later_question_ids, question.id);
-    return advance(sessionId, state, question, { storyteller: name, storytellerId, storyId: main.id, wasBlockDone });
+    return advance(sessionId, state, question, { storyteller: name, storytellerId, storyId: main.id, wasBlockDone, familyId: main.family_id });
   }
 
   /**
@@ -450,7 +452,7 @@ export function createInterview(deps: InterviewDeps) {
     state.skipped_question_ids = removeValue(state.skipped_question_ids, question.id);
     state.later_question_ids = removeValue(state.later_question_ids, question.id);
     state.name_check = null;
-    return advance(sessionId, state, question, { storyteller: name, storytellerId: session.storyteller_id, bridge: PHRASES.saved, storyId: release, wasBlockDone });
+    return advance(sessionId, state, question, { storyteller: name, storytellerId: session.storyteller_id, bridge: PHRASES.saved, storyId: release, wasBlockDone, familyId: session.family_id });
   }
 
   async function storytellerName(session: { storyteller_id: string }) {
@@ -579,7 +581,7 @@ export function createInterview(deps: InterviewDeps) {
           storyId = null;
         }
         state.later_question_ids = removeValue(state.later_question_ids, question.id);
-        return advance(sessionId, state, question, { storyteller: name, storytellerId: session.storyteller_id, bridge: PHRASES.refused, storyId, wasBlockDone });
+        return advance(sessionId, state, question, { storyteller: name, storytellerId: session.storyteller_id, bridge: PHRASES.refused, storyId, wasBlockDone, familyId: session.family_id });
       }
 
       // Сохраняем сказанное до вызова ИИ: если модель упадёт, рассказ не потеряется.
@@ -626,14 +628,14 @@ export function createInterview(deps: InterviewDeps) {
       // Трудная тема: тёплая пауза, предложение вернуться позже, никаких уточнений подряд.
       if (signal === "emotional") {
         state.later_question_ids = addUnique(state.later_question_ids, question.id);
-        return advance(sessionId, state, question, { storyteller: name, storytellerId: session.storyteller_id, bridge: PHRASES.pause, pause: true, storyId: main.id, wasBlockDone });
+        return advance(sessionId, state, question, { storyteller: name, storytellerId: session.storyteller_id, bridge: PHRASES.pause, pause: true, storyId: main.id, wasBlockDone, familyId: session.family_id });
       }
 
       if (signal === "refuses") {
         // Длинный рассказ, отказ — про часть: глава есть, уточнений нет.
         state.answered_question_ids = addUnique(state.answered_question_ids, question.id);
         state.later_question_ids = removeValue(state.later_question_ids, question.id);
-        return advance(sessionId, state, question, { storyteller: name, storytellerId: session.storyteller_id, bridge: PHRASES.refused, storyId: main.id, wasBlockDone });
+        return advance(sessionId, state, question, { storyteller: name, storytellerId: session.storyteller_id, bridge: PHRASES.refused, storyId: main.id, wasBlockDone, familyId: session.family_id });
       }
 
       // Имя или место распознано неуверенно («У штабе» ≈ Уштобе) — один раз переспросить.
@@ -689,6 +691,7 @@ export function createInterview(deps: InterviewDeps) {
         bridge: action === "later" ? PHRASES.later : PHRASES.skip,
         storyId,
         wasBlockDone,
+        familyId: session.family_id,
       });
     },
   };

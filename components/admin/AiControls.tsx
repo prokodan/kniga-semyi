@@ -6,6 +6,7 @@ import {
   saveProviderLimits,
   saveRouteEntry,
   toggleProvider,
+  toggleProviderPaid,
   toggleRoute,
 } from "@/app/admin/ai/actions";
 import type { ProviderView, RouteView } from "@/app/admin/ai/_lib/routes";
@@ -29,13 +30,24 @@ export function ProvidersSection({ providers }: { providers: ProviderView[] }) {
               {p.source === "default" ? <Badge tone="info">нет строки в базе</Badge> : null}
             </span>
           </div>
-          <form action={toggleProvider} className="mt-3">
-            <input type="hidden" name="provider" value={p.provider} />
-            <input type="hidden" name="enabled" value={String(!p.enabled)} />
-            <button className={p.enabled ? btnGhostCls : btnCls} type="submit">
-              {p.enabled ? "Выключить" : "Включить"}
-            </button>
-          </form>
+          <div className="mt-3 flex flex-wrap gap-2">
+            <form action={toggleProvider}>
+              <input type="hidden" name="provider" value={p.provider} />
+              <input type="hidden" name="enabled" value={String(!p.enabled)} />
+              <button className={p.enabled ? btnGhostCls : btnCls} type="submit">
+                {p.enabled ? "Выключить" : "Включить"}
+              </button>
+            </form>
+            {p.provider !== "mock" ? (
+              <form action={toggleProviderPaid}>
+                <input type="hidden" name="provider" value={p.provider} />
+                <input type="hidden" name="paid" value={String(!p.paid)} />
+                <button className={btnGhostCls} type="submit">
+                  {p.paid ? "Сделать бесплатным" : "Сделать платным"}
+                </button>
+              </form>
+            ) : null}
+          </div>
           <form action={saveProviderLimits} className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-3">
             <input type="hidden" name="provider" value={p.provider} />
             <Field label="Бюджет дня, $" name="daily_budget_usd" value={p.daily_budget_usd} step="0.01" />
@@ -47,7 +59,7 @@ export function ProvidersSection({ providers }: { providers: ProviderView[] }) {
               </button>
             </div>
             {!p.paid ? (
-              <p className="text-xs text-muted sm:col-span-3">Бюджеты действуют только для платных провайдеров (paid).</p>
+              <p className="text-xs text-muted sm:col-span-3">Бюджеты действуют только для платных провайдеров (paid). Бесплатные квоты моделей — в «Маршрутах».</p>
             ) : null}
           </form>
         </Card>

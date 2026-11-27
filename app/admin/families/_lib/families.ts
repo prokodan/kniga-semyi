@@ -8,7 +8,16 @@ export type FamilyPick = Pick<Family, "id" | "name" | "source" | "is_demo" | "ac
 export type StoryPick = Pick<Story, "id" | "family_id" | "status" | "parent_story_id">;
 export type BookPick = { family_id: string; status: BookStatus; page_count: number | null; created_at: string };
 export type OrderPick = Pick<DemoOrder, "family_id" | "product" | "amount_kzt" | "extras" | "status" | "created_at">;
-export type UsagePick = { story_id: string | null; cost_usd: number | string | null };
+/** #204: family_id есть с миграции 20261127140000; до неё (и у старых строк) — null, семья через story_id. */
+export type UsagePick = { story_id: string | null; family_id?: string | null; cost_usd: number | string | null };
+
+/** #204: семья строки ai_usage — family_id (сказка, картинки, next_question), иначе семья её истории. */
+export function usageFamily(
+  u: { story_id?: string | null; family_id?: string | null },
+  familyOfStory: ReadonlyMap<string, string>,
+): string | undefined {
+  return u.family_id ?? (u.story_id ? familyOfStory.get(u.story_id) : undefined);
+}
 
 export interface AdminFamilyRows {
   families: FamilyPick[];
@@ -98,7 +107,7 @@ export function buildAdminFamilies(r: AdminFamilyRows): AdminFamily[] {
   const familyOfStory = new Map(r.stories.map((s) => [s.id, s.family_id]));
   const ai = new Map<string, number>();
   for (const u of r.usage) {
-    const fam = u.story_id ? familyOfStory.get(u.story_id) : undefined;
+    const fam = usageFamily(u, familyOfStory);
     if (fam) ai.set(fam, (ai.get(fam) ?? 0) + (Number(u.cost_usd) || 0));
   }
   const chapters = new Map<string, AdminFamily["chapters"]>();
