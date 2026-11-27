@@ -47,15 +47,21 @@ test("книга RU + KZ: глава RU | KZ из story_texts, без корей
     await page.getByRole("button", { name: "Сохранить согласие" }).click();
     await expect(page.getByText("Согласие записано ✓ Спасибо!")).toBeVisible();
     await page.getByRole("link", { name: "Записать первый рассказ" }).click();
-    await expect(page.getByRole("heading", { level: 1 })).toBeVisible({ timeout: 30_000 });
+    const h1 = page.getByRole("heading", { level: 1 });
+    await expect(h1).toBeVisible({ timeout: 30_000 });
+    const question = (await h1.textContent())!.trim();
     await page.locator('input[type="file"]').setInputFiles(audioFile("otvet.wav", 1));
     await page.getByRole("button", { name: "Отправить рассказ" }).click();
     await expect(page.getByText("Спасибо! Рассказ сохранён.")).toBeVisible();
     await expect(page.getByText(/· уточнение/)).toBeVisible({ timeout: 60_000 });
+    const followup = (await h1.textContent())!.trim();
     await page.locator('input[type="file"]').setInputFiles(audioFile("utochnenie.wav", 8));
     await page.getByRole("button", { name: "Отправить рассказ" }).click();
     await expect(page.getByText("Спасибо! Дополнение сохранено.")).toBeVisible();
-    await expect(page.getByText(/· уточнение/)).toBeHidden({ timeout: 60_000 });
+    // интервью перешло к следующему вопросу — только тогда глава собирается (пока сессия на вопросе — ждёт уточнений)
+    await expect(h1).not.toHaveText(followup, { timeout: 60_000 });
+    await expect(h1).not.toHaveText(question);
+    await expect(page.getByText(/· уточнение/)).toBeHidden();
   });
 
   await test.step("глава RU | KZ", async () => {
