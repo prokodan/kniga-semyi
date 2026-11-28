@@ -65,6 +65,14 @@ const DEFS = {
     owner: "Влад",
     issue: 306,
   },
+  quality_loop: {
+    description:
+      "Контур качества #351 (только команда, семьи не видят): /admin/quality — «Банк» (#352) и «Проверки» (#353): ссылка " +
+      "проверяющему с выбором материала, /review 2.0 — экран «что нужно», режимы «текст» (критерии с якорями, правка с diff) " +
+      "и «слова» (фокус-слова: верно / неверно). Старые ссылки #232 — как раньше.",
+    owner: "Влад",
+    issue: 351,
+  },
 } as const satisfies Record<string, FlagInfo>;
 
 export type FlagName = keyof typeof DEFS;
