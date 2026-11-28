@@ -44,7 +44,15 @@ export function StartForm({
   choices = null,
 }: {
   prefill?: StartPrefill;
-  choices?: { kkOn: boolean; spokenKkOn?: boolean; langChangeOn?: boolean; initialPacks?: string[] } | null;
+  choices?: {
+    kkOn: boolean;
+    spokenKkOn?: boolean;
+    langChangeOn?: boolean;
+    initialPacks?: string[];
+    /** #341: с древа — язык рассказа и языки книги этой семьи (id вариантов); нет / чужое — по пакетам, как было */
+    initialSpoken?: string | null;
+    initialBook?: string | null;
+  } | null;
 }) {
   const router = useRouter();
   const [busy, setBusy] = useState(false);
@@ -143,6 +151,8 @@ export function StartForm({
           spokenKkOn={choices.spokenKkOn}
           langChangeOn={choices.langChangeOn}
           initialPacks={choices.initialPacks}
+          initialSpoken={choices.initialSpoken}
+          initialBook={choices.initialBook}
           onPacks={setPacks}
         />
       )}

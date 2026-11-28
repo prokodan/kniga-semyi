@@ -1,7 +1,7 @@
 "use client";
 import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
-import { translatingStep } from "@/lib/pipeline/langs";
+import { LANG_UI, secondLang, translatingStep } from "@/lib/pipeline/langs";
 import { STORY_PIPELINE, type BookLang, type StoryStatus } from "@/lib/types";
 
 // Экран ожидания главы: опрашивает GET /api/stories/:id (токен семьи) и обновляет страницу, когда глава готова.
@@ -9,8 +9,18 @@ import { STORY_PIPELINE, type BookLang, type StoryStatus } from "@/lib/types";
 // Стоит дольше 45 с или failed — кнопка «Перезапустить сборку»: продолжает с застрявшего шага (restart: true).
 // #293: шаг перевода — по языкам книги («на корейский» / «на казахский»), книга только RU — без шага перевода.
 // Языки не переданы — как раньше (RU + KR).
+// #340 (флаг lang_change): докупленный язык («Добавить язык» — третий в языках книги) конвейер переводит вместе со вторым
+// — шаг и сообщение называют оба: «Переводим на корейский и казахский». Два языка — подписи прежние, байт в байт.
+export function extraTargets(langs?: readonly BookLang[]): string | null {
+  const second = langs ? secondLang(langs) : null;
+  const extra = (langs ?? []).slice(2).filter((l): l is "ko" | "kk" => (l === "ko" || l === "kk") && l !== second);
+  if (!second || !extra.length) return null;
+  return `на ${[LANG_UI[second].name, ...extra.map((l) => LANG_UI[l].name)].join(" и ")}`;
+}
+
 function steps(langs?: readonly BookLang[]): { status: StoryStatus; label: string }[] {
-  const translating = langs ? translatingStep(langs) : "Переводим на корейский";
+  const both = extraTargets(langs);
+  const translating = both ? `Переводим ${both}` : langs ? translatingStep(langs) : "Переводим на корейский";
   return [
     { status: "uploaded", label: "Запись получена" },
     { status: "transcribing", label: "Слушаем и записываем" },
@@ -95,7 +105,13 @@ export function StoryWaiting({ storyId, token, initial, langs }: { storyId: stri
   return (
     <section className="flex flex-col gap-5 rounded-card bg-paper-deep p-6 shadow-card" aria-live="polite">
       <h2 className="font-serif text-2xl">{failed ? "Глава пока не собралась" : "Глава готовится"}</h2>
-      <p className="text-elder text-ink-soft">{failed ? "Запись сохранена — ничего не потерялось. Попробуем ещё раз?" : view.message}</p>
+      <p className="text-elder text-ink-soft">
+        {failed
+          ? "Запись сохранена — ничего не потерялось. Попробуем ещё раз?"
+          : view.status === "translating" && extraTargets(langs)
+            ? `Переводим главу ${extraTargets(langs)}…`
+            : view.message}
+      </p>
       {!failed && (
         <ol className="flex flex-col gap-3">
           {steps(langs).map((s, i) => {

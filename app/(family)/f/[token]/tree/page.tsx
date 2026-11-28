@@ -4,6 +4,7 @@ import { notFound } from "next/navigation";
 import { getFamilyByToken } from "@/lib/db/access";
 import { photoUrls } from "@/lib/db/photos";
 import { flag } from "@/lib/flags";
+import { bookLangs } from "@/lib/book/texts";
 import { effectiveBookLangs } from "@/lib/pipeline/langs";
 import { loadTree } from "@/lib/tree";
 import { rowLang } from "@/lib/tree/rows";
@@ -48,6 +49,8 @@ export default async function TreePage({
 
   const langs = effectiveBookLangs(family, flag("lang_kk", { familyId: family.id, labs: family.labs }));
   const showKo = langs.includes("ko");
+  // #341: «Записать историю мамы» → /start с пакетами и языками этой семьи (иначе вторая книга начнётся с пустой анкеты)
+  const startQuery = recordStartQuery(family, storytellers.find((s) => s.id === viewer) ?? null);
 
   return (
     <main className="mx-auto flex max-w-3xl flex-col gap-5 px-5 py-8">
@@ -97,7 +100,24 @@ export default async function TreePage({
         book={book && viewer === book ? book : null}
         opened={opened}
         focusId={focus && everyone.some((n) => n.id === focus) ? focus : null}
+        startQuery={startQuery}
       />
     </main>
   );
+}
+
+/**
+ * #341: что отметить на /start для второй книги семьи — её культурные пакеты (`pack=`, без general), язык рассказа
+ * рассказчика, от которого смотрим древо (`spoken=`), и базовая пара языков книги (`langs=`; докупленный третий язык
+ * — покупка первой книги, во вторую не переносится). /start берёт только то, что есть среди его вариантов.
+ */
+function recordStartQuery(
+  family: { culture_packs?: readonly string[] | null; book_langs?: readonly string[] | null },
+  storyteller: { spoken_langs?: readonly string[] | null } | null,
+): [string, string][] {
+  const q: [string, string][] = [];
+  for (const p of family.culture_packs ?? []) if (p !== "general") q.push(["pack", p]);
+  if (storyteller?.spoken_langs?.length) q.push(["spoken", storyteller.spoken_langs.join(",")]);
+  if (family.book_langs?.length) q.push(["langs", bookLangs(family).join(",")]);
+  return q;
 }

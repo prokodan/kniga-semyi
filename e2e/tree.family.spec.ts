@@ -45,6 +45,11 @@ test("демо: древо семьи — само из глав, правка, 
   const href = (await record.getAttribute("href"))!;
   expect(href).toContain("/start?");
   expect(href).toContain("storyteller=");
+  // #341: пакеты и языки этой семьи (демо Ким — корё-сарам, ru + корё мар, RU + KR)
+  const q = new URL(href, "http://x").searchParams;
+  expect(q.getAll("pack")).toEqual(["koryo"]);
+  expect(q.get("spoken")).toBe("ru,koryo");
+  expect(q.get("langs")).toBe("ru,ko");
 
   // годы жены
   await sheet.getByRole("button", { name: "✎ Исправить" }).click();
@@ -75,5 +80,22 @@ test("демо: древо семьи — само из глав, правка, 
   await page.goto(href);
   await expect(page.locator('input[name="storytellerName"]')).toHaveValue("Валентина");
   await expect(page.getByText(/Вторая книга в семье/)).toBeVisible();
+  // #341: анкета не пустая — корё-сарам, корё мар и RU + KR отмечены, поле «Имя по-корейски» на месте
+  await expect(page.locator('input[name="packs"][value="koryo"]')).toBeChecked();
+  await expect(page.locator('input[name="spoken"][value="ru,koryo"]')).toBeChecked();
+  await expect(page.locator('input[name="book"][value="ru,ko"]')).toBeChecked();
+  await expect(page.getByLabel(/Имя по-корейски/)).toBeVisible();
   await shot(page, p, "05-start");
+});
+
+test("#341: /start со ссылки древа казахской семьи — пакет, язык рассказа и RU + KZ отмечены", async ({ page }) => {
+  await page.goto("/start?from=x&book=Книга%20семьи&storyteller=Сәуле&pack=kz&spoken=ru%2Ckk&langs=ru%2Ckk");
+  await expect(page.locator('input[name="packs"][value="kz"]')).toBeChecked();
+  await expect(page.locator('input[name="packs"][value="koryo"]')).not.toBeChecked();
+  await expect(page.locator('input[name="spoken"][value="ru,kk"]')).toBeChecked();
+  await expect(page.locator('input[name="book"][value="ru,kk"]')).toBeChecked();
+  // чужое значение — как без него: умолчание по пакетам
+  await page.goto("/start?pack=kz&spoken=ru%2Ckoryo&langs=xx");
+  await expect(page.locator('input[name="spoken"][value="ru"]')).toBeChecked();
+  await expect(page.locator('input[name="book"][value="ru,kk"]')).toBeChecked();
 });

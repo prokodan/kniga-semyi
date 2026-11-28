@@ -40,13 +40,16 @@ interface Props {
   opened: string[] | "all";
   /** После «+ ещё N» — поставить этого человека в центр */
   focusId: string | null;
+  /** #341: пакеты и языки семьи для /start («Записать историю мамы»); нет — ссылка как раньше */
+  startQuery?: [string, string][];
 }
 
-function recordHref(token: string, familyName: string, n: TreeNode): string {
+function recordHref(token: string, familyName: string, n: TreeNode, startQuery: [string, string][] = []): string {
   const q = new URLSearchParams({ from: token, book: familyName });
   if (n.realName) q.set("storyteller", n.realName);
   if (n.birthYear) q.set("birthYear", String(n.birthYear));
   if (n.nameKo && !n.kinOnly) q.set("nameKo", n.nameKo);
+  for (const [k, v] of startQuery) q.append(k, v);
   return `/start?${q.toString()}`;
 }
 
@@ -104,7 +107,7 @@ function Avatar({ n, photo, size }: { n: TreeNode; photo?: string; size: "card" 
 
 const ariaName = (n: TreeNode) => [n.name, n.label?.ru, n.years].filter(Boolean).join(", ");
 
-export function TreeView({ token, familyName, model, photos, showKo, rowLang, storytellers, chapterTitles, book, opened, focusId }: Props) {
+export function TreeView({ token, familyName, model, photos, showKo, rowLang, storytellers, chapterTitles, book, opened, focusId, startQuery }: Props) {
   const router = useRouter();
   const [view, setView] = useState<"tree" | "list">("tree");
   const [selected, setSelected] = useState<string | null>(null);
@@ -267,6 +270,7 @@ export function TreeView({ token, familyName, model, photos, showKo, rowLang, st
             busy={busy}
             token={token}
             familyName={familyName}
+            startQuery={startQuery}
             showKo={showKo}
             everyone={everyone}
             placed={[...model.nodes, ...model.hidden]}
@@ -755,6 +759,7 @@ function PersonSheet({
   busy,
   token,
   familyName,
+  startQuery,
   showKo,
   everyone,
   placed,
@@ -770,6 +775,7 @@ function PersonSheet({
   busy: boolean;
   token: string;
   familyName: string;
+  startQuery?: [string, string][];
   showKo: boolean;
   everyone: TreeNode[];
   placed: TreeNode[];
@@ -864,7 +870,7 @@ function PersonSheet({
               <span className="text-seal">→</span>
             </Link>
           ) : (
-            <Link href={recordHref(token, familyName, n)} className={`${linkRow} bg-seal font-semibold text-paper`} data-testid="record-story">
+            <Link href={recordHref(token, familyName, n, startQuery)} className={`${linkRow} bg-seal font-semibold text-paper`} data-testid="record-story">
               <span>{recordLabel(n)}</span>
               <span>→</span>
             </Link>

@@ -11,10 +11,10 @@ const voiceUrl = (id: string) => `https://kniga.example/listen/${id}?s=AAAAAAAAA
 const NOW = new Date("2026-11-28T00:00:00Z");
 const BUILT = new Date("2026-11-27T00:00:00Z");
 
-/** sha256 PDF кода main (до #340). "" — эталона нет: тест только печатает хэш. */
+/** sha256 PDF кода main до #340 (main 00ddbfc, прогон ci PR #370, коммит 7682774). "" — эталона нет: только печать. */
 const GOLDEN = {
-  demo: "",
-  kiosk: "",
+  demo: "af19678e453f96fa87aee126049be7cf654d64a260131d1cc78865e986013ed9",
+  kiosk: "b2898818355b7a9ca11a30163529e0fc526f97207cd18e2ae440cb45a7256165",
 };
 
 async function sha(input: Parameters<typeof renderBook>[0]): Promise<string> {

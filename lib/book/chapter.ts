@@ -8,12 +8,14 @@ import type { Family, Story, Storyteller } from "@/lib/types";
 import { BUCKETS, getDbOrNull } from "@/lib/db";
 import { getFamilyStore, isTokenShape, MemoryFamilyStore } from "@/lib/db/access";
 import { playablePath } from "./playable";
-import { loadStoryTexts, withStoryTexts } from "./texts";
+import { loadStoryTexts, withStoryTexts, type StoryTextRow } from "./texts";
 
 export interface ChapterData {
   story: Story;
   storyteller: Storyteller | null;
   family: Pick<Family, "id" | "name">;
+  /** #333: строки story_texts главы (все языки) — уже загружены здесь; второй язык /listen берёт их, без второго запроса */
+  texts: StoryTextRow[];
 }
 
 /** Ссылка на фото живёт час (страница главы), аудио — 12 часов: QR на слайде сканируют в течение дня. */
@@ -39,7 +41,7 @@ export async function loadChapter(storyId: string, opts: { token?: string } = {}
     const family = store.families.get(story.family_id);
     if (opts.token !== undefined && family?.access_token !== opts.token) return null;
     const storyteller = store.storytellers.get(story.storyteller_id) ?? null;
-    return structuredClone({ story, storyteller, family: { id: story.family_id, name: family?.name ?? "Книга семьи" } });
+    return structuredClone({ story, storyteller, family: { id: story.family_id, name: family?.name ?? "Книга семьи" }, texts: [] });
   }
 
   const { data: story, error } = await db.from("stories").select("*").eq("id", storyId).maybeSingle();
@@ -56,7 +58,7 @@ export async function loadChapter(storyId: string, opts: { token?: string } = {}
   if (!fam.data) return null;
   // #230: тексты — из story_texts, если строка есть, иначе старые колонки (до migrate — колонки)
   const texts = await loadStoryTexts(db, [storyId]);
-  return { story: withStoryTexts(story as Story, texts), storyteller: (st.data as Storyteller | null) ?? null, family: fam.data as ChapterData["family"] };
+  return { story: withStoryTexts(story as Story, texts), storyteller: (st.data as Storyteller | null) ?? null, family: fam.data as ChapterData["family"], texts };
 }
 
 /** Путь в бакете из audio_url: `fam/st/story-1.m4a`, можно с префиксом `audio/`. https-ссылку отдаём как есть. */

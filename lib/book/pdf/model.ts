@@ -32,6 +32,11 @@ export interface BookInput {
   texts?: readonly StoryTextRow[];
   /** #235: страница древа после оглавления; нет — книга как раньше */
   tree?: BookTree | null;
+  /**
+   * #340 (флаг lang_change): докупленные языки сверх базовой пары («Добавить язык», book_langs[2…]) — отдельной частью
+   * в конце книги: те же главы целиком на этом языке. Пусто / не задано — книга как раньше (байт в байт).
+   */
+  extraLangs?: readonly BookLang[];
 }
 
 export type Elder = "grandfather" | "grandmother";
@@ -84,6 +89,22 @@ export interface BookChapter {
   voiceUrl: string;
 }
 
+/** #340: глава в части «Ещё один язык книги» — только текст на этом языке (голос — по QR в главе выше). */
+export interface ExtraChapter {
+  id: string;
+  /** Подпись раздела над заголовком: блок карты жизни (ko — по-корейски, kk — по-русски, как в RU + KZ) */
+  block: string;
+  title: string;
+  quote: string | null;
+  text: string;
+}
+
+/** #340: часть книги на докупленном языке */
+export interface ExtraPart {
+  lang: SecondLang;
+  chapters: ExtraChapter[];
+}
+
 export interface TocGroup {
   ru: string;
   ko: string;
@@ -108,6 +129,8 @@ export interface BookModel {
   second: SecondLang | null;
   /** #235: страница древа (null / нет — нет) */
   tree?: BookTree | null;
+  /** #340: части на докупленных языках (пусто — книга как раньше) */
+  extras: ExtraPart[];
 }
 
 export const LEGACY_TITLE: Record<Elder, { ru: string; ko: string }> = {
@@ -186,6 +209,8 @@ export function composeBook(input: BookInput): BookModel {
     else groups.push({ ru: ch.blockRu, ko: ch.blockKo, chapters: [ch] });
   }
   const legacyChapters = chapters.filter((c) => c.block === "legacy");
+  const ordered = [...chapters.filter((c) => c.block !== "legacy"), ...legacyChapters];
+  const extras = extraParts(input, langs, second, ordered);
 
   return {
     title: input.title,
@@ -193,7 +218,7 @@ export function composeBook(input: BookInput): BookModel {
     years: bookYears(input.storyteller),
     photo: input.photo,
     // порядок страниц: обычные главы, затем «Слова деда»
-    chapters: [...chapters.filter((c) => c.block !== "legacy"), ...legacyChapters],
+    chapters: ordered,
     groups,
     elder,
     legacy: { ru: LEGACY_TITLE[elder].ru, ko: ko ? LEGACY_TITLE[elder].ko : "", chapters: legacyChapters },
@@ -201,5 +226,37 @@ export function composeBook(input: BookInput): BookModel {
     langs,
     second,
     tree: input.tree && input.tree.pages.some((p) => p.length) ? input.tree : null,
+    extras,
   };
+}
+
+/**
+ * #340: части на докупленных языках — в порядке глав книги («Слова деда» в конце), только главы с переводом на этот
+ * язык. Язык, который уже основной или второй в книге, повторно не печатаем. ko — колонки / строка story_texts,
+ * kk — строка story_texts (тот же chapterText, что у второго языка).
+ */
+function extraParts(input: BookInput, langs: readonly BookLang[], second: SecondLang | null, ordered: readonly BookChapter[]): ExtraPart[] {
+  const stories = new Map(input.stories.map((s) => [s.id, s]));
+  const parts: ExtraPart[] = [];
+  for (const lang of input.extraLangs ?? []) {
+    if ((lang !== "ko" && lang !== "kk") || lang === langs[0] || lang === second || parts.some((p) => p.lang === lang)) continue;
+    const chapters: ExtraChapter[] = [];
+    for (const ch of ordered) {
+      const s = stories.get(ch.id)!;
+      const tr = chapterText(s, input.texts ?? [], lang);
+      const text = tr.text?.trim();
+      if (!text) continue;
+      const block = BLOCKS.find((b) => b.id === s.block);
+      const legacy = s.block === "legacy";
+      chapters.push({
+        id: ch.id,
+        block: lang === "ko" ? (legacy ? "당부" : (block?.ko ?? "이야기")) : legacy ? "Наказ" : ch.blockRu,
+        title: tr.title?.trim() || ch.title,
+        quote: tr.quote?.trim() || null,
+        text,
+      });
+    }
+    if (chapters.length) parts.push({ lang, chapters });
+  }
+  return parts;
 }

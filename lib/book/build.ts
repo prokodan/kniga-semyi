@@ -216,6 +216,9 @@ export async function buildBook(familyId: string, opts: { origin: string }): Pro
     const st = src.storyteller;
     // #231: казахский — только с флагом lang_kk (семье выключили — книга как сейчас, ru + ko)
     const langs = effectiveBookLangs(src.family, flag("lang_kk", { familyId: src.family.id, labs: src.family.labs }));
+    // #340 (флаг lang_change): докупленный язык («Добавить язык», третий в book_langs) — отдельной частью книги;
+    // флаг выключен — печатаем только базовую пару, как раньше
+    const extraLangs = flag("lang_change", { familyId: src.family.id, labs: src.family.labs }) ? langs.slice(2) : [];
     // #235: страница древа — только если флаг family_tree включён семье; сбой древа книгу не роняет
     let tree: BookTree | null = null;
     if (flag("family_tree", { familyId, labs: src.family.labs })) {
@@ -251,6 +254,7 @@ export async function buildBook(familyId: string, opts: { origin: string }): Pro
       langs,
       texts: src.texts,
       tree,
+      extraLangs,
     });
     if (rendered.missingKorean.length) console.warn(`[book] ${familyId}: нет в шрифте слогов ${rendered.missingKorean.join("")}`);
 
