@@ -38,14 +38,21 @@ export interface StartPrefill {
 }
 
 /** #233: анкета «Кто ваша семья?» — только с флагом culture_packs (null — формы нет, семья получает умолчания). */
-export function StartForm({ prefill = {}, choices = null }: { prefill?: StartPrefill; choices?: { kkOn: boolean; spokenKkOn?: boolean } | null }) {
+/** #301: `choices.initialPacks` — отмечено заранее по точке входа ([] — общая ссылка). #306: `langChangeOn` — флаг lang_change. */
+export function StartForm({
+  prefill = {},
+  choices = null,
+}: {
+  prefill?: StartPrefill;
+  choices?: { kkOn: boolean; spokenKkOn?: boolean; langChangeOn?: boolean; initialPacks?: string[] } | null;
+}) {
   const router = useRouter();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [photo, setPhoto] = useState<{ blob: Blob; preview: string } | null>(null);
   const [photoNote, setPhotoNote] = useState<string | null>(null);
   // #233: «Имя по-корейски» — без анкеты (флаг выключен) всегда, с анкетой — когда выбраны корё-сарам
-  const [packs, setPacks] = useState<string[]>(START_DEFAULT_PACKS);
+  const [packs, setPacks] = useState<string[]>(choices?.initialPacks ?? START_DEFAULT_PACKS);
   const showKo = !choices || packs.includes("koryo");
 
   async function onPhoto(e: React.ChangeEvent<HTMLInputElement>) {
@@ -130,7 +137,15 @@ export function StartForm({ prefill = {}, choices = null }: { prefill?: StartPre
         {photoNote && <p className="text-sm text-warning">{photoNote}</p>}
       </fieldset>
 
-      {choices && <FamilyChoices kkOn={choices.kkOn} spokenKkOn={choices.spokenKkOn} onPacks={setPacks} />}
+      {choices && (
+        <FamilyChoices
+          kkOn={choices.kkOn}
+          spokenKkOn={choices.spokenKkOn}
+          langChangeOn={choices.langChangeOn}
+          initialPacks={choices.initialPacks}
+          onPacks={setPacks}
+        />
+      )}
 
       <label className={label}>
         Когда хотите подарить книгу? <span className="text-sm text-muted">(можно пропустить)</span>

@@ -3,7 +3,11 @@
 // рассказывать?», «На каких языках книга?». Поля уходят в POST /api/families: packs (несколько), spoken, book.
 // По умолчанию — корё-сарам, по-русски с корё мар, книга RU + KR = сегодняшний продукт. Пока семья сама не выбрала
 // язык рассказа и книги, они следуют за выбором пакетов (казахская → книга RU + KZ).
+// #301: отмечено заранее — по точке входа (`initialPacks`): ссылка АКНЦ — корё-сарам (поведение выше байт в байт),
+// общая ссылка — ничего не отмечено («Просто общие вопросы» — только если семья нажмёт сама), книга RU.
+// #306 (флаг lang_change): под «На каких языках будет книга?» — предупреждение, что после бесплатной главы язык не сменить.
 import { useState } from "react";
+import { LANG_LOCK_WARNING } from "@/lib/payments/langs";
 import { GENERAL_CHOICE, START_DEFAULT_PACKS, bookChoices, defaultsFor, packChoices, spokenChoices, type Choice } from "@/lib/interview/start-choices";
 
 const box = "flex min-h-12 cursor-pointer items-center gap-3 rounded-card border border-line bg-paper px-4 py-3 text-lg text-ink has-[:checked]:border-ink";
@@ -15,9 +19,26 @@ function Hint({ c }: { c: Choice }) {
 
 /** `onPacks` — форма прячет «Имя по-корейски», когда корё-сарам не выбраны. */
 /** `spokenKkOn` — флаг spoken_kk (#300): вариант «По-казахски». */
-export function FamilyChoices({ kkOn, spokenKkOn = false, onPacks }: { kkOn: boolean; spokenKkOn?: boolean; onPacks?: (packs: string[]) => void }) {
+export function FamilyChoices({
+  kkOn,
+  spokenKkOn = false,
+  langChangeOn = false,
+  initialPacks = START_DEFAULT_PACKS,
+  onPacks,
+}: {
+  kkOn: boolean;
+  spokenKkOn?: boolean;
+  /** #306: флаг lang_change — предупреждение под языками книги */
+  langChangeOn?: boolean;
+  /** #301: отмечено заранее по точке входа; [] — общая ссылка, ничего не отмечено */
+  initialPacks?: string[];
+  onPacks?: (packs: string[]) => void;
+}) {
   const layers = packChoices();
-  const [packs, setPacksState] = useState<string[]>(START_DEFAULT_PACKS);
+  // #301: «открытая» анкета (общая ссылка) — «Просто общие вопросы» отмечается только нажатием семьи
+  const open = initialPacks.length === 0;
+  const [packs, setPacksState] = useState<string[]>(initialPacks);
+  const [generalPicked, setGeneralPicked] = useState(false);
   const setPacks = (v: string[]) => {
     setPacksState(v);
     onPacks?.(v);
@@ -25,8 +46,8 @@ export function FamilyChoices({ kkOn, spokenKkOn = false, onPacks }: { kkOn: boo
   const [spoken, setSpoken] = useState<string | null>(null);
   const [book, setBook] = useState<string | null>(null);
 
-  const general = packs.length === 0;
-  const effective = general ? ["general"] : packs;
+  const general = packs.length === 0 && (!open || generalPicked);
+  const effective = packs.length === 0 ? ["general"] : packs;
   const defaults = defaultsFor(effective, kkOn);
   const spokenOpts = spokenChoices(effective, spokenKkOn);
   const bookOpts = bookChoices(kkOn);
@@ -35,7 +56,14 @@ export function FamilyChoices({ kkOn, spokenKkOn = false, onPacks }: { kkOn: boo
   const bookValue = book && bookOpts.some((c) => c.id === book) ? book : defaults.book;
 
   function toggle(id: string) {
+    if (open) setGeneralPicked(false);
     setPacks(packs.includes(id) ? packs.filter((p) => p !== id) : [...packs, id]);
+  }
+
+  function toggleGeneral() {
+    if (!open) return setPacks(general ? initialPacks : []);
+    setGeneralPicked(!general);
+    setPacks([]);
   }
 
   return (
@@ -51,7 +79,7 @@ export function FamilyChoices({ kkOn, spokenKkOn = false, onPacks }: { kkOn: boo
           </label>
         ))}
         <label className={box}>
-          <input type="checkbox" name="packs" value="general" checked={general} onChange={() => setPacks(general ? START_DEFAULT_PACKS : [])} className={mark} />
+          <input type="checkbox" name="packs" value="general" checked={general} onChange={toggleGeneral} className={mark} />
           <span>
             {GENERAL_CHOICE.label}
             <Hint c={GENERAL_CHOICE} />
@@ -83,6 +111,11 @@ export function FamilyChoices({ kkOn, spokenKkOn = false, onPacks }: { kkOn: boo
             </span>
           </label>
         ))}
+        {langChangeOn && (
+          <p className="text-sm text-ink-soft">
+            <strong>Важно.</strong> {LANG_LOCK_WARNING}
+          </p>
+        )}
       </div>
     </fieldset>
   );

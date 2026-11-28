@@ -6,11 +6,18 @@ import { audioFile } from "./support";
 
 test("казахская семья: выбор на старте → вопрос без корейской строки", async ({ page }) => {
   await test.step("старт: «Кто ваша семья?» — казахская вместо корё-сарам", async () => {
+    // #301: ссылка АКНЦ — корё-сарам отмечен, как сейчас
+    await page.goto("/start?pack=koryo");
+    await expect(page.getByRole("checkbox", { name: "Корё-сарам" })).toBeChecked();
+    await expect(page.getByLabel(/Имя по-корейски/)).toBeVisible();
+    // общая ссылка — ничего не отмечено, книга RU, без корейского
     await page.goto("/start");
+    for (const box of await page.getByRole("checkbox").all()) await expect(box).not.toBeChecked();
+    await expect(page.getByLabel(/Имя по-корейски/)).toHaveCount(0);
+    await expect(page.getByRole("radio", { name: /^Только русский/ })).toBeChecked();
+    await expect(page.getByText("우리 이야기")).toHaveCount(0);
     await page.getByLabel("Как назовём книгу?").fill(`Книга семьи KZ ${Date.now().toString(36)}`);
     await page.getByLabel("Имя, как зовут в семье").fill("Әжем Сауле");
-    await expect(page.getByLabel(/Имя по-корейски/)).toBeVisible(); // по умолчанию — корё-сарам, как сейчас
-    await page.getByRole("checkbox", { name: "Корё-сарам" }).uncheck();
     await page.getByRole("checkbox", { name: "Казахская" }).check();
     await expect(page.getByLabel(/Имя по-корейски/)).toHaveCount(0);
     await expect(page.getByRole("radio", { name: /^Русский и казахский/ })).toBeChecked();

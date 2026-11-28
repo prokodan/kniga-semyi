@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { redirect } from "next/navigation";
 import { blockProgress, getFamilyByToken } from "@/lib/db/access";
+import { familyBookLangs } from "@/lib/pipeline/book-langs";
 import { LinkNotFound } from "../../_ui/LinkNotFound";
 import { RecordFlow } from "./RecordFlow";
 
@@ -25,6 +26,7 @@ export default async function RecordPage({ params }: { params: Promise<{ token: 
       storyteller={{ id: st.id, name: st.name }}
       initialCovered={blockProgress(view.stories, st.id).covered}
       answeredQuestionIds={answered}
+      showKo={familyBookLangs(view.family).includes("ko")}
     />
   );
 }

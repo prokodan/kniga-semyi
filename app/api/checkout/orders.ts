@@ -78,6 +78,7 @@ export class SupabaseDemoOrderStore implements DemoOrderStore {
       .select("*")
       .eq("family_id", familyId)
       .eq("status", "paid_demo")
+      .in("product", ["digital", "print"]) // #306: докупленный язык (product = "lang") — не заказ книги
       .order("created_at", { ascending: false })
       .limit(1)
       .maybeSingle();

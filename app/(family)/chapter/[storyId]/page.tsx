@@ -12,6 +12,7 @@ import { ShareButton } from "@/components/chapter/ShareButton";
 import { Spread } from "@/components/chapter/Spread";
 import { StoryWaiting } from "@/components/chapter/StoryWaiting";
 import { LinkNotFound } from "../../_ui/LinkNotFound";
+import { ExtraLang } from "./ExtraLang";
 import { loadKkChapter } from "./kk";
 import { SpreadKk } from "./SpreadKk";
 
@@ -47,7 +48,10 @@ export default async function ChapterPage({
     loadKkChapter(story, token),
     familyBookLangsById(story.family_id),
   ]);
-  const ko = !kk && langs.includes("ko");
+  // #306: докупленный язык (третий в книге) — отдельной страницей под разворотом базовой пары; без него — как было
+  const extra = langs.slice(2);
+  const kkSpread = kk && !extra.includes("kk") ? kk : null;
+  const ko = !kkSpread && langs.includes("ko") && !extra.includes("ko");
   const block = BLOCKS.find((b) => b.id === story.block);
   const ready = story.status === "ready";
   const voice = listenUrl(origin, story.id);
@@ -89,16 +93,21 @@ export default async function ChapterPage({
 
       {ready ? (
         <>
-          {kk ? (
+          {kkSpread ? (
             <SpreadKk
               ru={{ block: block?.ru ?? null, title: story.title, quote: story.quote, text: story.text_ru }}
-              kk={kk.page && { block: null, ...kk.page }}
+              kk={kkSpread.page && { block: null, ...kkSpread.page }}
             />
           ) : (
             <Spread
               ru={{ block: block?.ru ?? null, title: story.title, quote: story.quote, text: story.text_ru }}
               ko={ko ? { block: block?.ko ?? null, title: story.title_ko, quote: story.quote_ko, text: story.text_ko } : { block: null, title: null, quote: null, text: null }}
             />
+          )}
+
+          {extra.includes("kk") && kk?.page && <ExtraLang lang="kk" page={{ block: null, ...kk.page }} />}
+          {extra.includes("ko") && story.text_ko && (
+            <ExtraLang lang="ko" page={{ block: null, title: story.title_ko, quote: story.quote_ko, text: story.text_ko }} />
           )}
 
           <div className="grid gap-6 md:grid-cols-[1fr_minmax(0,22rem)] md:items-center">

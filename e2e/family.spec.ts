@@ -17,7 +17,7 @@ test("новая семья: старт → согласие → ответ → 
   const familyName = `Книга семьи E2E ${Date.now().toString(36)}`;
 
   await test.step("старт: создать книгу", async () => {
-    await page.goto("/start");
+    await page.goto("/start?pack=koryo"); // #301: ссылка АКНЦ — корё-сарам и RU + KR по умолчанию (как было)
     await page.getByLabel("Как назовём книгу?").fill(familyName);
     await page.getByLabel("Имя, как зовут в семье").fill("Бабушка Мария");
     await page.getByLabel("Год рождения").fill("1941");
