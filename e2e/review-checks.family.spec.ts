@@ -150,13 +150,13 @@ async function shot(page: Page, name: string) {
 
 test("экраны /review 2.0: 390×844 и 430×932 × ko / kk × текст / слова", async ({ page }, info) => {
   test.skip(info.project.name !== "iphone", "снимки — один раз, в проекте iphone");
-  test.setTimeout(180_000);
-  const links: { lang: "ko" | "kk"; kind: "text" | "terms"; path: string }[] = [];
-  for (const lang of ["ko", "kk"] as const)
-    for (const kind of ["text", "terms"] as const)
-      links.push({ lang, kind, path: await createLink(page, { pair: lang === "ko" ? "ru-ko" : "ru-kk", kind, reviewer: "Экран Тест", count: 2 }) });
-
+  test.setTimeout(240_000);
   for (const vp of SCREENS) {
+    // свои ссылки на каждый экран: на итоге тексты пропущены, второй проход начинался бы с «Вернуться к тексту»
+    const links: { lang: "ko" | "kk"; kind: "text" | "terms"; path: string }[] = [];
+    for (const lang of ["ko", "kk"] as const)
+      for (const kind of ["text", "terms"] as const)
+        links.push({ lang, kind, path: await createLink(page, { pair: lang === "ko" ? "ru-ko" : "ru-kk", kind, reviewer: "Экран Тест", count: 2 }) });
     await page.setViewportSize({ width: vp.width, height: vp.height });
     for (const l of links) {
       const base = `${vp.name}-${l.lang}-${l.kind}`;
