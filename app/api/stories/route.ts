@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { LIFE_BLOCKS } from "@/lib/types";
 import { AccessError, findStoryteller, getFamilyStore, isOwnAudioPath } from "@/lib/db/access";
+import { playableCopyInBackground } from "@/lib/pipeline/audio-copy-run";
 import { continueInBackground } from "@/lib/pipeline/chain";
 import { errorResponse, familyToken, ok, readJson, requireFamily } from "../_family/http";
 
@@ -45,6 +46,8 @@ export async function POST(req: Request) {
 
     // Расшифровку (и дальше по цепочке) запускает сервер — не ждём, пока телефон вызовет /process.
     if (token) continueInBackground(req, story.id, token);
+    // #347: запись, которую iPhone < 17 не сыграет (webm / ogg / Opus) → копия AAC сразу, а не ночью
+    playableCopyInBackground(story.id, body.path.replace(/^\/+/, "").replace(/^audio\//, ""));
     return ok({ storyId: story.id, status: story.status }, 201);
   } catch (e) {
     return errorResponse(e);

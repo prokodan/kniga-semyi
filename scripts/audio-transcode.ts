@@ -31,6 +31,12 @@ const APPLY = process.env.AUDIO_APPLY === "1";
 const SCHEDULED = process.env.AUDIO_SCHEDULED === "1";
 const MAX = Math.max(1, Number(process.env.AUDIO_MAX ?? 300) || 300);
 const BUCKET = "audio";
+/** #347: только одна история (запуск сайтом после загрузки записи). Не uuid — ошибка, а не «все». */
+const STORY = (process.env.AUDIO_STORY ?? "").trim();
+if (STORY && !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(STORY)) {
+  console.error("AUDIO_STORY — не id истории");
+  process.exit(1);
+}
 
 const db = createClient(SB || "http://localhost", KEY || "none", { auth: { persistSession: false } });
 const short = (id: string) => id.slice(0, 8);
@@ -42,9 +48,9 @@ async function rows(): Promise<AudioRow[]> {
   const demo = new Set((fams.data ?? []).filter((f) => f.is_demo).map((f) => f.id as string));
   const out: AudioRow[] = [];
   for (let from = 0; ; from += 1000) {
-    const r = await db
-      .from("stories")
-      .select("id, family_id, audio_url, duration_sec, status")
+    let q = db.from("stories").select("id, family_id, audio_url, duration_sec, status");
+    if (STORY) q = q.eq("id", STORY);
+    const r = await q
       .not("audio_url", "is", null)
       .neq("status", "skipped") // «не буду» в плеер не попадает
       .order("created_at", { ascending: true })
@@ -139,7 +145,7 @@ async function main() {
   const todo = items.filter((i) => i.decision === "convert" || i.decision === "stale");
   const lim = applyLimit({ apply: APPLY, scheduled: SCHEDULED, todo: todo.length, max: MAX });
 
-  log(`# audio-transcode · ${TARGET} · ${new Date().toISOString()} · ${lim.apply ? "ЗАПИСЬ" : "dry run"}${SCHEDULED ? " · по расписанию" : ""}`);
+  log(`# audio-transcode · ${TARGET} · ${new Date().toISOString()} · ${lim.apply ? "ЗАПИСЬ" : "dry run"}${SCHEDULED ? " · по расписанию" : ""}${STORY ? ` · история ${short(STORY)}` : ""}`);
   log("");
   log(`Записей с голосом: ${items.length} (семей: ${new Set(items.map((i) => i.familyId)).size}). Нужна копия для iPhone: **${todo.length}**` +
     ` (${(todo.reduce((a, i) => a + (store.get(i.path)?.size ?? 0), 0) / 1e6).toFixed(1)} МБ оригиналов), из них демо: ${todo.filter((i) => i.demo).length}.`);
