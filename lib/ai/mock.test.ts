@@ -22,6 +22,10 @@ const sampleInputs: Record<AiStep, unknown> = {
   judge: { storytellerName: "Ким", manner: "Говорит коротко", chapters: [{ id: "s1", transcript: "Ну, значит…", text_ru: "Я родился" }] },
   back_translate: { chapters: [{ id: "s1", text_ru: "Я родился", text_ko: "나는 태어났다" }] },
   quality_generate: { kind: "text", pair: "ru-kk", count: 2, nuance_tags: ["kinship"], persona: { name: "Айгүл", bio: "…", speech_style: "…" } },
+  quality_analyze: {
+    pair: "ru-kk",
+    items: [{ ref: "i0", source: "Апам пекла баурсаки.", model: "Әжем бауырсақ пісірді.", edits: [{ paragraph: 0, before: "Әжем бауырсақ пісірді.", after: "Апам бауырсақ пісірді." }], terms: [{ term: "әже", hint: "апа", fix: "апа" }] }],
+  },
 };
 
 describe("mock provider", () => {

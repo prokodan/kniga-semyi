@@ -66,6 +66,12 @@ export const DEFAULT_ROUTES: Record<AiStep, Route> = {
     [{ provider: "openai", model: "gpt-5.5" }, { provider: "openai", model: "gpt-5.4" }, OPENAI_TEXT],
     50_000,
   ),
+  // #354: разбор отзывов — та же самая сильная модель; 45 с — несколько вызовов «Разобрать сейчас» в лимит функции 60 с
+  quality_analyze: route(
+    "quality_analyze",
+    [{ provider: "openai", model: "gpt-5.5" }, { provider: "openai", model: "gpt-5.4" }, OPENAI_TEXT],
+    45_000,
+  ),
 };
 
 export const DEFAULT_PROVIDERS: Record<AiProviderName, ProviderSettings> = {
@@ -94,7 +100,7 @@ export interface Price {
 export const PRICING: Record<string, Price> = {
   "gemini-3.5-flash-lite": { inPerM: 0.3, outPerM: 2.5 },
   "gemini-3.6-flash": { inPerM: 0.75, outPerM: 3.75 },
-  // #352: OpenAI Standard, за 1M токенов (openai.com/api/pricing, 28.11.2026) — только quality_generate
+  // #352: OpenAI Standard, за 1M токенов (openai.com/api/pricing, 28.11.2026) — quality_generate / quality_analyze
   "gpt-5.5": { inPerM: 5, outPerM: 30 },
   "gpt-5.4": { inPerM: 2.5, outPerM: 15 },
   "gpt-5.4-mini": { inPerM: 0.75, outPerM: 4.5 },

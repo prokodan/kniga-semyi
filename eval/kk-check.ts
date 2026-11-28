@@ -49,6 +49,21 @@ const RUSSIAN_WORDS = new Set([
   "школа", "школу", "школе", "война", "войну", "год", "году", "года", "лет",
 ]);
 
+/**
+ * #354 (Q3): неверные формы из отзывов носителей «неверно → верно». Строки дописывает quality-propose (PR quality/ru-kk-…,
+ * слияние — только после eval «до / после»); руками тоже можно. Флажок `review` 🟡 — ищем целым словом с любым окончанием.
+ */
+export interface ReviewRule {
+  wrong: string;
+  right: string;
+  note: string;
+  /** Начало id находки quality_findings */
+  finding?: string;
+}
+export const REVIEW_RULES_KK: ReviewRule[] = [
+  // quality-propose: новые правила — над этой строкой
+];
+
 /** «Сен» и его формы — к старшим недопустимо (к внукам можно — поэтому флажок, а не ошибка). */
 const SEN = /(^|[^\p{L}])(сен|сені|саған|сенің|сенде|сенен|сенімен)(?=[^\p{L}]|$)/iu;
 
@@ -85,6 +100,8 @@ export function checkKk(item: KkItem, glossary: readonly KzTerm[] = KZ_GLOSSARY)
 
   for (const t of glossary)
     for (const v of t.not ?? []) if (variantRe(v).test(all)) add("glossary:variant", excerpt(all, v), `«${v}» → по глоссарию «${t.kk}» (${t.meaning})`, "minor");
+
+  for (const r of REVIEW_RULES_KK) if (variantRe(r.wrong).test(all)) add("review", excerpt(all, r.wrong), `«${r.wrong}» → «${r.right}» (${r.note})`, "minor");
 
   if (SEN.test(all)) add("style:sen", excerpt(all, all.match(SEN)![2]!), "«сен» — к старшим только «Сіз» (к внукам можно — проверьте, к кому)", "minor");
 

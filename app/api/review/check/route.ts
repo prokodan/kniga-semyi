@@ -2,12 +2,15 @@
 // («верно / неверно → как правильно»), комментарий, «пропустить»; { action: "complete" } — итоговый экран «Готово».
 // Токен — в заголовке x-review-token (адреса API попадают в логи Vercel). В логи — только id ссылки.
 // За флагом quality_loop: выключен — 404, старые ссылки пишут в POST /api/review как раньше.
-import { NextResponse } from "next/server";
+import { after, NextResponse } from "next/server";
 import { FeedbackError, parseCheckFeedback } from "@/app/admin/quality/checks/_lib/feedback";
 import { checkStore, openCheck } from "@/app/admin/quality/checks/_lib/store";
+import { digestNow } from "@/app/admin/quality/findings/_lib/store";
 import { flag } from "@/lib/flags";
 
 export const dynamic = "force-dynamic";
+// #354: после «Готово» разбор этой ссылки (quality-digest) идёт в after() — до лимита функции
+export const maxDuration = 60;
 
 const json = (status: number, body: Record<string, unknown>) => NextResponse.json(body, { status, headers: { "cache-control": "no-store" } });
 
@@ -24,6 +27,17 @@ export async function POST(req: Request) {
     const { store } = checkStore();
     if (raw && typeof raw === "object" && (raw as { action?: unknown }).action === "complete") {
       await store.complete(linkId);
+      // #354: ссылка закрыта — сразу разбор её отзывов (находки, авто-предложение при ≥ 3); ответ проверяющему не ждёт
+      const closed = linkId;
+      const started = Date.now();
+      after(async () => {
+        try {
+          const r = await digestNow("link", { linkId: closed, deadline: started + 55_000 });
+          if (r) console.log(`[quality-digest] ссылка ${closed.slice(0, 8)}: ${r.status}, новых находок ${r.findingsNew}, слито ${r.findingsMerged}`);
+        } catch (e) {
+          console.error(`[quality-digest] ссылка ${closed.slice(0, 8)}:`, e instanceof Error ? e.message : e);
+        }
+      });
       return json(200, { ok: true, completed: true });
     }
     const input = parseCheckFeedback(raw);
