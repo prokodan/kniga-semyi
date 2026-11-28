@@ -2,8 +2,7 @@ import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 import { cache } from "react";
 import { chapterAudioParts, lifeYears, loadChapter, photoSignedUrl } from "@/lib/book/chapter";
-import { chapterText, loadStoryTexts } from "@/lib/book/texts";
-import { getDbOrNull } from "@/lib/db";
+import { chapterText, type StoryTextRow } from "@/lib/book/texts";
 import { familyBookLangsById } from "@/lib/pipeline/book-langs";
 import { LANG_UI, secondLang } from "@/lib/pipeline/langs";
 import { verifyListen } from "@/lib/book/qr";
@@ -25,20 +24,18 @@ const load = cache(async (storyId: string, sig: string | undefined) => {
   const data = await loadChapter(storyId);
   if (!data || data.story.parent_story_id) return null;
   const second = secondLang(await familyBookLangsById(data.story.family_id));
-  return { ...data, second, alt: await secondText(data.story, second) };
+  return { ...data, second, alt: secondText(data.story, data.texts, second) };
 });
 
-/** Название и цитата на втором языке книги: ko — колонки (как было), kk — строка story_texts, нет второго — null. */
-async function secondText(story: Parameters<typeof chapterText>[0], second: ReturnType<typeof secondLang>) {
+/**
+ * Название и цитата на втором языке книги: ko — колонки (как было), kk — строка story_texts, нет второго — null.
+ * #333: строки story_texts — те, что уже загрузил loadChapter (второго запроса нет).
+ */
+function secondText(story: Parameters<typeof chapterText>[0], texts: readonly StoryTextRow[], second: ReturnType<typeof secondLang>) {
   if (second === "ko") return { title: story.title_ko, quote: story.quote_ko };
   if (!second) return null;
-  try {
-    const db = getDbOrNull();
-    const kk = chapterText(story, db ? await loadStoryTexts(db, [story.id]) : [], second);
-    return { title: kk.title, quote: kk.quote };
-  } catch {
-    return null;
-  }
+  const kk = chapterText(story, texts, second);
+  return { title: kk.title, quote: kk.quote };
 }
 
 export async function generateMetadata({ params, searchParams }: Props): Promise<Metadata> {

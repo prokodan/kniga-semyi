@@ -20,9 +20,12 @@
 // дороже REPAIR_MAX_OPENAI_USD ($1) — ничего не пересобирает, только план. Демо-семья не трогается никогда.
 // #312: REPAIR_TARGET prod | staging — база и сайт выбирает workflow (секреты STAGING_*, адрес — STAGING_URL в PROD_URL).
 // Вызывает сайт (прод или staging) POST /api/stories/:id/process с токеном семьи из базы. Токены, имена и тексты в лог не пишет.
+// #333 (#245): тексты глав — по правилу story_texts → колонки (`withStoryTexts`), строки story_texts семьи одной
+// загрузкой (ru / ko / kk; казахские переводы ИИ — из тех же строк, origin ai). До migrate таблицы нет — колонки.
 // Запуск: Actions → repair-chapters (families, apply). По умолчанию — только показать (dry run).
 import { appendFileSync } from "node:fs";
-import type { Story } from "@/lib/types";
+import type { Story, StoryText } from "@/lib/types";
+import { withStoryTexts, type StoryTextRow } from "@/lib/book/texts";
 import { grandkidsHaeyo } from "@/eval/kr-check";
 import { hasCyrillic } from "@/lib/pipeline/cyrillic";
 import { kkProblems } from "@/lib/pipeline/kk";
@@ -85,7 +88,21 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 type Row = Pick<
   Story,
-  "id" | "storyteller_id" | "parent_story_id" | "question_id" | "status" | "error" | "transcript" | "text_ru" | "text_ko" | "title_ko" | "quote_ko" | "followups" | "created_at"
+  | "id"
+  | "storyteller_id"
+  | "parent_story_id"
+  | "question_id"
+  | "status"
+  | "error"
+  | "transcript"
+  | "text_ru"
+  | "title"
+  | "quote"
+  | "text_ko"
+  | "title_ko"
+  | "quote_ko"
+  | "followups"
+  | "created_at"
 >;
 
 async function call(id: string, token: string, body: Record<string, unknown>) {
@@ -124,14 +141,17 @@ async function main() {
   for (const fam of families) {
     const token = (await rest<{ access_token: string }[]>(`families?select=access_token&id=eq.${fam.id}`))[0]?.access_token;
     if (!token) continue;
-    const rows = await rest<Row[]>(
-      `stories?select=id,storyteller_id,parent_story_id,question_id,status,error,transcript,text_ru,text_ko,title_ko,quote_ko,followups,created_at&family_id=eq.${fam.id}&order=created_at.asc&limit=1000`,
+    const raw = await rest<Row[]>(
+      `stories?select=id,storyteller_id,parent_story_id,question_id,status,error,transcript,text_ru,title,quote,text_ko,title_ko,quote_ko,followups,created_at&family_id=eq.${fam.id}&order=created_at.asc&limit=1000`,
     );
+    // #333: тексты — строка story_texts, иначе колонки (как книга и страница главы); одна загрузка на семью
+    const texts = await textRows(raw.map((r) => r.id));
+    const rows = raw.map((r) => withStoryTexts(r, texts));
     const plan: Plan[] = [];
     // #298: казахские переводы ИИ — только семьям с kk в книге и флагом lang_kk (иначе translate переведёт на KR);
     // #312: флаг — у семьи в labs или у всего сайта (staging: FLAGS_ON=*)
     const kkOn = (fam.book_langs ?? []).includes("kk") && ((fam.labs ?? []).includes("lang_kk") || siteFlag("lang_kk"));
-    const kkTexts = kkOn && (REASONS.has("kk-script") || REASONS.has("kk-style")) ? await kkRows(rows.map((r) => r.id)) : new Map<string, KkRow>();
+    const kkTexts = kkOn && (REASONS.has("kk-script") || REASONS.has("kk-style")) ? kkRows(texts) : new Map<string, KkRow>();
     for (const s of rows) {
       if (s.parent_story_id || s.status === "skipped") continue;
       if (s.status === "failed") {
@@ -209,21 +229,26 @@ async function main() {
 }
 
 type KkRow = { text: string | null; title: string | null; quote: string | null };
+type TextRow = StoryTextRow & Pick<StoryText, "origin">;
 
-/** #298: казахские переводы ИИ глав семьи (story_texts lang=kk, origin=ai); нет таблицы до migrate — пусто. */
-async function kkRows(ids: string[]): Promise<Map<string, KkRow>> {
-  const out = new Map<string, KkRow>();
+/** #333: строки story_texts глав семьи (все языки) — одной загрузкой по 100 id; нет таблицы до migrate — пусто. */
+async function textRows(ids: string[]): Promise<TextRow[]> {
+  const out: TextRow[] = [];
   for (let i = 0; i < ids.length; i += 100) {
     const part = ids.slice(i, i + 100);
     try {
-      const rows = await rest<(KkRow & { story_id: string })[]>(
-        `story_texts?select=story_id,text,title,quote&lang=eq.kk&origin=eq.ai&story_id=in.(${part.join(",")})`,
-      );
-      for (const r of rows) if (r.text) out.set(r.story_id, r);
+      out.push(...(await rest<TextRow[]>(`story_texts?select=story_id,lang,title,text,quote,origin&story_id=in.(${part.join(",")})`)));
     } catch {
-      return out;
+      return [];
     }
   }
+  return out;
+}
+
+/** #298: казахские переводы ИИ глав семьи (lang=kk, origin=ai, с текстом) — из уже загруженных строк. */
+function kkRows(rows: readonly TextRow[]): Map<string, KkRow> {
+  const out = new Map<string, KkRow>();
+  for (const r of rows) if (r.lang === "kk" && r.origin === "ai" && r.text) out.set(r.story_id, { text: r.text, title: r.title, quote: r.quote });
   return out;
 }
 

@@ -2,7 +2,7 @@
 // на голос → «Слова деда» → последняя страница. Формат A5, колонтитул с названием, номера страниц.
 import { Document, Image, Page, Path, StyleSheet, Svg, Text, View } from "@react-pdf/renderer";
 import QRCode from "qrcode";
-import type { BookChapter, BookModel, BookTreePerson, BookTreeRow, SecondLang } from "./model";
+import type { BookChapter, BookModel, BookTreePerson, BookTreeRow, ExtraChapter, ExtraPart, SecondLang } from "./model";
 import { paragraphs } from "./model";
 import { FAMILY_KO, FAMILY_RU } from "./fonts";
 import { COLOR, PAGE, TYPE } from "./theme";
@@ -82,6 +82,15 @@ const SECOND_LABEL: Record<SecondLang, { kicker: string; colophon: string }> = {
   ko: { kicker: "по-корейски", colophon: "на корейский" },
   kk: { kicker: "по-казахски", colophon: "на казахский" },
 };
+
+/** #340: подпись докупленного языка — так же, как на странице главы (ExtraLang): самоназвание языка. */
+const EXTRA_LABEL: Record<SecondLang, { own: string; name: string; prep: string }> = {
+  ko: { own: "한국어", name: "корейский", prep: "корейском" },
+  kk: { own: "Қазақша", name: "казахский", prep: "казахском" },
+};
+
+/** #340: ключ части в карте страниц оглавления (id главы уже занят основной главой). */
+const extraKey = (lang: SecondLang, id: string) => `${lang}:${id}`;
 
 // ---------------- QR ----------------
 
@@ -259,6 +268,19 @@ function Toc({ book, pages }: { book: BookModel; pages: PageMap }) {
           ))}
         </View>
       )}
+      {book.extras.map((part) => (
+        <View key={part.lang} style={{ marginTop: 6, borderTopWidth: 0.5, borderTopColor: COLOR.line, paddingTop: 10 }}>
+          <Text style={{ fontSize: 8, letterSpacing: 1.2, color: COLOR.seal, marginBottom: 4 }}>
+            ЕЩЁ ОДИН ЯЗЫК КНИГИ <Text style={{ fontFamily: secondFont(part.lang) }}>· {EXTRA_LABEL[part.lang].own}</Text>
+          </Text>
+          {part.chapters.map((ch) => (
+            <View key={ch.id} style={{ flexDirection: "row", alignItems: "flex-end", marginBottom: 3 }} wrap={false}>
+              <Text style={{ flex: 1, paddingRight: 8, fontFamily: secondFont(part.lang), fontSize: 10, lineHeight: 1.3 }}>{ch.title}</Text>
+              <Text style={{ fontSize: 10, color: COLOR.inkSoft, minWidth: 18, textAlign: "right" }}>{pages[extraKey(part.lang, ch.id)] ?? "·"}</Text>
+            </View>
+          ))}
+        </View>
+      ))}
     </View>
   );
 }
@@ -515,6 +537,57 @@ function LegacyDivider({ book }: { book: BookModel }) {
   );
 }
 
+/** #340: разворот-разделитель части на докупленном языке. */
+function ExtraDivider({ part }: { part: ExtraPart }) {
+  return (
+    <View style={{ alignItems: "center", paddingTop: 120 }}>
+      <View style={{ width: 40, height: 40, backgroundColor: COLOR.seal, borderRadius: 3, marginBottom: 22 }} />
+      <Text style={{ fontFamily: secondFont(part.lang), fontSize: 24, fontWeight: 700, textAlign: "center", lineHeight: 1.3 }}>{EXTRA_LABEL[part.lang].own}</Text>
+      <Text style={{ fontSize: 13, color: COLOR.inkSoft, marginTop: 8, lineHeight: 1.4 }}>Ещё один язык книги</Text>
+      <View style={{ ...s.rule, marginVertical: 18 }} />
+      <Text style={{ fontSize: 10.5, color: COLOR.inkSoft, textAlign: "center", maxWidth: 240 }}>
+        Те же главы — на {EXTRA_LABEL[part.lang].prep} языке. Голос — по QR-коду в главе выше.
+      </Text>
+    </View>
+  );
+}
+
+/** #340: глава в части на докупленном языке — заголовок, цитата, текст (без QR: он в основной главе). */
+function ExtraChapterPage({ ch, lang, title, ko, collect }: { ch: ExtraChapter; lang: SecondLang; title: string; ko: boolean; collect?: BookDocumentProps["collect"] }) {
+  const font = secondFont(lang);
+  const isKo = lang === "ko";
+  return (
+    <BookPage title={title} collect={collect} ko={ko}>
+      <PageMark id={extraKey(lang, ch.id)} collect={collect} />
+      <View>
+        <Text style={{ ...s.kicker, fontFamily: font }}>
+          {ch.block} · {EXTRA_LABEL[lang].own}
+        </Text>
+        <Text style={{ ...s.h1, fontFamily: font, fontSize: isKo ? 17 : 21 }}>{ch.title}</Text>
+        <View style={s.rule} />
+        {ch.quote && (
+          <View style={{ borderLeftWidth: 2, borderLeftColor: COLOR.seal, paddingLeft: 10, marginBottom: 12 }} wrap={false}>
+            <Text style={{ fontFamily: font, fontSize: isKo ? 11 : 12.5, lineHeight: isKo ? 1.6 : 1.45 }}>{isKo ? <>“{ch.quote}”</> : <>«{ch.quote}»</>}</Text>
+          </View>
+        )}
+        <View style={isKo ? s.ko : { fontFamily: FAMILY_RU }}>
+          {paragraphs(ch.text).map((p, i) => (
+            <Text key={i} style={isKo ? s.paraKo : s.para}>
+              {p}
+            </Text>
+          ))}
+        </View>
+      </View>
+    </BookPage>
+  );
+}
+
+/** «на корейский» / «на корейский и казахский» — языки перевода книги для последней страницы (#340). */
+function colophonLangs(book: BookModel): string {
+  const names = [book.second ? SECOND_LABEL[book.second].colophon.replace(/^на /, "") : null, ...book.extras.map((p) => EXTRA_LABEL[p.lang].name)].filter(Boolean);
+  return `на ${names.join(" и ")} ${names.length > 1 ? "языки" : "язык"}`;
+}
+
 function Colophon({ book }: { book: BookModel }) {
   const date = book.builtAt.toLocaleDateString("ru-RU", { day: "numeric", month: "long", year: "numeric" });
   return (
@@ -522,9 +595,11 @@ function Colophon({ book }: { book: BookModel }) {
       <View style={s.rule} />
       <Text style={{ fontSize: 9.5, color: COLOR.inkSoft, lineHeight: 1.6 }}>
         Эту книгу {book.elder === "grandmother" ? "рассказала" : "рассказал"} {book.storyteller.name}
-        {book.second
-          ? ` — своим голосом, для своей семьи. Каждая глава записана на диктофон телефона, бережно отредактирована без переписывания и переведена ${SECOND_LABEL[book.second].colophon} язык.`
-          : " — своим голосом, для своей семьи. Каждая глава записана на диктофон телефона и бережно отредактирована без переписывания."}
+        {book.extras.length
+          ? ` — своим голосом, для своей семьи. Каждая глава записана на диктофон телефона, бережно отредактирована без переписывания и переведена ${colophonLangs(book)}.`
+          : book.second
+            ? ` — своим голосом, для своей семьи. Каждая глава записана на диктофон телефона, бережно отредактирована без переписывания и переведена ${SECOND_LABEL[book.second].colophon} язык.`
+            : " — своим голосом, для своей семьи. Каждая глава записана на диктофон телефона и бережно отредактирована без переписывания."}
       </Text>
       {book.second === "ko" && (
         <Text style={{ fontFamily: FAMILY_KO, fontSize: 8.5, color: COLOR.muted, lineHeight: 1.7, marginTop: 6 }}>
@@ -565,6 +640,13 @@ export function BookDocument({ book, pages = {}, collect }: BookDocumentProps) {
       {book.legacy.chapters.map((ch) => (
         <Chapter key={ch.id} ch={ch} legacy title={book.title} her={her} second={second} collect={collect} />
       ))}
+      {/* #340: докупленные языки — отдельной частью перед последней страницей; нет — книга как раньше */}
+      {book.extras.flatMap((part) => [
+        <BookPage key={`extra-${part.lang}`} title={book.title} collect={collect} ko={ko}>
+          <ExtraDivider part={part} />
+        </BookPage>,
+        ...part.chapters.map((ch) => <ExtraChapterPage key={`${part.lang}-${ch.id}`} ch={ch} lang={part.lang} title={book.title} ko={ko} collect={collect} />),
+      ])}
       <BookPage title={book.title} collect={collect} ko={ko}>
         <Colophon book={book} />
       </BookPage>

@@ -24,6 +24,8 @@ export function FamilyChoices({
   spokenKkOn = false,
   langChangeOn = false,
   initialPacks = START_DEFAULT_PACKS,
+  initialSpoken = null,
+  initialBook = null,
   onPacks,
 }: {
   kkOn: boolean;
@@ -32,6 +34,9 @@ export function FamilyChoices({
   langChangeOn?: boolean;
   /** #301: отмечено заранее по точке входа; [] — общая ссылка, ничего не отмечено */
   initialPacks?: string[];
+  /** #341: с древа — отмечено заранее; не из вариантов — как без него (умолчание по пакетам) */
+  initialSpoken?: string | null;
+  initialBook?: string | null;
   onPacks?: (packs: string[]) => void;
 }) {
   const layers = packChoices();
@@ -43,8 +48,8 @@ export function FamilyChoices({
     setPacksState(v);
     onPacks?.(v);
   };
-  const [spoken, setSpoken] = useState<string | null>(null);
-  const [book, setBook] = useState<string | null>(null);
+  const [spoken, setSpoken] = useState<string | null>(initialSpoken);
+  const [book, setBook] = useState<string | null>(initialBook);
 
   const general = packs.length === 0 && (!open || generalPicked);
   const effective = packs.length === 0 ? ["general"] : packs;

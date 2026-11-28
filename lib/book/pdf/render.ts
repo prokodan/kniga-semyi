@@ -42,7 +42,9 @@ export async function renderBook(input: BookInput, opts: { fontsDir?: string } =
   const koText =
     book.chapters.map((c) => [c.title, c.titleKo, c.quote, c.quoteKo, c.textRu, c.textKo].join(" ")).join(" ") +
     ` ${book.storyteller.name} ${book.storyteller.name_ko ?? ""}` +
-    ` ${(book.tree?.pages ?? []).flat().flatMap((r) => [r.second ?? "", ...r.units.flat().map((p) => p.nameKo ?? "")]).join(" ")}`;
+    ` ${(book.tree?.pages ?? []).flat().flatMap((r) => [r.second ?? "", ...r.units.flat().map((p) => p.nameKo ?? "")]).join(" ")}` +
+    // #340: докупленный корейский — та же проверка подмножества шрифта
+    book.extras.flatMap((p) => (p.lang === "ko" ? p.chapters.map((c) => ` ${c.title} ${c.quote ?? ""} ${c.text}`) : [])).join("");
   return {
     pdf,
     pageCount: total || countPages(pdf),
