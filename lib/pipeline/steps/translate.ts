@@ -4,6 +4,7 @@ import { translateInput } from "@/lib/ai/types";
 import { fixCyrillic } from "../cyrillic";
 import { namesForTranslate } from "../entities";
 import { finishKk, learnSpellingsKk, namesForTranslateKk, requiredSpellingsKk } from "../kk";
+import { kkLogLines, translateKk } from "../kk-translate";
 import { applySpellings, learnSpellings, requiredSpellings } from "../names";
 import type { BookLang } from "@/lib/types";
 import type { PipelinePatch } from "../repo";
@@ -42,16 +43,18 @@ async function toOther(ctx: StepContext, lang: Exclude<BookLang, "ru" | "ko">): 
  * #298: ru → kk с теми же защитами, что у ko (сюда доходит только семья с флагом lang_kk): словарь семьи во входе
  * (names, казахское написание — family_entities.name_kk), после перевода — алфавит, обращение к внукам и одно
  * написание имён (lib/pipeline/kk.ts), новые имена главы запоминаются (первая глава задаёт написание для книги).
+ * #313 #315: русские служебные слова — по-казахски без ИИ; что не исправить — один повтор с retry_note (kk-translate.ts).
  */
 async function toKazakh({ story, ai, repo, deadline }: StepContext): Promise<void> {
   const entities = repo.familyEntities ? await repo.familyEntities(story).catch(() => []) : [];
-  const names = namesForTranslateKk(entities);
-  const raw = await ai.run(
-    "translate",
-    translateInput("ru", "kk", { text_ru: story.text_ru!, title: story.title ?? "", quote: story.quote ?? "", ...(names.length ? { names } : {}) }),
-    { storyId: story.id, familyId: story.family_id, deadline },
+  // #313: один повтор с замечанием, если после исправлений без ИИ остались хангыль / латиница / русские слова (#315)
+  const t = await translateKk(
+    (input) => ai.run("translate", input, { storyId: story.id, familyId: story.family_id, deadline }),
+    { text_ru: story.text_ru!, title: story.title ?? "", quote: story.quote ?? "" },
+    namesForTranslateKk(entities),
+    requiredSpellingsKk(entities),
   );
-  let res = finishKk(raw, story.text_ru!, requiredSpellingsKk(entities));
+  let res = t.res;
   // Словарь — помощник: его сбой главу не роняет. Соседняя глава могла успеть раньше — приводим к её варианту.
   if (repo.saveSpellingsKk && repo.familyEntities) {
     try {
@@ -65,10 +68,9 @@ async function toKazakh({ story, ai, repo, deadline }: StepContext): Promise<voi
       console.warn(`[pipeline] написание имён kk ${story.id.slice(0, 8)}:`, (e as Error).message);
     }
   }
-  const id = story.id.slice(0, 8);
-  if (res.fixed.length) console.info(`[pipeline] kk ${id}: ${res.fixed.map((f) => `${f.kind} ${f.from} → ${f.to}`).join(", ")}`);
-  if (res.left.latin.length || res.left.hangul) console.warn(`[pipeline] kk ${id}: не по алфавиту — ${[...res.left.latin, res.left.hangul ? "хангыль" : ""].filter(Boolean).join(", ")}`);
-  if (res.left.style.length) console.warn(`[pipeline] kk ${id}: обращение к внукам вперемешку, абз. ${res.left.style.map((m) => m.paragraph).join(", ")}`);
+  const lines = kkLogLines(story.id.slice(0, 8), { res, retry: t.retry });
+  for (const l of lines.info) console.info(l);
+  for (const l of lines.warn) console.warn(l);
   await repo.saveText!(story, "kk", { title: res.out.title_ko, text: res.out.text_ko, quote: res.out.quote_ko });
 }
 
