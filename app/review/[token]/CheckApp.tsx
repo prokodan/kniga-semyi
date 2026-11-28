@@ -141,6 +141,7 @@ export function CheckApp({
   const [draftComment, setDraftComment] = useState("");
   const [status, setStatus] = useState<"idle" | "saving" | "saved" | "error">("idle");
   const [done, setDone] = useState(completed);
+  const [busy, setBusy] = useState(false);
   const timers = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
 
   const flat = useMemo(() => Object.entries(fb).map(([k, f]) => ({ ...f, item_id: k.slice(0, k.lastIndexOf(":")) })), [fb]);
@@ -639,9 +640,13 @@ export function CheckApp({
           type="button"
           className={`${ghost} w-full`}
           data-testid="review2-skip"
+          disabled={busy}
           onClick={async () => {
+            if (busy) return; // двойной тап не должен снять «пропустить» обратно
+            setBusy(true);
             const cur = fb[key(item.id, -1)] ?? empty(-1);
             const ok = await save(item.id, -1, { ...cur, skipped: !cur.skipped });
+            setBusy(false);
             if (ok && !cur.skipped) {
               if (last) void finish();
               else go(index + 1);

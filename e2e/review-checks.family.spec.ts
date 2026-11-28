@@ -23,10 +23,10 @@ async function openAdmin(page: Page) {
 /** Новая ссылка → путь /review/<токен>. */
 async function createLink(page: Page, o: { pair: "ru-ko" | "ru-kk"; kind: "text" | "terms"; ui?: "ko" | "kk" | "ru"; reviewer: string; count: number }) {
   await openAdmin(page);
-  await page.getByRole("radio", { name: new RegExp(o.pair.replace("-", " → ")) }).check();
+  await page.locator(`input[name=pair][value="${o.pair}"]`).check();
   await page.getByLabel(/Имя/).fill(o.reviewer);
   if (o.ui) await page.getByLabel("Язык интерфейса").selectOption(o.ui);
-  await page.getByRole("radio", { name: o.kind === "terms" ? /Только выделенные слова/ : /Текст целиком/ }).check();
+  await page.locator(`input[name=kind][value="${o.kind}"]`).check();
   const boxes = page.locator("[data-material] input[type=checkbox]:not([disabled])");
   await expect(boxes.first()).toBeVisible();
   for (let i = 0; i < o.count; i++) await boxes.nth(i).check();
@@ -178,6 +178,7 @@ test("экраны /review 2.0: 390×844 и 430×932 × ko / kk × текст / 
         await page.getByTestId("term-bad-0").click();
       }
       await page.getByTestId("review2-skip").click();
+      await expect(page.getByTestId("review2-item")).toHaveAttribute("data-index", "1");
       await page.getByTestId("review2-skip").click();
       await expect(page.getByTestId("review2-done")).toBeVisible();
       await shot(page, `${base}-4-done`);
