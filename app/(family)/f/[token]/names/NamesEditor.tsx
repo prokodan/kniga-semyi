@@ -3,10 +3,18 @@
 // добавление вручную. Сохранение — ручки /api/families/<токен>/entities; после ответа страница обновляется.
 // #299: `ko` — в книге есть корейский (RU + KR, по умолчанию). Без него — без корейских подписей и поля «По-корейски»;
 // уже записанное корейское написание при сохранении не теряется (форма отправляет прежнее значение).
+// #311: `kk` — книга RU + KZ (флаг lang_kk): у людей и мест поле «По-казахски» (name_kk); правка → перевод kk этих глав
+// заново. Без `kk` форма и запросы — как до #311 (name_kk не отправляем).
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 import type { FamilyEntity, FamilyEntityKind } from "@/lib/types";
+
+/** Запись словаря; name_kk — #298 (в lib/types пока нет). */
+type Entity = FamilyEntity & { name_kk?: string | null };
+
+/** У слов казахское написание не входит в перевод (как и корейское у готовых глав) — поле только у людей и мест. */
+const KK_KINDS: readonly FamilyEntityKind[] = ["person", "place"];
 
 export interface ChapterRef {
   id: string;
@@ -39,7 +47,19 @@ async function send(url: string, method: string, body: unknown): Promise<{ ok: b
   }
 }
 
-export function NamesEditor({ token, entities, chapters, ko = true }: { token: string; entities: FamilyEntity[]; chapters: ChapterRef[]; ko?: boolean }) {
+export function NamesEditor({
+  token,
+  entities,
+  chapters,
+  ko = true,
+  kk = false,
+}: {
+  token: string;
+  entities: Entity[];
+  chapters: ChapterRef[];
+  ko?: boolean;
+  kk?: boolean;
+}) {
   const router = useRouter();
   const [notice, setNotice] = useState<Notice | null>(null);
   const api = `/api/families/${encodeURIComponent(token)}/entities`;
@@ -89,7 +109,7 @@ export function NamesEditor({ token, entities, chapters, ko = true }: { token: s
             ) : (
               <ul className="flex flex-col gap-3">
                 {list.map((e) => (
-                  <EntityCard key={e.id} api={api} entity={e} token={token} titles={titles} others={entities.filter((o) => o.id !== e.id && o.kind === e.kind)} onDone={done} ko={ko} />
+                  <EntityCard key={e.id} api={api} entity={e} token={token} titles={titles} others={entities.filter((o) => o.id !== e.id && o.kind === e.kind)} onDone={done} ko={ko} kk={kk} />
                 ))}
               </ul>
             )}
@@ -97,7 +117,7 @@ export function NamesEditor({ token, entities, chapters, ko = true }: { token: s
         );
       })}
 
-      <AddForm api={api} onDone={done} ko={ko} />
+      <AddForm api={api} onDone={done} ko={ko} kk={kk} />
     </div>
   );
 }
@@ -110,17 +130,21 @@ function EntityCard({
   others,
   onDone,
   ko,
+  kk,
 }: {
   api: string;
-  entity: FamilyEntity;
+  entity: Entity;
   token: string;
   titles: Map<string, string>;
-  others: FamilyEntity[];
+  others: Entity[];
   onDone: (r: Awaited<ReturnType<typeof send>>) => boolean;
   ko: boolean;
+  kk: boolean;
 }) {
   const [mode, setMode] = useState<"view" | "edit" | "merge">("view");
-  const [form, setForm] = useState({ name_ru: entity.name_ru, name_ko: entity.name_ko ?? "", description: entity.description ?? "" });
+  const initial = () => ({ name_ru: entity.name_ru, name_ko: entity.name_ko ?? "", name_kk: entity.name_kk ?? "", description: entity.description ?? "" });
+  const [form, setForm] = useState(initial);
+  const kkField = kk && KK_KINDS.includes(entity.kind);
   const [into, setInto] = useState("");
   const [sure, setSure] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -128,7 +152,8 @@ function EntityCard({
 
   const save = async () => {
     setBusy(true);
-    const r = await send(`${api}/${entity.id}`, "PATCH", { name_ru: form.name_ru, name_ko: form.name_ko || null, description: form.description || null });
+    const body = { name_ru: form.name_ru, name_ko: form.name_ko || null, description: form.description || null };
+    const r = await send(`${api}/${entity.id}`, "PATCH", kkField ? { ...body, name_kk: form.name_kk || null } : body);
     setBusy(false);
     if (onDone(r)) setMode("view");
   };
@@ -157,6 +182,12 @@ function EntityCard({
               <input value={form.name_ko} onChange={set("name_ko")} maxLength={80} className={field} autoComplete="off" lang="ko" disabled={busy} />
             </label>
           )}
+          {kkField && (
+            <label className="flex flex-col gap-1">
+              <span className="text-sm text-muted">По-казахски</span>
+              <input value={form.name_kk} onChange={set("name_kk")} maxLength={80} className={field} autoComplete="off" lang="kk" disabled={busy} />
+            </label>
+          )}
           <label className="flex flex-col gap-1">
             <span className="text-sm text-muted">Кто это или что это</span>
             <input value={form.description} onChange={set("description")} maxLength={200} className={field} autoComplete="off" disabled={busy} placeholder="например: сосед, друг детства" />
@@ -164,7 +195,9 @@ function EntityCard({
           <p className="text-sm text-muted">
             {entity.kind === "word" && ko
               ? "Русское написание заменится во всех главах. Корейское слово общее (например, 아버지) — в готовых главах оно не меняется, его возьмёт перевод новых глав."
-              : "Новое написание заменит старое во всех главах книги."}
+              : kkField
+                ? "Новое написание заменит старое во всех главах книги, а главы с этим именем переведём на казахский заново."
+                : "Новое написание заменит старое во всех главах книги."}
           </p>
           <div className="flex flex-wrap gap-3">
             <button type="button" onClick={() => void save()} disabled={busy || !form.name_ru.trim()} className={primary}>
@@ -182,6 +215,11 @@ function EntityCard({
             {ko && entity.name_ko && (
               <span className="text-ink-soft" lang="ko">
                 {" "}· {entity.name_ko}
+              </span>
+            )}
+            {kkField && entity.name_kk && (
+              <span className="text-ink-soft" lang="kk">
+                {" "}· {entity.name_kk}
               </span>
             )}
           </p>
@@ -210,6 +248,7 @@ function EntityCard({
                 <option key={o.id} value={o.id}>
                   {o.name_ru}
                   {ko && o.name_ko ? ` · ${o.name_ko}` : ""}
+                  {kkField && o.name_kk ? ` · ${o.name_kk}` : ""}
                 </option>
               ))}
             </select>
@@ -234,7 +273,7 @@ function EntityCard({
         <div className="flex flex-wrap gap-3">
           <button
             type="button"
-            onClick={() => (setForm({ name_ru: entity.name_ru, name_ko: entity.name_ko ?? "", description: entity.description ?? "" }), setMode("edit"))}
+            onClick={() => (setForm(initial()), setMode("edit"))}
             className={secondary}
           >
             ✎ Исправить
@@ -250,13 +289,15 @@ function EntityCard({
   );
 }
 
-function AddForm({ api, onDone, ko }: { api: string; onDone: (r: Awaited<ReturnType<typeof send>>) => boolean; ko: boolean }) {
-  const empty = { kind: "person" as FamilyEntityKind, name_ru: "", name_ko: "", description: "" };
+function AddForm({ api, onDone, ko, kk }: { api: string; onDone: (r: Awaited<ReturnType<typeof send>>) => boolean; ko: boolean; kk: boolean }) {
+  const empty = { kind: "person" as FamilyEntityKind, name_ru: "", name_ko: "", name_kk: "", description: "" };
   const [form, setForm] = useState(empty);
   const [busy, setBusy] = useState(false);
+  const kkField = kk && KK_KINDS.includes(form.kind);
   const add = async () => {
     setBusy(true);
-    const r = await send(api, "POST", { kind: form.kind, name_ru: form.name_ru, name_ko: form.name_ko || null, description: form.description || null });
+    const body = { kind: form.kind, name_ru: form.name_ru, name_ko: form.name_ko || null, description: form.description || null };
+    const r = await send(api, "POST", kkField ? { ...body, name_kk: form.name_kk || null } : body);
     setBusy(false);
     if (onDone(r)) setForm(empty);
   };
@@ -280,6 +321,9 @@ function AddForm({ api, onDone, ko }: { api: string; onDone: (r: Awaited<ReturnT
       <input value={form.name_ru} onChange={(e) => setForm({ ...form, name_ru: e.target.value })} maxLength={80} className={field} placeholder="Как пишется по-русски" autoComplete="off" disabled={busy} />
       {ko && (
         <input value={form.name_ko} onChange={(e) => setForm({ ...form, name_ko: e.target.value })} maxLength={80} className={field} placeholder="По-корейски (если знаете)" lang="ko" autoComplete="off" disabled={busy} />
+      )}
+      {kkField && (
+        <input value={form.name_kk} onChange={(e) => setForm({ ...form, name_kk: e.target.value })} maxLength={80} className={field} placeholder="По-казахски (если знаете)" lang="kk" autoComplete="off" disabled={busy} />
       )}
       <input value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} maxLength={200} className={field} placeholder="Кто это или что это" autoComplete="off" disabled={busy} />
       <button type="button" onClick={() => void add()} disabled={busy || !form.name_ru.trim()} className={`${primary} self-start`}>

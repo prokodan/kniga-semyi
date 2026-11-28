@@ -220,6 +220,33 @@ export function RecordFlow(props: {
     };
   }, [start]);
 
+  // #321: закрыли страницу (или ушли в другое приложение) на уточнении — сказать серверу, чтобы глава не ждала
+  // 5 мин: sendBeacon доходит и из закрывающейся вкладки. Вернулись и ответили — глава пересоберётся с ответом.
+  const onFollowup = phase === "ask" && current?.kind === "followup";
+  useEffect(() => {
+    if (!onFollowup) return;
+    const leave = () => {
+      if (!session.current) return;
+      const url = `/api/sessions/${encodeURIComponent(session.current)}/leave`;
+      const body = JSON.stringify({ token }); // text/plain: beacon без заголовков и без preflight
+      try {
+        if (navigator.sendBeacon?.(url, body)) return;
+      } catch {
+        // нет beacon — ниже fetch keepalive
+      }
+      void fetch(url, { method: "POST", body, keepalive: true }).catch(() => {});
+    };
+    const onHidden = () => {
+      if (document.visibilityState === "hidden") leave();
+    };
+    window.addEventListener("pagehide", leave);
+    document.addEventListener("visibilitychange", onHidden);
+    return () => {
+      window.removeEventListener("pagehide", leave);
+      document.removeEventListener("visibilitychange", onHidden);
+    };
+  }, [onFollowup, token]);
+
   // #169: каждый новый вопрос озвучивается сам, один раз (ключ — текст, а не объект вопроса). Браузер не дал звук
   // без нажатия — через ~1 с кнопка становится «▶ Прослушать вопрос» (useSpeechState → blocked).
   const questionText = current && phase === "ask" ? [current.bridge, current.prompt].filter(Boolean).join(" ") : null;

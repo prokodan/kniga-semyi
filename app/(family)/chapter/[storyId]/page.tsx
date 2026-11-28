@@ -6,6 +6,7 @@ import { lifeYears, loadChapter, photoSignedUrl, requestOrigin } from "@/lib/boo
 import { listenUrl } from "@/lib/book/qr";
 import { familyBookLangsById } from "@/lib/pipeline/book-langs";
 import { statusMessage } from "@/lib/pipeline/engine";
+import { AdditionBanner } from "@/components/chapter/AdditionBanner";
 import { QrCode } from "@/components/chapter/QrCode";
 import { ShareButton } from "@/components/chapter/ShareButton";
 import { Spread } from "@/components/chapter/Spread";
@@ -87,6 +88,8 @@ export default async function ChapterPage({
           {meta && <p className="text-sm text-muted">{meta}</p>}
         </div>
       </header>
+
+      <AdditionBanner story={story} token={token} place="chapter" />
 
       {ready ? (
         <>

@@ -5,6 +5,7 @@ import "server-only";
 // Кабинет закрыт PIN — ссылки с токеном семьи видит только центр.
 import { BLOCKS } from "@/content/questions/blocks";
 import { orderByLife } from "@/lib/book/order";
+import { chapterText, loadStoryTexts } from "@/lib/book/texts";
 import { listenPath } from "@/lib/book/qr";
 import { getDbOrNull } from "@/lib/db";
 import { getFamilyStore, type MemoryFamilyStore } from "@/lib/db/access";
@@ -87,10 +88,17 @@ async function rows(): Promise<ArchiveRows> {
     ["книги", books],
   ] as const)
     if (r.error) throw new Error(`архив, ${what}: ${r.error.message}`);
+  // #245: название и цитата — story_texts, если строка есть, иначе колонки (одна загрузка на запрос)
+  const list = (stories.data ?? []) as StoryPick[];
+  const texts = await loadStoryTexts(db, list.map((s) => s.id));
   return {
     families,
     storytellers: (st.data ?? []) as StPick[],
-    stories: (stories.data ?? []) as StoryPick[],
+    stories: list.map((s) => {
+      const cols = { ...s, text_ru: null, text_ko: null, quote_ko: null };
+      const ru = chapterText(cols, texts, "ru");
+      return { ...s, title: ru.title, quote: ru.quote, title_ko: chapterText(cols, texts, "ko").title };
+    }),
     books: (books.data ?? []) as BookPick[],
   };
 }

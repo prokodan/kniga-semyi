@@ -168,6 +168,8 @@ export interface Story {
   deferred_followup?: DeferredFollowup | null;
   /** Шаг конвейера сейчас выполняется с этого момента (аренда 65 с); null — никто не работает. */
   step_started_at?: IsoDateTime | null;
+  /** #320: ответ на уточнение дописан в followups, а в тексте главы его ещё нет (снимает пересборка с edit). Нет до миграции — false. */
+  addition_pending?: boolean;
   created_at: IsoDateTime;
   updated_at: IsoDateTime;
 }
@@ -213,7 +215,7 @@ export type LangOrder = Omit<DemoOrder, "product"> & { product: "lang" };
 
 /**
  * #306 (флаг lang_change): согласие галочкой при смене или добавлении языков книги (голос заново не пишем).
- * Таблица book_lang_consents (миграция 20261128160000): текст — ровно тот, что видела семья (consentText по новым языкам).
+ * Таблица book_lang_consents (миграция 20261128170000): текст — ровно тот, что видела семья (consentText по новым языкам).
  */
 export interface BookLangConsent {
   id: Uuid;
