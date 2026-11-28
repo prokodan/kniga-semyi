@@ -106,3 +106,41 @@ describe("#231: перевод на kk устаревает вместе с ру
     ]);
   });
 });
+
+describe("#246: origin правки — заголовок x-text-origin пути записи", () => {
+  const id = "00000000-0000-0000-0000-00000000000d";
+  const asFamily = async (sql: string) =>
+    db.exec(`begin; select set_config('request.headers', '{"x-text-origin":"family","accept":"*/*"}', true); ${sql}; commit;`);
+  const origins = async () => (await texts(id)).map((r) => [r.lang, r.origin]);
+
+  it("конвейер (без заголовка) — ai; правка семьи — family в той же записи; без заголовка origin не меняется", async () => {
+    // тест выше заново запускал миграцию L0 (старое зеркало) — порядок как в проде: L0, затем #246 (повтор безопасен)
+    const f = readdirSync(dir).find((x) => x.includes("_story_texts_origin"))!;
+    await db.exec(readFileSync(path.join(dir, f), "utf8"));
+    await db.exec(`insert into stories (id, family_id, storyteller_id, status) values ('${id}', '00000000-0000-0000-0000-000000000001', '00000000-0000-0000-0000-000000000002', 'editing')`);
+    await db.exec(`update stories set text_ru = 'Глава', title = 'Т', text_ko = '장' where id = '${id}'`);
+    expect(await origins()).toEqual([["ko", "ai"], ["ru", "ai"]]);
+
+    // как components/draft/save.ts: новый русский текст + KR очищен — одной записью с заголовком
+    await asFamily(`update stories set text_ru = 'Правка семьи', text_ko = null, title_ko = null, quote_ko = null where id = '${id}'`);
+    expect(await origins()).toEqual([["ru", "family"]]);
+
+    // перевод конвейера (без заголовка): ko — ai, отметка правки ru остаётся
+    await db.exec(`update stories set text_ko = '수정' where id = '${id}'`);
+    expect(await origins()).toEqual([["ko", "ai"], ["ru", "family"]]);
+    await db.exec(`update stories set title = 'Т2' where id = '${id}'`);
+    expect(await origins()).toEqual([["ko", "ai"], ["ru", "family"]]);
+
+    // пересборка с edit: text_ru → null → строки ru нет, новая — снова ai (отметка снимается сама)
+    await db.exec(`update stories set text_ru = null, title = null, quote = null where id = '${id}'`);
+    await db.exec(`update stories set text_ru = 'Новая глава', title = 'Т' where id = '${id}'`);
+    expect(await origins()).toEqual([["ko", "ai"], ["ru", "ai"]]);
+  });
+
+  it("чужое значение или не JSON в заголовках — как без заголовка", async () => {
+    await db.exec(`begin; select set_config('request.headers', '{"x-text-origin":"hacker"}', true); update stories set text_ru = 'А' where id = '${id}'; commit;`);
+    expect(await origins()).toEqual([["ko", "ai"], ["ru", "ai"]]);
+    await db.exec(`begin; select set_config('request.headers', 'not json', true); update stories set text_ru = 'Б' where id = '${id}'; commit;`);
+    expect(await origins()).toEqual([["ko", "ai"], ["ru", "ai"]]);
+  });
+});

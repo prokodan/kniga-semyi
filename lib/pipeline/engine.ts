@@ -320,12 +320,27 @@ export function createPipeline(deps: PipelineDeps) {
     // #149: главу поправила семья — тоже только приклеиваем, правку не перетираем
     if (now() - new Date(parent.created_at).getTime() > LATE_CHILD_REBUILD_MS || (await editedByFamily(parent))) {
       await repo.updateStory(parent.id, { followups });
+      await markAddition(parent);
       return null;
     }
     const patch: PipelinePatch = { followups, status: STEP_STATUS.edit, error: null, step_started_at: null };
     for (const s of PIPELINE_STEPS.slice(PIPELINE_STEPS.indexOf("edit"))) Object.assign(patch, STEP_FIELDS[s]);
     await repo.updateStory(parent.id, patch);
     return parent.id;
+  }
+
+  /**
+   * #328 (= #320 в интервью): ответ приклеен к уже собранной главе, но в её тексте его нет — отметка для плашки
+   * «Есть новое дополнение — пересобрать?» (плашка — за флагом followup_addition). Снимает триггер миграции
+   * 20261128160000 при пересборке с edit. Отдельной записью: followups уже сохранены, сбой отметки их не теряет.
+   */
+  async function markAddition(parent: Story) {
+    if (parent.addition_pending) return;
+    try {
+      await repo.updateStory(parent.id, { addition_pending: true });
+    } catch (e) {
+      console.warn(`[pipeline] отметка дополнения ${parent.id.slice(0, 8)}:`, (e as Error).message);
+    }
   }
 
   /** #149: семья правила главу в черновике. Сбой — «не правили» (как до #149). */

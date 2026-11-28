@@ -68,6 +68,29 @@ describe("translateKk (#313)", () => {
   });
 });
 
+describe("родство после повтора (#343)", () => {
+  const kinSrc = { text_ru: "Апам каждый воскресенье бесбармақ делала.", title: "Апам", quote: "Апам каждый воскресенье бесбармақ делала" };
+  const bad = { text_ko: "Әжеміз әр жексенбі сайын бесбармақ істейтін.", title_ko: "Апам", quote_ko: "Әжеміз әр жексенбі сайын бесбармақ істейтін" };
+  const fine = { text_ko: "Апам әр жексенбі сайын бесбармақ істейтін.", title_ko: "Апам", quote_ko: "Апам әр жексенбі сайын бесбармақ істейтін" };
+
+  it("«Әжеміз» → повтор с замечанием о родстве; повтор верный — берём его", async () => {
+    const f = fake([bad, fine]);
+    const t = await run(f.fn, kinSrc, [], []);
+    expect(f.inputs[1]!.retry_note).toContain("Родство искажено");
+    expect(t.retry).toMatchObject({ kept: "retry" });
+    expect(t.res.out).toEqual(fine);
+  });
+
+  it("повтор опять «әже» (или упал) — без ИИ «Апам»; в логе — без текста", async () => {
+    for (const second of [bad, new Error("ИИ недоступен")]) {
+      const t = await run(fake([bad, second]).fn, kinSrc, [], []);
+      expect(t.res.out.text_ko).toBe(fine.text_ko);
+      expect(t.res.left.kinship).toEqual([]);
+      expect(kkLogLines("abcd1234", t).info.join("\n")).toContain("kinship Әжеміз → Апам");
+    }
+  });
+});
+
 describe("RU + KR не меняется (#313)", () => {
   it("вход ru → ko без retry_note: после схемы ключ кэша тот же, что до #313", () => {
     const ko = translateInput("ru", "ko", src);

@@ -108,6 +108,7 @@ describe("#149: поздний ответ на уточнение не пере�
     const p = (await repo.getStory("m-1"))!;
     expect(p).toMatchObject({ status: "ready", text_ru: "Правка семьи." });
     expect({ child: (await repo.getStory("c-1"))!.status, ids: p.followups.map((f) => f.story_id) }).toEqual({ child: "ready", ids: ["c-1"] });
+    expect(p.addition_pending).toBe(true); // #328: плашка «Есть новое дополнение»
   });
 });
 
