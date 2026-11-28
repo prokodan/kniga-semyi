@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { entityService } from "@/lib/entities";
 import { readJson } from "@/app/api/_family/http";
-import { changeResponse, entityError, requireFamily, translateInBackground } from "../../_lib";
+import { bookOf, changeResponse, entityError, requireFamily, translateInBackground } from "../../_lib";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -15,9 +15,10 @@ export async function POST(req: Request, ctx: { params: Promise<{ token: string;
     const { token, id } = await ctx.params;
     const { family } = await requireFamily(token);
     const { into } = Body.parse((await readJson(req)) ?? {});
-    const change = await entityService().merge(family.id, id, into);
-    translateInBackground(req, token, change);
-    return changeResponse(change);
+    const { langs, opts } = bookOf(family);
+    const change = await entityService().merge(family.id, id, into, opts);
+    translateInBackground(req, token, change, langs);
+    return changeResponse(change, 200, langs);
   } catch (e) {
     return entityError(e);
   }

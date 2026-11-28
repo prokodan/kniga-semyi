@@ -2,10 +2,12 @@
 // По каждой семье: люди и места словаря → корейские варианты в готовых главах → одно написание (словарь, иначе самое
 // частое) → замена в text_ko / title_ko / quote_ko, пустой name_ko заполняется; книга помечается устаревшей (draft),
 // семья пересобирает PDF. Демо-семью не трогает. Повторный запуск безопасен (второй раз менять нечего).
+// #245: текст глав — story_texts, если строка есть, иначе колонки (пишем по-прежнему в колонки — зеркало триггером).
 // В лог и summary — только короткие id и числа: ни имён, ни текстов, ни токенов (репозиторий публичный).
 // Запуск: Actions → spellings-backfill (families: короткие id из diag или all; apply). По умолчанию — dry run.
 import { appendFileSync } from "node:fs";
 import type { FamilyEntity } from "@/lib/types";
+import { withStoryTexts, type StoryTextRow } from "@/lib/book/texts";
 import { planSpellings, type SpellingChapter } from "@/lib/pipeline/spellings";
 
 const SB = (process.env.NEXT_PUBLIC_SUPABASE_URL ?? "").replace(/\/+$/, "");
@@ -18,6 +20,18 @@ async function rest<T>(path: string, init: RequestInit = {}): Promise<T> {
   const res = await fetch(`${SB}/rest/v1/${path}`, { ...init, headers: { ...H, ...(init.headers ?? {}) } });
   if (!res.ok) throw new Error(`${path.split("?")[0]}: HTTP ${res.status} ${(await res.text()).slice(0, 160)}`);
   return (res.status === 204 ? null : await res.json()) as T;
+}
+
+/** #245: story_texts глав (по 100 id за запрос); нет таблицы / ошибка — пусто: читаем колонки, как раньше. */
+async function storyTexts(ids: readonly string[]): Promise<StoryTextRow[]> {
+  const rows: StoryTextRow[] = [];
+  try {
+    for (let i = 0; i < ids.length; i += 100)
+      rows.push(...(await rest<StoryTextRow[]>(`story_texts?select=story_id,lang,title,text,quote&story_id=in.(${ids.slice(i, i + 100).join(",")})`)));
+  } catch {
+    return [];
+  }
+  return rows;
 }
 
 const PATCH = { method: "PATCH", headers: { Prefer: "return=minimal" } } as const;
@@ -38,9 +52,11 @@ async function main() {
   log("|---|---|---|---|---|---|---|---|---|");
   let totalChapters = 0;
   for (const fam of families) {
-    const chapters = await rest<SpellingChapter[]>(
+    const rawChapters = await rest<SpellingChapter[]>(
       `stories?select=id,created_at,title,quote,text_ru,title_ko,quote_ko,text_ko&family_id=eq.${fam.id}&status=eq.ready&parent_story_id=is.null&text_ko=not.is.null&order=created_at.asc&limit=500`,
     );
+    const texts = await storyTexts(rawChapters.map((c) => c.id));
+    const chapters = rawChapters.map((c) => withStoryTexts(c, texts));
     const entities = await rest<FamilyEntity[]>(`family_entities?select=id,kind,name_ru,name_ko,source&family_id=eq.${fam.id}&kind=in.(person,place)&limit=1000`);
     const plan = planSpellings(entities, chapters);
     const mixed = plan.entities.filter((e) => e.variants.length);

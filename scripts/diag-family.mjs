@@ -40,6 +40,20 @@ const short = (id) => (id ? String(id).slice(0, 8) : "—");
 const hhmm = (iso) => new Date(iso).toLocaleString("ru-RU", { timeZone: "Asia/Almaty", day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" });
 const words = (s) => (s ?? "").toLowerCase().replace(/ё/g, "е").match(/[\p{L}\p{N}]+/gu) ?? [];
 const years = (s) => [...new Set((s ?? "").match(/\b(19[0-9]{2}|20[0-2][0-9])\b/g) ?? [])].sort().join(" ");
+/** #245: текст глав по правилу story_texts → колонки (только для счёта слов / повторов; тексты не печатаются). */
+async function withTexts(stories) {
+  const ids = stories.map((s) => s.id);
+  let rows = [];
+  try {
+    for (let i = 0; i < ids.length; i += 100)
+      rows.push(...(await rest(`story_texts?select=story_id,lang,title,text,quote&story_id=in.(${ids.slice(i, i + 100).join(",")})&lang=eq.ru`)));
+  } catch {
+    rows = [];
+  }
+  const ru = new Map(rows.map((r) => [r.story_id, r]));
+  return stories.map((s) => (ru.has(s.id) ? { ...s, text_ru: ru.get(s.id).text, title: ru.get(s.id).title, quote: ru.get(s.id).quote } : s));
+}
+
 function shingles(s, n = 4) {
   const w = words(s);
   const set = new Set();
@@ -114,8 +128,10 @@ async function wordReport(fam, stories) {
 const totals = { chapters: 0, dups: 0, lostFollowups: 0, orphanParents: 0, answeredNoChapter: 0, failed: 0, stuck: 0 };
 
 for (const fam of families) {
-  const stories = await rest(
-    `stories?select=id,storyteller_id,session_id,parent_story_id,question_id,block,status,error,audio_url,duration_sec,transcript,text_ru,title,quote,followups,created_at,updated_at&family_id=eq.${fam.id}&order=created_at.asc&limit=500`,
+  const stories = await withTexts(
+    await rest(
+      `stories?select=id,storyteller_id,session_id,parent_story_id,question_id,block,status,error,audio_url,duration_sec,transcript,text_ru,title,quote,followups,created_at,updated_at&family_id=eq.${fam.id}&order=created_at.asc&limit=500`,
+    ),
   );
   const sessions = await rest(`sessions?select=id,storyteller_id,mode,state,started_at,ended_at&family_id=eq.${fam.id}&order=started_at.asc&limit=200`);
   const byId = new Map(stories.map((s) => [s.id, s]));
