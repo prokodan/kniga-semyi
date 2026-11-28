@@ -5,6 +5,7 @@ import { nameHints } from "./names";
 import { loadNameHints } from "./names-db";
 import type { Family, Session, SessionMode, Story } from "@/lib/types";
 import { familyPacks } from "./bank";
+import { familyEditedIn } from "./edited";
 import type { SessionState } from "./policy";
 
 export type StoryDraft = Pick<Story, "family_id" | "storyteller_id" | "session_id" | "question_id" | "block" | "transcript">;
@@ -39,6 +40,11 @@ export interface InterviewRepo {
    * Читается один раз при старте сессии и запоминается в sessions.state.packs.
    */
   culturePacks?(familyId: string): Promise<string[] | null>;
+  /**
+   * #149: семья правила главу в черновике (story_texts.origin = family у ru). Такую главу ответ на уточнение не
+   * пересобирает — только дописывается в followups. Нет реализации / ошибка — «не правили».
+   */
+  familyEdited?(storyId: string): Promise<boolean>;
 }
 
 export interface DeferredAsk {
@@ -69,6 +75,8 @@ export class MemoryInterviewRepo implements InterviewRepo {
   stories = new Map<string, Story>();
   /** familyId → { token, storytellers } — тесты и локальный режим заводят семьи сами */
   families = new Map<string, { token: string; storytellers: Set<string> }>();
+  /** #149: главы, которые правила семья (тесты и локальная правка черновика кладут сами) */
+  edited = new Set<string>();
   private seq = 0;
 
   private id(prefix: string) {
@@ -83,6 +91,9 @@ export class MemoryInterviewRepo implements InterviewRepo {
   /** #233: пакеты семей (тесты кладут сами; локальный режим — из MemoryFamilyStore через resolver). Нет — null. */
   packs = new Map<string, string[] | null>();
   packsResolver?: (familyId: string) => string[] | null;
+  async familyEdited(storyId: string) {
+    return this.edited.has(storyId);
+  }
   async culturePacks(familyId: string) {
     return this.packs.get(familyId) ?? this.packsResolver?.(familyId) ?? null;
   }
@@ -183,6 +194,10 @@ export class SupabaseInterviewRepo implements InterviewRepo {
     /** #233: включён ли флаг culture_packs семье (lib/flags — server-only, поэтому снаружи). Нет — выключен. */
     private packsOn: (family: Pick<Family, "id" | "labs">) => boolean = () => false,
   ) {}
+
+  async familyEdited(storyId: string) {
+    return familyEditedIn(this.db, storyId);
+  }
 
   async culturePacks(familyId: string) {
     // "*": culture_packs / labs — колонки миграций #230 / #223; ошибка / нет семьи — банк V0

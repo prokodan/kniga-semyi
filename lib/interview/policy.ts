@@ -19,6 +19,11 @@ export interface SessionState extends InterviewState {
   current_story_id?: string | null;
   /** Заданное и ещё не отвеченное уточнение */
   pending_followup?: string | null;
+  /**
+   * #296: когда задано текущее уточнение (ISO). Конвейер держит главу, пока уточнение свежее (FOLLOWUP_IDLE_MS):
+   * семья закрыла вкладку на уточнении — глава не ждёт 20 минут. Нет (старые сессии) — держим до 20 мин, как раньше.
+   */
+  followup_at?: string | null;
   /** Последний ответ был на трудной теме — подряд уточнений не задаём */
   emotional_pause?: boolean;
   /** Последние ответы (обрезанные) — для фразы-связки next_question */

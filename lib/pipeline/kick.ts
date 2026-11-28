@@ -145,7 +145,7 @@ export async function runKick(origin: string, opts: { dryRun?: boolean; now?: nu
         return;
       }
       if (reply.waiting) {
-        // Не застряла: интервью ещё задаёт уточнения (≤ 20 мин) — попытку не засчитываем
+        // Не застряла: интервью ещё задаёт уточнения (≤ 5 мин без движения, #296; ≤ 20 мин всего) — попытку не засчитываем
         await db.from("stories").update({ kick_attempts: action.tries }).eq("id", s.id);
       }
       const flags = `${reply.queued ? " (очередь)" : ""}${reply.running ? " (идёт)" : ""}${reply.waiting ? " (ждёт интервью)" : ""}`;
