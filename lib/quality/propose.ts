@@ -39,6 +39,23 @@ export function assertAllowedPatch(paths: readonly string[]): void {
   if (bad.length) throw new PatchRefusedError(bad);
 }
 
+/**
+ * Пути из `git status --porcelain=v1 -z`: «XY путь\0»; у переименования — ещё «\0старый путь» (тоже проверяем).
+ * Без trim: ведущий пробел статуса « M» — часть формата (обрезка съедала первую букву пути — отказ #383 selftest).
+ */
+export function changedPaths(z: string): string[] {
+  const parts = z.split("\0");
+  const out: string[] = [];
+  for (let i = 0; i < parts.length; i++) {
+    const rec = parts[i]!;
+    if (rec.length < 4) continue;
+    const xy = rec.slice(0, 2);
+    out.push(rec.slice(3));
+    if (/[RC]/.test(xy) && parts[i + 1]) out.push(parts[++i]!);
+  }
+  return out;
+}
+
 // ---------------- куда что ----------------
 
 export const PROMPT_RULES_HEADER = "Правила из отзывов носителей (quality-propose — каждое проверено eval «до / после»):";

@@ -16,6 +16,7 @@ import {
   PatchRefusedError,
   addPromptRules,
   assertAllowedPatch,
+  changedPaths,
   isAllowedPatchPath,
   planProposal,
   proposalBody,
@@ -228,6 +229,12 @@ describe("quality-propose: патч только в разрешённых фа�
       "docs/glossary.md",
     ])
       expect(isAllowedPatchPath(p), p).toBe(false);
+  });
+
+  it("пути из git status -z: ведущий пробел статуса не съедает букву; переименование — оба пути", () => {
+    const z = " M content/packs/kz/glossary.ts\0M  prompts/translate.kk.md\0?? eval/golden/ru-kk.jsonl\0R  lib/x.ts\0prompts/old.md\0";
+    expect(changedPaths(z)).toEqual(["content/packs/kz/glossary.ts", "prompts/translate.kk.md", "eval/golden/ru-kk.jsonl", "lib/x.ts", "prompts/old.md"]);
+    expect(() => assertAllowedPatch(changedPaths(z))).toThrow(/lib\/x\.ts/);
   });
 
   it("патч вне разрешённых файлов → отказ (PatchRefusedError)", () => {

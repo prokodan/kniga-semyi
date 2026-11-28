@@ -20,7 +20,7 @@ import { getAiMode } from "@/lib/env";
 import { digestDailyUsd, runDigest } from "@/lib/quality/digest";
 import { SupabaseDigestRepo } from "@/lib/quality/digest-repo";
 import { COMPONENT_RU, isFindingComponent, type QualityFinding } from "@/lib/quality/findings";
-import { PatchRefusedError, assertAllowedPatch, branchName, planProposal, proposalBody } from "@/lib/quality/propose";
+import { PatchRefusedError, assertAllowedPatch, branchName, changedPaths, planProposal, proposalBody } from "@/lib/quality/propose";
 import { SELFTEST_SAMPLES } from "@/lib/quality/selftest";
 import { PAIR_RU, isQualityPair, type QualityPair } from "@/lib/quality/types";
 
@@ -203,10 +203,7 @@ async function propose(repo: SupabaseDigestRepo, pair: QualityPair, opts: { ids?
     mkdirSync(path.dirname(p), { recursive: true });
     writeFileSync(p, text);
   }
-  const changed = git("status", "--porcelain", "--untracked-files=all")
-    .split("\n")
-    .filter(Boolean)
-    .map((l) => l.slice(3).replace(/^"|"$/g, ""));
+  const changed = changedPaths(execFileSync("git", ["status", "--porcelain=v1", "-z", "--untracked-files=all"], { encoding: "utf8" }));
   try {
     assertAllowedPatch(changed);
   } catch (e) {
