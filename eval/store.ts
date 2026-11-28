@@ -2,7 +2,7 @@
 //   • маршруты: модели прода (EVAL_ROUTES_FILE = JSON {step: providers[]} из ai_routes) или lib/ai/config.ts.
 //     Все шаги — только Gemini Flash-Lite (квота ~500/сутки), КРОМЕ back_translate: там порядок как в
 //     маршруте (Flash раньше Flash-Lite), чтобы корейский проверяла другая модель, чем переводила;
-//     EVAL_MODEL — одна модель для всех шагов, кроме back_translate;
+//     EVAL_MODEL — одна модель для всех шагов, кроме back_translate; #317: у persona_reply после Flash-Lite — запасной Flash;
 //   • кэш ответов в файле (EVAL_CACHE_FILE): «до» и «после» в одном запуске и повторные запуски не тратят
 //     квоту на шаги, чей промпт и вход не изменились (ключ кэша = шаг + версия промпта + вход).
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
@@ -34,7 +34,26 @@ export function deriveEvalSteps(db: Record<string, RouteEntry[] | null>): Record
  * прод-маршруте — из lib/ai/config.ts); gemini — сначала не Flash-Lite, как back_translate. Без `back` translate
  * сводился к Flash-Lite, и роутер в режиме openai не находил ни одной модели («ИИ недоступен для шага translate:»).
  */
-export function evalRoute(step: AiStep, fromDb: RouteEntry[] | null | undefined, model?: string, back?: "openai" | "gemini"): Route {
+/**
+ * #317: Flash (не Lite) прода — из маршрута edit / translate (модели по умолчанию в коде могут быть уже сняты), иначе из
+ * lib/ai/config.ts. Нужен запасной моделью persona_reply: у kuljamal (рассказ по-казахски) Flash-Lite дважды подряд
+ * отвечал не JSON — интервью обрывалось на 3-м вопросе («ИИ недоступен»).
+ */
+export function evalFlash(db: Record<string, RouteEntry[] | null>): RouteEntry | undefined {
+  for (const list of [db.edit, db.translate, DEFAULT_ROUTES.edit.providers]) {
+    const f = (list ?? []).find((e) => e.provider === "gemini" && !isFlashLite(e));
+    if (f) return { provider: f.provider, model: f.model };
+  }
+  return undefined;
+}
+
+export function evalRoute(
+  step: AiStep,
+  fromDb: RouteEntry[] | null | undefined,
+  model?: string,
+  back?: "openai" | "gemini",
+  flash?: RouteEntry,
+): Route {
   const base = DEFAULT_ROUTES[step];
   const source = fromDb?.length ? fromDb : base.providers;
   let providers: RouteEntry[];
@@ -49,6 +68,9 @@ export function evalRoute(step: AiStep, fromDb: RouteEntry[] | null | undefined,
   else {
     const fl = source.filter(isFlashLite);
     providers = fl.length ? fl : source;
+    // #317: персонаж — Flash-Lite, а ответ не JSON (неверный формат) → роутер сразу пробует Flash. Обычный ответ Lite
+    // не меняется (Flash зовётся только после отказа Lite) — «до / после» kim, pak, tsoi прежние.
+    if (step === "persona_reply" && flash && !providers.some((p) => p.provider === flash.provider && p.model === flash.model)) providers = [...providers, flash];
   }
   return { ...base, providers: providers.map((p) => ({ provider: p.provider, model: p.model })), pinned_provider: null };
 }
@@ -64,6 +86,7 @@ function readJson<T>(file: string | undefined, fallback: T): T {
 
 export class EvalStore extends MemoryStore {
   private readonly dbRoutes: Record<string, RouteEntry[] | null>;
+  private readonly flash: RouteEntry | undefined;
   readonly cachedAtStart: number;
 
   constructor(
@@ -71,12 +94,13 @@ export class EvalStore extends MemoryStore {
   ) {
     super();
     this.dbRoutes = deriveEvalSteps(readJson(opts.routesFile, {}));
+    this.flash = evalFlash(this.dbRoutes);
     for (const [k, v] of Object.entries(readJson<Record<string, unknown>>(opts.cacheFile, {}))) this.cache.set(k, v);
     this.cachedAtStart = this.cache.size;
   }
 
   override async getRoute(step: AiStep) {
-    return evalRoute(step, this.dbRoutes[step], this.opts.model, this.opts.back);
+    return evalRoute(step, this.dbRoutes[step], this.opts.model, this.opts.back, this.flash);
   }
 
   /** Без «остывания»: темп и повтор после 429 держит instrument(), иначе один 429 гасит все прогоны. */
