@@ -4,6 +4,7 @@ import "server-only";
 //   await interview.startSession({ familyId, storytellerId, mode, token });
 //   await interview.submitAnswer(sessionId, { text } | { storyId }, { token });
 //   await interview.skip(sessionId, "skip" | "later", { token });
+//   await interview.leave(sessionId, { token });   // #321: закрыли страницу на уточнении
 // ИИ — только через роутер (@/lib/ai). Без Supabase — память процесса (локальная разработка).
 import { ai } from "@/lib/ai";
 import { getDbOrNull } from "@/lib/db";
@@ -46,10 +47,11 @@ function get(): Interview {
   return instance;
 }
 
-export const interview: Pick<Interview, "startSession" | "submitAnswer" | "skip"> = {
+export const interview: Pick<Interview, "startSession" | "submitAnswer" | "skip" | "leave"> = {
   startSession: (input) => get().startSession(input),
   submitAnswer: (id, input, opts) => get().submitAnswer(id, input, opts),
   skip: (id, action, opts) => get().skip(id, action, opts),
+  leave: (id, opts) => get().leave(id, opts),
 };
 
 export { InterviewError, type AnswerResult, type StartResult, type QuestionView } from "./engine";
