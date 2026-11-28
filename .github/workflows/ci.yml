@@ -76,11 +76,12 @@ jobs:
           text: "🟠 CI упал в PR #${{ github.event.pull_request.number }}: ${{ github.event.pull_request.html_url }}"
 
   # I13: главные пути в браузере на локальной базе Supabase (Docker на раннере) в AI_MODE=mock.
-  # Отдельный job параллельно с ci — PR ждёт дольше не больше чем на пару минут. Профили: iPhone + iPad (WebKit).
+  # Отдельный job параллельно с ci — PR ждёт дольше не больше чем на пару минут. Профили: iPhone + iPad (WebKit),
+  # #327: и Android — pixel (Chromium, Pixel 7): *.family.spec.ts на движке Chrome.
   e2e:
     name: e2e
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
     env:
       AI_MODE: mock
       CI: "true"
@@ -108,10 +109,10 @@ jobs:
         uses: actions/cache@v5
         with:
           path: ~/.cache/ms-playwright
-          key: pw-webkit-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
-      - name: WebKit (iPhone / iPad)
+          key: pw-webkit-chromium-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
+      - name: WebKit (iPhone / iPad) и Chromium (Android)
         run: |
-          if [ "${{ steps.pw-cache.outputs.cache-hit }}" = "true" ]; then npx playwright install-deps webkit; else npx playwright install --with-deps webkit; fi
+          if [ "${{ steps.pw-cache.outputs.cache-hit }}" = "true" ]; then npx playwright install-deps webkit chromium; else npx playwright install --with-deps webkit chromium; fi
       - name: Сборка
         run: npm run build
       - name: Ждём Supabase
@@ -125,8 +126,8 @@ jobs:
           [ -n "$key" ] || { echo "::error::supabase start не поднял стек — см. лог выше"; exit 1; }
           # Ключ локального стека — публичный демо-ключ Supabase CLI, не секрет проекта.
           echo "SUPABASE_SERVICE_ROLE_KEY=$key" >> "$GITHUB_ENV"
-      - name: E2E — seed:demo → семья (iPhone) · киоск (iPad + телефоны, скриншоты) · кабинет · админка
-        run: npx playwright test --project=iphone --project=ipad --project=screens --project=admin
+      - name: E2E — seed:demo → семья (iPhone, Android) · киоск (iPad + телефоны, скриншоты) · кабинет · админка
+        run: npx playwright test --project=iphone --project=pixel --project=ipad --project=screens --project=admin
       # #200: скриншоты киоска на 430×932 / 390×844 / 820×1180 — для PR (артефакт kiosk-screens, 7 дней).
       - name: Скриншоты киоска
         if: always() && hashFiles('e2e-screens/**') != ''

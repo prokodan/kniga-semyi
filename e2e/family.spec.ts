@@ -159,7 +159,10 @@ test("демо: оплата (демо) → допы → сказка", async ({
 
   await test.step("сказка: листается, картинки на месте, «Написать заново» в mock", async () => {
     await expect(page.getByRole("heading", { name: "Сказка для внуков" })).toBeVisible();
-    await expect(page.getByRole("heading", { level: 2, name: DEMO_TALE.title })).toBeVisible();
+    // #327: демо общее для iPhone и Android — второй прогон видит сказку уже «написанной заново» первым
+    const esc = (t: string) => t.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const title = new RegExp(`^(${esc(DEMO_TALE.title)}|${esc(taleFixture.title)})$`);
+    await expect(page.getByRole("heading", { level: 2, name: title })).toBeVisible();
     await page.getByRole("button", { name: "Следующая страница" }).click();
     await expect(page.getByAltText("Картинка к странице 1")).toBeVisible();
     await expect(page.getByText(`1 / ${DEMO_TALE.pages.length}`)).toBeVisible();

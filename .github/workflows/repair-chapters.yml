@@ -4,15 +4,23 @@ name: repair-chapters
 # failed после kick-stuck → перезапуск; глава без своего уточнения или с повтором другой главы → пересборка с edit;
 # кириллица в KR (#163) и 해요체 к внукам (#183, платно) → пересборка с translate. Демо-семья не трогается.
 # Предохранители apply: > max_chapters глав или OpenAI за сегодня > $max_openai_usd → только план, job красный.
+# #298: казахский перевод (флаг lang_kk) — латиница / хангыль (kk-script) и «сендер» + «сіздер» к внукам (kk-style) →
+# пересборка с translate (платно). #312: target staging — база и сайт staging (секреты STAGING_*, STAGING_URL);
+# флаги сайта скрипт читает из его /api/health (на staging lang_kk включён всем).
 # Только вручную. По умолчанию dry run — показывает план. Семьи — короткие id из Actions → diag (families).
 on:
   workflow_dispatch:
     inputs:
+      target:
+        description: "#312: где чинить — prod или staging (база и сайт превью)"
+        type: choice
+        options: [prod, staging]
+        default: prod
       families:
         description: "Короткие id семей через запятую (из diag) или all — все, кроме демо"
         required: true
       reasons:
-        description: "Причины: all | через запятую из failed, edit, cyrillic, grandkids"
+        description: "Причины: all | через запятую из failed, edit, cyrillic, grandkids, kk-script, kk-style"
         default: "all"
       max_chapters:
         description: "Apply не начнётся, если глав больше"
@@ -33,9 +41,14 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 40
     env:
-      NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
-      SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
-      PROD_URL: ${{ secrets.PROD_URL }}
+      TARGET: ${{ inputs.target || 'prod' }}
+      PROD_SB_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
+      PROD_SB_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+      PROD_SITE: ${{ secrets.PROD_URL }}
+      STG_SB_URL: ${{ secrets.STAGING_SUPABASE_URL }}
+      STG_SB_KEY: ${{ secrets.STAGING_SUPABASE_SERVICE_ROLE_KEY }}
+      STG_SITE: ${{ secrets.STAGING_URL }}
+      REPAIR_TARGET: ${{ inputs.target || 'prod' }}
       REPAIR_FAMILIES: ${{ inputs.families }}
       REPAIR_APPLY: ${{ inputs.apply && '1' || '0' }}
       REPAIR_REASONS: ${{ inputs.reasons }}
@@ -43,6 +56,12 @@ jobs:
       REPAIR_MAX_OPENAI_USD: ${{ inputs.max_openai_usd }}
     steps:
       - uses: actions/checkout@v7
+      - name: Выбор базы и сайта
+        run: |
+          if [ "$TARGET" = "staging" ]; then url="$STG_SB_URL"; key="$STG_SB_KEY"; site="$STG_SITE"; else url="$PROD_SB_URL"; key="$PROD_SB_KEY"; site="$PROD_SITE"; fi
+          if [ -z "$url" ] || [ -z "$key" ] || [ -z "$site" ]; then echo "::error::Нет секретов Supabase / адреса сайта для $TARGET"; exit 1; fi
+          { echo "NEXT_PUBLIC_SUPABASE_URL=$url"; echo "SUPABASE_SERVICE_ROLE_KEY=$key"; echo "PROD_URL=$site"; } >> "$GITHUB_ENV"
+          echo "### repair-chapters: $TARGET" >> "$GITHUB_STEP_SUMMARY"
       - uses: actions/setup-node@v7
         with:
           node-version: 22

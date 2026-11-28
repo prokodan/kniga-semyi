@@ -7,6 +7,7 @@ import { env } from "@/lib/env";
 import type { Family, Story, Storyteller } from "@/lib/types";
 import { BUCKETS, getDbOrNull } from "@/lib/db";
 import { getFamilyStore, isTokenShape, MemoryFamilyStore } from "@/lib/db/access";
+import { playablePath } from "./playable";
 import { loadStoryTexts, withStoryTexts } from "./texts";
 
 export interface ChapterData {
@@ -135,6 +136,28 @@ export async function chapterAudioParts(story: Pick<Story, "id" | "audio_url" | 
       .sort((a, b) => a.created_at.localeCompare(b.created_at));
   }
   const all = [story, ...children];
-  const urls = await Promise.all(all.map((s) => audioSignedUrl(s.audio_url)));
+  const urls = await playableSignedUrls(all.map((s) => s.audio_url));
   return all.flatMap((s, i) => (urls[i] ? [{ src: urls[i]!, durationSec: s.duration_sec != null ? Number(s.duration_sec) : null }] : []));
+}
+
+/**
+ * #325: ссылки на голос по частям главы — копия для iPhone (`*.aac.m4a`, AAC), если workflow audio-transcode её
+ * уже сделал, иначе оригинал. Одним запросом подписываем оригиналы и копии (нет копии = ошибка этой строки, не
+ * всего ответа). Сбой пакета — по одной, как раньше (audioSignedUrl).
+ */
+export async function playableSignedUrls(audioUrls: (string | null)[]): Promise<(string | null)[]> {
+  const db = getDbOrNull();
+  const stored = audioUrls.map((u) => (u && !/^https?:\/\//i.test(u) ? audioStoragePath(u) : null));
+  if (!db || !stored.some(Boolean)) return Promise.all(audioUrls.map((u) => audioSignedUrl(u)));
+  const copies = stored.map((p) => playablePath(p));
+  const paths = [...new Set([...stored, ...copies].filter((p): p is string => Boolean(p)))];
+  const { data, error } = await db.storage.from(BUCKETS.audio).createSignedUrls(paths, AUDIO_TTL);
+  if (error || !data) return Promise.all(audioUrls.map((u) => audioSignedUrl(u)));
+  const signed = new Map<string, string>();
+  for (const row of data) if (row.path && row.signedUrl && !row.error) signed.set(row.path, row.signedUrl);
+  return audioUrls.map((u, i) => {
+    if (!u) return null;
+    if (!stored[i]) return u; // https-ссылка — как есть
+    return (copies[i] && signed.get(copies[i]!)) ?? signed.get(stored[i]!) ?? null;
+  });
 }

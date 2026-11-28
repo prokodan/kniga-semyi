@@ -10,6 +10,7 @@ import { MemoryInterviewRepo } from "@/lib/interview/repo";
 import { fixCyrillic } from "@/lib/pipeline/cyrillic";
 import { entitiesFromChapter, mergeEntities, namesForTranslate } from "@/lib/pipeline/entities";
 import { finishKk, learnSpellingsKk, namesForTranslateKk, requiredSpellingsKk } from "@/lib/pipeline/kk";
+import { translateKk } from "@/lib/pipeline/kk-translate";
 import { applySpellings, learnSpellings, requiredSpellings, type NamePair } from "@/lib/pipeline/names";
 import type { BookLang, FamilyEntity, LifeBlock, Story } from "@/lib/types";
 import { SimBudgetError, withBudget } from "./budget";
@@ -250,12 +251,15 @@ export async function runSimulation(opts: SimOptions): Promise<SimResult> {
       if (langs.includes("kk")) {
         // #298: как конвейер (lib/pipeline/steps/translate.ts → toKazakh): словарь семьи во входе, после — алфавит,
         // обращение к внукам, одно написание имён (lib/pipeline/kk.ts). Иначе eval покажет то, чего на проде нет.
-        const kkNames = namesForTranslateKk(entities);
-        const raw = await budget.ai.run(
-          "translate",
-          translateInput("ru", "kk", { text_ru: edited.text_ru, title: edited.title, quote: edited.quote, ...(kkNames.length ? { names: kkNames } : {}) }),
+        // #313: и тот же повтор с замечанием (translateKk), что у конвейера
+        const t = await translateKk(
+          (input) => budget.ai.run("translate", input),
+          { text_ru: edited.text_ru, title: edited.title, quote: edited.quote },
+          namesForTranslateKk(entities),
+          requiredSpellingsKk(entities),
         );
-        let kk = finishKk(raw, edited.text_ru, requiredSpellingsKk(entities)).out;
+        if (t.retry) turns.push({ role: "note", text: `(kk: повтор перевода с замечанием — оставлена ${t.retry.kept === "retry" ? "вторая" : "первая"} попытка)` });
+        let kk = t.res.out;
         for (const l of learnSpellingsKk(entities, kk.text_ko, story.id)) Object.assign(entities.find((e) => e.id === l.id)!, { name_kk: l.name_kk });
         kk = finishKk(kk, edited.text_ru, requiredSpellingsKk(entities)).out;
         Object.assign(ch, { original: "ru", title_kk: kk.title_ko, text_kk: kk.text_ko, quote_kk: kk.quote_ko });

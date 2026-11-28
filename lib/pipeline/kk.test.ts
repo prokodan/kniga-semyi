@@ -8,13 +8,17 @@ import {
   finishKk,
   fixGrandkidsKk,
   fixKkScript,
+  fixRussianKk,
   foldKk,
   grandkidsMixedKk,
+  kkLeftCount,
   kkProblems,
+  kkRetryNote,
   kzLatinToCyr,
   learnSpellingsKk,
   namesForTranslateKk,
   requiredSpellingsKk,
+  russianLeftKk,
   spellingInKk,
 } from "./kk";
 
@@ -54,7 +58,7 @@ describe("алфавит (#298 п. 1)", () => {
     const r = finishKk(fixture, editFixture.text_ru);
     expect(r.out).toEqual(fixture);
     expect(r.fixed).toEqual([]);
-    expect(r.left).toEqual({ latin: [], hangul: false, style: [] });
+    expect(r.left).toEqual({ latin: [], hangul: false, style: [], russian: [] });
   });
 
   it("хангыль и латиница, которую не исправить, — остаются флажком", () => {
@@ -121,5 +125,56 @@ describe("имена семьи (#298 п. 3)", () => {
   it("во вход перевода — только люди и места с name_kk (поле ko = написание на языке перевода)", () => {
     const list = [entity({ name_kk: "Сәуле" }), entity({ id: "e2", name_ru: "Ерлан" }), entity({ id: "e3", kind: "word", name_ru: "кукси", name_kk: "кукси" })];
     expect(namesForTranslateKk(list)).toEqual([{ ru: "Сауле", ko: "Сәуле" }]);
+  });
+});
+
+describe("русские слова в казахском переводе (#315)", () => {
+  const ru = "Дома были глинобитные. Было трудно, но мы, конечно, жили в ауле.";
+  const kk = "Үйлер глинобитные еді. Қиын было, но біз, конечно, аулда тұрдық.";
+
+  it("находка eval serik: «было», «но», «конечно», «глинобитные» — флажок russian", () => {
+    expect(russianLeftKk(kk, ru)).toEqual(["глинобитные", "было", "но", "конечно"]);
+  });
+
+  it("однозначные служебные слова и «аул» — по-казахски без ИИ; «было» и «глинобитные» — остаются флажком", () => {
+    const r = fixRussianKk(kk, ru);
+    expect(r.text).toBe("Үйлер глинобитные еді. Қиын было, бірақ біз, әрине, ауылда тұрдық.");
+    expect(r.fixed.map((f) => `${f.from}→${f.to}`)).toEqual(["но→бірақ", "конечно→әрине", "аулда→ауылда"]);
+    expect(fixRussianKk("Но біз келдік. Аул алыс.").text).toBe("Бірақ біз келдік. Ауыл алыс.");
+  });
+
+  it("казахские слова не трогаем: «не», «он», «да», «там», «мен», «аулақ», «аулау»; имена и советские реалии — не русские", () => {
+    const ok = "Не істейміз? Он бала мен әжем. Там салдық, аулақта аулау да болды.";
+    expect(russianLeftKk(ok, "Что делать? Десять детей.")).toEqual([]);
+    expect(fixRussianKk(ok).fixed).toEqual([]);
+    expect(russianLeftKk("Колхоз бригадирі Николай Петрович келді, трактор әкелді.", "Пришёл бригадир колхоза Николай Петрович, привёз трактор.")).toEqual([]);
+    // корё мар оригинала (кукси, аппади) — как в оригинале, не русские слова
+    expect(russianLeftKk(translateKk.text, editFixture.text_ru)).toEqual([]);
+  });
+
+  it("finishKk: русские служебные исправлены, остаток — в left.russian", () => {
+    const r = finishKk({ ...fixture, text_ko: kk }, ru);
+    expect(r.out.text_ko).toContain("бірақ біз, әрине, ауылда");
+    expect(r.left.russian).toEqual(["глинобитные", "было"]);
+  });
+});
+
+describe("замечание к повтору перевода (#313)", () => {
+  const none = { latin: [], hangul: false, style: [], russian: [] };
+
+  it("нечего повторять — null (обращение к внукам — не повод для повтора: его чинит fixGrandkidsKk)", () => {
+    expect(kkRetryNote(none)).toBeNull();
+    expect(kkRetryNote({ ...none, style: [{ paragraph: 1, familiar: "болыңдар", polite: "біріңізге" }] })).toBeNull();
+  });
+
+  it("хангыль, латиница с заглавной, русские слова — в замечании; текст тот же при том же остатке (ключ кэша)", () => {
+    const left = { ...none, hangul: true, latin: ["KGB"], russian: ["было"] };
+    const note = kkRetryNote(left)!;
+    expect(note).toContain("хангыль");
+    expect(note).toContain("KGB");
+    expect(note).toContain("было");
+    expect(note.length).toBeLessThanOrEqual(600);
+    expect(kkRetryNote({ ...left })).toBe(note);
+    expect(kkLeftCount(left)).toBe(3);
   });
 });

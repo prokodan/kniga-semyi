@@ -13,11 +13,13 @@
 //    хангыль (`kk-script`) или к внукам и «сендер», и «сіздер» в одном абзаце (`kk-style`) → пересборка с translate:
 //    промпт translate.kk.md новый → платный вызов (≈ 1 на главу); защиты lib/pipeline/kk.ts применятся сами.
 //    Только семьи, у которых kk в book_langs и lang_kk в labs (в проде флаг выключен — иначе translate ушёл бы в KR).
+//    #312: target staging — флаги сайта staging (REPAIR_FLAGS_ON = FLAGS_ON превью, `*` = все): lang_kk там у всех.
 //    Правки людей (origin family / proofread) не трогаем. Детекторы — те же, что флажки kk-check (eval/kk-check.ts).
 // Фильтр причин — REPAIR_REASONS (failed, edit, cyrillic, grandkids, kk-script, kk-style; пусто / all — все).
 // Предохранители apply: больше REPAIR_MAX_CHAPTERS глав (30) или OpenAI за сегодня (UTC, как бюджет роутера)
 // дороже REPAIR_MAX_OPENAI_USD ($1) — ничего не пересобирает, только план. Демо-семья не трогается никогда.
-// Вызывает прод POST /api/stories/:id/process с токеном семьи из базы. Токены, имена и тексты в лог не пишет.
+// #312: REPAIR_TARGET prod | staging — база и сайт выбирает workflow (секреты STAGING_*, адрес — STAGING_URL в PROD_URL).
+// Вызывает сайт (прод или staging) POST /api/stories/:id/process с токеном семьи из базы. Токены, имена и тексты в лог не пишет.
 // Запуск: Actions → repair-chapters (families, apply). По умолчанию — только показать (dry run).
 import { appendFileSync } from "node:fs";
 import type { Story } from "@/lib/types";
@@ -39,6 +41,28 @@ const REASONS_RAW = (process.env.REPAIR_REASONS ?? "").split(",").map((s) => s.t
 const REASONS = new Set<Reason>(
   REASONS_RAW.length === 0 || REASONS_RAW.includes("all") ? [...ALL_REASONS] : (REASONS_RAW as Reason[]),
 );
+const TARGET = process.env.REPAIR_TARGET === "staging" ? "staging" : "prod";
+/**
+ * #312: флаги сайта, куда ходим — `flags_on` из его /api/health (staging: FLAGS_ON=* → все; прод — пусто). Не ответил —
+ * флагов сайта нет (только labs семьи, как раньше). REPAIR_FLAGS_ON (через запятую, `*` = все) — вместо health.
+ */
+const FLAGS_ON = new Set<string>();
+const siteFlag = (name: string) => FLAGS_ON.has("*") || FLAGS_ON.has(name);
+async function loadSiteFlags(): Promise<string> {
+  const env = (process.env.REPAIR_FLAGS_ON ?? "").split(",").map((s) => s.trim()).filter(Boolean);
+  if (env.length) {
+    for (const f of env) FLAGS_ON.add(f);
+    return `REPAIR_FLAGS_ON: ${env.join(", ")}`;
+  }
+  try {
+    const res = await fetch(`${PROD}/api/health`, { signal: AbortSignal.timeout(20_000) });
+    const j = (await res.json()) as { flags_on?: unknown; env?: unknown };
+    for (const f of Array.isArray(j.flags_on) ? j.flags_on : []) if (typeof f === "string") FLAGS_ON.add(f);
+    return `флаги сайта (health${typeof j.env === "string" ? `, env ${j.env}` : ""}): ${[...FLAGS_ON].join(", ") || "нет"}`;
+  } catch (e) {
+    return `флаги сайта не прочитаны (${(e as Error).message.slice(0, 60)}) — только labs семей`;
+  }
+}
 const MAX_CHAPTERS = Number(process.env.REPAIR_MAX_CHAPTERS || 30);
 const MAX_OPENAI_USD = Number(process.env.REPAIR_MAX_OPENAI_USD || 1);
 if (!SB || !KEY || !PROD || SEL.length === 0) {
@@ -91,7 +115,9 @@ async function main() {
   const all = await rest<{ id: string; is_demo: boolean; book_langs?: string[] | null; labs?: string[] | null }[]>("families?select=*&is_demo=eq.false&limit=1000");
   // демо-семья отсеяна уже запросом (is_demo=false) — её не трогаем ни при каком выборе
   const families = ALL_FAMILIES ? all : all.filter((f) => SEL.some((s) => f.id.startsWith(s)));
-  log(`# repair-chapters · ${new Date().toISOString()} · ${APPLY ? "ПЕРЕСБОРКА" : "dry run"} · семей: ${families.length} (без демо) · причины: ${[...REASONS].join(", ")}`);
+  const flagsNote = await loadSiteFlags();
+  log(`# repair-chapters · ${TARGET} · ${new Date().toISOString()} · ${APPLY ? "ПЕРЕСБОРКА" : "dry run"} · семей: ${families.length} (без демо) · причины: ${[...REASONS].join(", ")}`);
+  log(flagsNote);
 
   type Plan = { id: string; q: string | null; why: string; body: Record<string, unknown>; paid: boolean };
   const plans: { fam: string; token: string; plan: Plan[] }[] = [];
@@ -102,8 +128,9 @@ async function main() {
       `stories?select=id,storyteller_id,parent_story_id,question_id,status,error,transcript,text_ru,text_ko,title_ko,quote_ko,followups,created_at&family_id=eq.${fam.id}&order=created_at.asc&limit=1000`,
     );
     const plan: Plan[] = [];
-    // #298: казахские переводы ИИ — только семьям с kk в книге и флагом lang_kk (иначе translate переведёт на KR)
-    const kkOn = (fam.book_langs ?? []).includes("kk") && (fam.labs ?? []).includes("lang_kk");
+    // #298: казахские переводы ИИ — только семьям с kk в книге и флагом lang_kk (иначе translate переведёт на KR);
+    // #312: флаг — у семьи в labs или у всего сайта (staging: FLAGS_ON=*)
+    const kkOn = (fam.book_langs ?? []).includes("kk") && ((fam.labs ?? []).includes("lang_kk") || siteFlag("lang_kk"));
     const kkTexts = kkOn && (REASONS.has("kk-script") || REASONS.has("kk-style")) ? await kkRows(rows.map((r) => r.id)) : new Map<string, KkRow>();
     for (const s of rows) {
       if (s.parent_story_id || s.status === "skipped") continue;

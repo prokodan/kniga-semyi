@@ -21,7 +21,7 @@ import {
 } from "./quality";
 import { readFileSync } from "node:fs";
 import { parseGlossary } from "./kr-check";
-import { deriveEvalSteps, evalRoute } from "./store";
+import { deriveEvalSteps, evalFlash, evalRoute } from "./store";
 import { loadPersona } from "./sim/persona";
 import { runSimulation } from "./sim/run";
 
@@ -330,6 +330,15 @@ describe("evalRoute", () => {
     expect(fromConfig.length).toBeGreaterThan(0);
     expect(fromConfig.every((p) => p.provider === "openai")).toBe(true);
     expect(evalRoute("translate", prod, "gemini-x", "gemini").providers.map((p) => p.model)).toEqual(["gemini-3-flash", "gemini-3-flash-lite"]);
+  });
+  it("#317: persona_reply — Flash-Lite, запасной Flash прода (ответ не JSON → сразу Flash); остальные шаги — как были", () => {
+    const flash = evalFlash({ edit: prod });
+    expect(flash).toEqual({ provider: "gemini", model: "gemini-3-flash" });
+    expect(evalRoute("persona_reply", [prod[0]!, prod[2]!], undefined, undefined, flash).providers.map((p) => p.model)).toEqual(["gemini-3-flash-lite", "gemini-3-flash"]);
+    expect(evalRoute("translate", prod, undefined, undefined, flash).providers).toEqual([{ provider: "gemini", model: "gemini-3-flash-lite" }]);
+    expect(evalRoute("edit", prod, "gemini-x", undefined, flash).providers).toEqual([{ provider: "gemini", model: "gemini-x" }]);
+    // нет прод-маршрутов — Flash из lib/ai/config.ts
+    expect(evalFlash({})?.model).toMatch(/flash(?!-lite)/);
   });
   it("нет строк judge / back_translate в проде — модели берутся из translate прода", () => {
     const d = deriveEvalSteps({ translate: prod });
