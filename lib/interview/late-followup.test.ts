@@ -99,13 +99,14 @@ describe("#149: поздний ответ на уточнение не пере�
     const at = new Date(Date.now() - 5 * 60_000).toISOString();
     const base: Omit<Story, "id" | "parent_story_id" | "question_id" | "audio_url" | "transcript" | "text_ru" | "text_ko" | "title" | "status"> = { family_id: "fam-1", storyteller_id: "st-1", session_id: null, block: "roots", duration_sec: null, title_ko: null, quote: null, quote_ko: null, facts: [], followups: [], error: null, sort_order: null, created_at: at, updated_at: at };
     repo.add({ ...base, id: "m-1", parent_story_id: null, question_id: "roots-02", audio_url: null, transcript: "Папа был кузнецом.", text_ru: "Правка семьи.", text_ko: "…", title: "Кузня", status: "ready" });
-    repo.add({ ...base, id: "c-1", parent_story_id: "m-1", question_id: "roots-02", audio_url: "a.webm", transcript: null, text_ru: null, text_ko: null, title: null, status: "uploaded" });
+    const later = new Date().toISOString();
+    repo.add({ ...base, id: "c-1", parent_story_id: "m-1", question_id: "roots-02", audio_url: "a.webm", transcript: null, text_ru: null, text_ko: null, title: null, status: "uploaded", created_at: later, updated_at: later });
     repo.edited.add("m-1");
     const r = await pipeline.processStory("c-1");
     expect(r.rebuildParent).toBeUndefined();
     const p = (await repo.getStory("m-1"))!;
     expect(p).toMatchObject({ status: "ready", text_ru: "Правка семьи." });
-    expect(p.followups.some((f) => f.story_id === "c-1")).toBe(true);
+    expect({ child: (await repo.getStory("c-1"))!.status, ids: p.followups.map((f) => f.story_id) }).toEqual({ child: "ready", ids: ["c-1"] });
   });
 });
 
