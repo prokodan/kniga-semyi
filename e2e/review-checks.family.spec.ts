@@ -136,7 +136,13 @@ const SCREENS = [
 
 async function shot(page: Page, name: string) {
   await page.waitForLoadState("networkidle").catch(() => undefined);
-  await page.screenshot({ path: `e2e-screens/review/${name}.jpg`, type: "jpeg", quality: 55, fullPage: true });
+  const buf = await page.screenshot({ path: `e2e-screens/review/${name}.jpg`, type: "jpeg", quality: 55, fullPage: true });
+  // агенту без доступа к артефактам — несколько снимков в лог (только ветки z2/q2-*, как z5/kiosk-* у киоска)
+  if ((process.env.GITHUB_HEAD_REF ?? "").startsWith("z2/q2") && /^390x844-(ko-text|kk-terms)-[12]-/.test(name)) {
+    const small = await page.screenshot({ type: "jpeg", quality: 40, fullPage: true, scale: "css" });
+    console.log(`SCREEN ${name} ${small.toString("base64")} END`);
+  }
+  void buf;
   const { scroll, width } = await page.evaluate(() => ({ scroll: document.documentElement.scrollWidth, width: window.innerWidth }));
   expect.soft(scroll, `${name}: горизонтальная прокрутка (${scroll} > ${width})`).toBeLessThanOrEqual(width);
   const bad = await page.evaluate(() =>
