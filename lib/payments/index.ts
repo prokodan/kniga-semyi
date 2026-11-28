@@ -1,7 +1,7 @@
 // Порт оплаты. В MLP — только демо-адаптер: «оплачено (демо)», денег нет.
 // Настоящие Kaspi / Freedom / Telegram Stars — новые адаптеры этого же интерфейса после конкурса.
 // Владелец интерфейса — Z6, экраны оплаты и допов — Z4 (I7).
-import type { DemoOrder, Uuid } from "@/lib/types";
+import type { DemoOrder, LangOrder, Uuid } from "@/lib/types";
 
 export type ProductKind = "digital" | "print";
 
@@ -74,6 +74,40 @@ export const SOON_EXTRAS_KZT = {
 } as const;
 
 export type SoonExtraId = keyof typeof SOON_EXTRAS_KZT;
+
+/**
+ * #306 (флаг lang_change): ещё один язык книги сверх базовой пары (после бесплатной главы языки книги не меняются —
+ * только докупить). Цена — черновик 4 900 ₸ (docs/HANDOFF.md §5.1, #236; «цену обсудим»).
+ */
+export const LANG_EXTRA_KZT = 4_900;
+
+/** Ключ допа «язык книги»: lang:kk / lang:ko — в demo_orders.extras заказа product = "lang". */
+export function langExtraKey(lang: string): string {
+  return `lang:${lang}`;
+}
+
+export interface LangCheckoutRequest {
+  familyId: Uuid;
+  lang: string;
+}
+
+/** Сохранение демо-заказа языка (product = "lang"); в проде — insert в demo_orders, в тестах — память. */
+export type SaveLangOrder = (row: Omit<LangOrder, "id" | "created_at">) => Promise<Uuid | null>;
+
+/** Демо-оплата языка книги: денег нет, заказ сразу «оплачено (демо)». Настоящий провайдер — новый адаптер. */
+export async function checkoutLangDemo(save: SaveLangOrder, req: LangCheckoutRequest): Promise<CheckoutResult> {
+  const amountKzt = LANG_EXTRA_KZT;
+  const orderId = await save({
+    family_id: req.familyId,
+    product: "lang",
+    amount_kzt: amountKzt,
+    extras: [langExtraKey(req.lang)],
+    status: "paid_demo",
+    provider: "demo",
+    paid_at: new Date().toISOString(),
+  });
+  return { orderId, status: "paid_demo", amountKzt, redirectUrl: null };
+}
 
 /** Уровень, выбранный на экране оплаты по умолчанию: «Стандарт» цифровой книги. */
 export const DEFAULT_PLAN_ID = "digital-2";

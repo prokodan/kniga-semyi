@@ -56,6 +56,18 @@ export function defaultsFor(packs: readonly string[], kkOn: boolean): { spoken: 
 /** Выбор по умолчанию на форме = сегодняшний продукт (general + koryo, ru + корё мар, ru,ko). */
 export const START_DEFAULT_PACKS = ["koryo"];
 
+/**
+ * #301 (решение Данила 28.11): умолчание «Кто ваша семья?» — по точке входа. Ссылка АКНЦ (`/start?pack=koryo`) и
+ * киоск — корё-сарам, как сейчас; общая ссылка `/start` — ничего не отмечено, семья выбирает сама (пустой выбор —
+ * общий костяк, книга RU). Киоск создаёт семьи своей ручкой — у них умолчания базы (general + koryo).
+ */
+export const AKNC_START_LINK = "/start?pack=koryo";
+
+/** Отмечено заранее на /start: `?pack=<слой>` из реестра пакетов (АКНЦ — koryo) или ничего (общая ссылка). */
+export function startDefaultPacks(entryPack: string | null | undefined): string[] {
+  return entryPack && entryPack !== "general" && Object.prototype.hasOwnProperty.call(CULTURE_PACKS, entryPack) ? [entryPack] : [];
+}
+
 export class StartChoiceError extends Error {}
 
 /**

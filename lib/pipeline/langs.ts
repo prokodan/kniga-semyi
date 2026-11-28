@@ -7,7 +7,26 @@ import { DEFAULT_BOOK_LANGS, type BookLang } from "@/lib/types";
 /** Языки книги семьи с учётом флага lang_kk. */
 export function effectiveBookLangs(family: { book_langs?: readonly string[] | null } | null | undefined, kkOn: boolean): BookLang[] {
   const langs = bookLangs(family);
-  return !kkOn && langs.includes("kk") ? [...DEFAULT_BOOK_LANGS] : langs;
+  if (!kkOn && langs.includes("kk")) return [...DEFAULT_BOOK_LANGS];
+  // #306: докупленный язык («Добавить язык») — третьим в book_langs, после базовой пары; только с lang_kk
+  return kkOn ? [...langs, ...extraBookLangs(family, langs)] : langs;
+}
+
+/**
+ * #306: докупленные языки сверх базовой пары — book_langs[2…] (известные, без повторов). Базовая пара — первые два
+ * (bookLangs), её семья выбирает до первой готовой главы; третий язык появляется только после демо-оплаты.
+ */
+export function extraBookLangs(
+  family: { book_langs?: readonly string[] | null } | null | undefined,
+  base: readonly BookLang[] = bookLangs(family),
+): Exclude<BookLang, "ru">[] {
+  if (base.length < 2) return []; // книга «только RU»: добавленный язык становится вторым, а не третьим
+  const raw = (family?.book_langs ?? []).slice(2);
+  const out: Exclude<BookLang, "ru">[] = [];
+  for (const l of raw) {
+    if ((l === "ko" || l === "kk") && !base.includes(l) && !out.includes(l)) out.push(l);
+  }
+  return out;
 }
 
 /** Переводы главы: все языки книги, кроме языка оригинала (сейчас глава всегда пишется по-русски — edit). */

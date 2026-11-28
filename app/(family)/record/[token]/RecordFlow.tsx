@@ -82,8 +82,11 @@ export function RecordFlow(props: {
   /** Раньше — для полосы «глав начато»; после #101 полосу ведёт прогресс движка. Оставлено для совместимости страницы. */
   initialCovered: LifeBlock[];
   answeredQuestionIds: string[];
+  /** #304: корейская строка вопроса и раздела — только у книги с корейским (RU + KR); не задано — как раньше */
+  showKo?: boolean;
 }) {
   const { token, familyId, storyteller } = props;
+  const showKo = props.showKo ?? true;
   const storageKey = `ks:interview:${storyteller.id}`;
   const draftKey = `story:${storyteller.id}`;
 
@@ -404,7 +407,7 @@ export function RecordFlow(props: {
           <section className="flex flex-col gap-3">
             <p className="text-sm text-muted">
               {current.question.blockTitle.ru}
-              {current.question.blockTitle.ko && <span lang="ko"> · {current.question.blockTitle.ko}</span>}
+              {showKo && current.question.blockTitle.ko && <span lang="ko"> · {current.question.blockTitle.ko}</span>}
             </p>
             {current.bridge && <p className="text-ink-soft italic">{current.bridge}</p>}
             {current.pause && (
@@ -413,8 +416,8 @@ export function RecordFlow(props: {
               </p>
             )}
             <h1 className="font-serif text-elder leading-snug sm:text-kiosk">{current.prompt}</h1>
-            {/* #233: корейская строка — только у семей с пакетом корё-сарам (у остальных банк отдаёт ko пустым) */}
-            {current.kind === "question" && current.question.ko && (
+            {/* #233: корейская строка — только у семей с пакетом корё-сарам (у остальных банк отдаёт ko пустым); #304 — и с корейским в книге */}
+            {showKo && current.kind === "question" && current.question.ko && (
               <p className="text-ink-soft" lang="ko">
                 {current.question.ko}
               </p>

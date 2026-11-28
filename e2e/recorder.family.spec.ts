@@ -103,7 +103,7 @@ for (const c of CASES) {
     const familyName = `Книга семьи E2E rec ${c.id} ${Date.now().toString(36)}`;
 
     await test.step("старт и согласие", async () => {
-      await page.goto("/start");
+      await page.goto(c.choice ? "/start" : "/start?pack=koryo"); // #301: RU + KR — ссылка АКНЦ
       await page.getByLabel("Как назовём книгу?").fill(familyName);
       await page.getByLabel("Имя, как зовут в семье").fill(c.id === "kz" ? "Әжем Гүлнар" : "Бабушка Мария");
       if (c.choice) {

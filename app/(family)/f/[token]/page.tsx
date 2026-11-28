@@ -4,8 +4,10 @@ import Link from "next/link";
 import { requestOrigin } from "@/lib/book/chapter";
 import { blockProgress, getFamilyByToken, getFamilyStore } from "@/lib/db/access";
 import { flag } from "@/lib/flags";
+import { addLangOffers, baseChoiceOf, langsLocked } from "@/lib/payments/langs";
+import { familyBookLangs } from "@/lib/pipeline/book-langs";
 import { healFamily } from "@/lib/pipeline/heal";
-import { choiceOf, effectiveBookLangs } from "@/lib/pipeline/langs";
+import { choiceOf, effectiveBookLangs, extraBookLangs, LANG_UI } from "@/lib/pipeline/langs";
 import { BlockProgress } from "../../_ui/BlockProgress";
 import { LinkNotFound } from "../../_ui/LinkNotFound";
 import { ShareLink } from "../../_ui/ShareLink";
@@ -40,6 +42,11 @@ export default async function FamilyPage({ params, searchParams }: { params: Pro
   // #231: «Языки книги» (RU + KR / RU + KZ / RU) — только с флагом lang_kk
   const langKk = flag("lang_kk", { familyId: family.id, labs: family.labs });
   const tree = flag("family_tree", { familyId: family.id, labs: family.labs }); // #235
+  // #306: смена языков — согласие галочкой, блокировка после первой готовой главы, «Добавить язык»
+  const langChange = langKk && flag("lang_change", { familyId: family.id, labs: family.labs });
+  // #304: корейские подписи — только у книги с корейским (как #299); RU + KR — байт в байт как было
+  const langs = familyBookLangs(family);
+  const ko = langs.includes("ko");
   const progress = blockProgress(view.stories, storyteller?.id);
   const photo = storyteller?.photo_url ? await getFamilyStore().photoUrl(storyteller.photo_url) : null;
   const chapters = view.stories.filter((s) => !s.parent_story_id && s.storyteller_id === storyteller?.id);
@@ -48,7 +55,7 @@ export default async function FamilyPage({ params, searchParams }: { params: Pro
 
   return (
     <main className="mx-auto flex max-w-xl flex-col gap-6 px-5 py-8">
-      <p className="text-sm tracking-widest text-muted uppercase">Книга семьи · 우리 이야기</p>
+      <p className="text-sm tracking-widest text-muted uppercase">{ko ? "Книга семьи · 우리 이야기" : "Книга семьи"}</p>
 
       {isNew && (
         <section className="flex flex-col gap-3 rounded-card border border-jade/40 bg-paper p-5">
@@ -74,7 +81,7 @@ export default async function FamilyPage({ params, searchParams }: { params: Pro
           )}
           <div className="flex flex-col">
             <p className="font-serif text-2xl">{storyteller.name}</p>
-            {storyteller.name_ko && <p className="text-ink-soft" lang="ko">{storyteller.name_ko}</p>}
+            {ko && storyteller.name_ko && <p className="text-ink-soft" lang="ko">{storyteller.name_ko}</p>}
             <p className="text-sm text-muted">{[years, storyteller.birth_place].filter(Boolean).join(" · ")}</p>
           </div>
         </section>
@@ -106,9 +113,13 @@ export default async function FamilyPage({ params, searchParams }: { params: Pro
           <h2 className="font-serif text-2xl">Главы</h2>
           {groupBySection(chapters).map((sec) => (
             <div key={sec.block ?? "none"} className="flex flex-col gap-2">
-              <h3 className="mt-2 text-sm tracking-widest text-seal uppercase">
-                {sec.ru} <span lang="ko">· {sec.ko}</span>
-              </h3>
+              {ko ? (
+                <h3 className="mt-2 text-sm tracking-widest text-seal uppercase">
+                  {sec.ru} <span lang="ko">· {sec.ko}</span>
+                </h3>
+              ) : (
+                <h3 className="mt-2 text-sm tracking-widest text-seal uppercase">{sec.ru}</h3>
+              )}
               <ul className="flex flex-col gap-2">
                 {sec.items.map((c) => (
                   <li key={c.id}>
@@ -165,7 +176,19 @@ export default async function FamilyPage({ params, searchParams }: { params: Pro
         </section>
       )}
 
-      {langKk && <BookLangs token={token} current={choiceOf(effectiveBookLangs(family, true))} />}
+      {langChange ? (
+        <BookLangs
+          token={token}
+          current={baseChoiceOf(effectiveBookLangs(family, true))}
+          change={{
+            locked: langsLocked(view.stories),
+            extras: extraBookLangs(family).map((l) => LANG_UI[l].name),
+            offers: addLangOffers(effectiveBookLangs(family, true)),
+          }}
+        />
+      ) : (
+        langKk && <BookLangs token={token} current={choiceOf(effectiveBookLangs(family, true))} />
+      )}
 
       {!isNew && (
         <section className="flex flex-col gap-3 border-t border-line pt-5">

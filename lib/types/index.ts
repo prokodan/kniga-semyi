@@ -208,6 +208,25 @@ export interface DemoOrder {
   paid_at: IsoDateTime | null;
 }
 
+/** #306 (флаг lang_change): докупленный язык книги — строка demo_orders с product = "lang", extras = ["lang:kk"]. */
+export type LangOrder = Omit<DemoOrder, "product"> & { product: "lang" };
+
+/**
+ * #306 (флаг lang_change): согласие галочкой при смене или добавлении языков книги (голос заново не пишем).
+ * Таблица book_lang_consents (миграция 20261128160000): текст — ровно тот, что видела семья (consentText по новым языкам).
+ */
+export interface BookLangConsent {
+  id: Uuid;
+  family_id: Uuid;
+  storyteller_id: Uuid | null;
+  /** change — сменили языки до первой главы; add — докупили ещё один язык */
+  reason: "change" | "add";
+  from_langs: BookLang[];
+  langs: BookLang[];
+  text: string;
+  agreed_at: IsoDateTime;
+}
+
 export interface KioskVolunteer {
   id: Uuid;
   name: string;

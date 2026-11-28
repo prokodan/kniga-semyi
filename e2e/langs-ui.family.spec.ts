@@ -16,12 +16,18 @@ async function shot(page: Page, name: string) {
   await page.screenshot({ path: `e2e-screens/langs/${test.info().project.name}-${name}.jpg`, type: "jpeg", quality: 60, fullPage: true });
 }
 
-/** На странице нет корейского: ни слова «корейский», ни хангыля, ни элементов lang="ko". */
-async function noKorean(page: Page, where: string) {
-  const text = await page.locator("body").innerText();
+/**
+ * На странице нет корейского: ни слова «корейский», ни хангыля, ни элементов lang="ko".
+ * `except` — блок, где язык — вариант выбора («Языки книги»: «Русский и корейский», «Добавить корейский»), не подпись.
+ */
+async function noKorean(page: Page, where: string, except?: string) {
+  // except: смотрим детей <main>, кроме блока выбора языков
+  const scope = except ? `main > :not(${except})` : "body";
+  const text = (await page.locator(scope).allInnerTexts()).join("\n");
   expect.soft(text, `${where}: «корейск…»`).not.toMatch(/корейск/i);
   expect.soft(text, `${where}: хангыль`).not.toMatch(HANGUL);
-  await expect.soft(page.locator('[lang="ko"]'), `${where}: lang="ko"`).toHaveCount(0);
+  const ko = except ? page.locator(`main > :not(${except})[lang="ko"], main > :not(${except}) [lang="ko"]`) : page.locator('[lang="ko"]');
+  await expect.soft(ko, `${where}: lang="ko"`).toHaveCount(0);
 }
 
 const CASES = [
@@ -85,6 +91,8 @@ for (const c of CASES) {
       const chapter = page.getByRole("link", { name: /^1\. / });
       storyId = (await chapter.getAttribute("href"))!.match(/\/chapter\/([0-9a-f-]{36})/)![1]!;
       await reloadUntil(page, async () => expect(chapter).toContainText("читать →", { timeout: 2000 }), 90_000);
+      await noKorean(page, "страница семьи", '[aria-labelledby="book-langs"]'); // #304: «우리 이야기», имя по-корейски, подписи разделов
+      await shot(page, `${c.id}-00-family`);
       const view = await (await page.request.get(`/api/stories/${storyId}?token=${token}`)).json();
       expect(view.done).toBe(true);
       expect(view.book_langs).toEqual(c.langs);
