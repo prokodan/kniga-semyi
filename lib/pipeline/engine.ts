@@ -14,6 +14,7 @@ import { DEFAULT_PROVIDERS } from "@/lib/ai/config";
 import type { AiRouter } from "@/lib/ai/router";
 import { AiUnavailableError } from "@/lib/ai/types";
 import { bankForPacks, getQuestionBank, type QuestionBank } from "@/lib/interview/bank";
+import { SETTLED_CHAPTER_MS } from "@/lib/interview/edited";
 import type { BookLang, Story, StoryStatus } from "@/lib/types";
 import type { PipelinePatch, PipelineRepo } from "./repo";
 import { checkDeferred, needsDeferredCheck } from "./deferred";
@@ -133,7 +134,7 @@ export const INTERVIEW_HOLD_MS = 20 * 60_000;
  * Свежую главу (≤ 30 мин) пересобираем с её ответом; старше — только приклеиваем ответ к уточнениям: семья могла
  * уже поправить черновик, его не перетираем (ответ войдёт при следующей пересборке).
  */
-export const LATE_CHILD_REBUILD_MS = 30 * 60_000;
+export const LATE_CHILD_REBUILD_MS = SETTLED_CHAPTER_MS;
 
 export function createPipeline(deps: PipelineDeps) {
   const { ai, repo } = deps;
@@ -238,7 +239,7 @@ export function createPipeline(deps: PipelineDeps) {
       !opts.restart &&
       repo.interviewHold &&
       now() - new Date(story.created_at).getTime() < INTERVIEW_HOLD_MS &&
-      (await repo.interviewHold(story))
+      (await repo.interviewHold(story, now()))
     ) {
       return result(story, null, { waiting: "interview", next: "edit", message: "Ещё разговариваем об этом — глава соберётся после уточнений" });
     }
@@ -314,9 +315,10 @@ export function createPipeline(deps: PipelineDeps) {
     const parent = await repo.getStory(child.parent_story_id!);
     if (!parent || parent.status === "skipped" || !parent.text_ru) return null; // глава ещё не собрана — edit приклеит сам
     if (represented(parent.followups ?? [], child)) return null;
-    if (repo.interviewHold && (await repo.interviewHold(parent))) return null; // интервью ещё на вопросе — приклеит само
+    if (repo.interviewHold && (await repo.interviewHold(parent, now()))) return null; // интервью ещё на вопросе — приклеит само
     const { followups } = attachChildren(parent.followups ?? [], [child]);
-    if (now() - new Date(parent.created_at).getTime() > LATE_CHILD_REBUILD_MS) {
+    // #149: главу поправила семья — тоже только приклеиваем, правку не перетираем
+    if (now() - new Date(parent.created_at).getTime() > LATE_CHILD_REBUILD_MS || (await editedByFamily(parent))) {
       await repo.updateStory(parent.id, { followups });
       return null;
     }
@@ -324,6 +326,17 @@ export function createPipeline(deps: PipelineDeps) {
     for (const s of PIPELINE_STEPS.slice(PIPELINE_STEPS.indexOf("edit"))) Object.assign(patch, STEP_FIELDS[s]);
     await repo.updateStory(parent.id, patch);
     return parent.id;
+  }
+
+  /** #149: семья правила главу в черновике. Сбой — «не правили» (как до #149). */
+  async function editedByFamily(story: Story): Promise<boolean> {
+    if (!repo.familyEdited) return false;
+    try {
+      return await repo.familyEdited(story);
+    } catch (e) {
+      console.warn(`[pipeline] правка семьи ${story.id.slice(0, 8)}:`, (e as Error).message);
+      return false;
+    }
   }
 
   /** Пересобрать с шага `from` (и все следующие): например, после новых ответов на уточнения — from: "edit". */

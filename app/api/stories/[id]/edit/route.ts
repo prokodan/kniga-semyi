@@ -2,6 +2,9 @@ import { familyToken, ok, readJson } from "@/lib/interview/http";
 import { pipelineError } from "@/lib/pipeline/http";
 import { DraftSchema } from "@/components/draft/draft";
 import { DraftError, saveDraft } from "@/components/draft/save";
+import { getDbOrNull } from "@/lib/db";
+import { markFamilyEditedIn } from "@/lib/interview/edited";
+import type { MemoryInterviewRepo } from "@/lib/interview/repo";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -17,9 +20,21 @@ export async function PATCH(req: Request, ctx: { params: Promise<{ id: string }>
     if (!token) return ok({ error: "forbidden", message: "Нужна ссылка семьи" }, 403);
     const fields = DraftSchema.parse({ title: raw?.title ?? "", quote: raw?.quote ?? "", text_ru: raw?.text_ru ?? "" });
     const res = await saveDraft(id, token, fields);
+    if (res.changed) await markEdited(id); // #149: поздний ответ на уточнение эту главу не пересоберёт
     return ok(res, res.queued ? 202 : 200);
   } catch (e) {
     if (e instanceof DraftError) return ok({ error: "conflict", message: e.message }, 409);
     return pipelineError(e);
+  }
+}
+
+/** #149: отметка «семья правила главу» (story_texts.origin = family у ru; локально — память интервью). Сбой не мешает правке. */
+async function markEdited(storyId: string) {
+  try {
+    const db = getDbOrNull();
+    if (db) return await markFamilyEditedIn(db, storyId);
+    (globalThis as { __interviewMemoryRepo?: MemoryInterviewRepo }).__interviewMemoryRepo?.edited.add(storyId);
+  } catch (e) {
+    console.warn("[draft] отметка правки:", (e as Error).message);
   }
 }
