@@ -176,6 +176,13 @@ describe("прогон боевым конвейером (mock)", () => {
     expect(["ok", "partial"]).toContain(out.status);
   });
 
+  it("ids симулятора (familyId / storyId) не уходят в ai_usage — там uuid строк базы", async () => {
+    const seen: unknown[] = [];
+    const ai = guardedAi({ run: async (_s, _i, o) => (seen.push(o), { text_ko: "т", title_ko: "", quote_ko: "" }) as never }, () => 0, 2, { noCache: true });
+    await ai.run("translate", { text_ru: "т", title: "", quote: "" }, { familyId: "sim-family", storyId: "x", deadline: 5 });
+    expect(seen).toEqual([{ noCache: true, deadline: 5 }]);
+  });
+
   it("лимит $: вызов не начинается, если уже потрачено ≥ лимита; текст → budget", async () => {
     const { router } = mockRouter();
     const ai = guardedAi(router, () => 2.5, 2);
