@@ -1,11 +1,18 @@
 // /review/<токен> — страница носителя языка (#232, docs/v2/LANGUAGES.md §3). Без входа: личная ссылка из /admin/reviews.
 // Только вымышленные тексты (eval-персонажи, демо, вопросы банка). Подписи — на языке пары и по-русски.
 // Флаг не нужен: семьи страницу не видят, ссылку выдаёт команда.
+// #353: ссылки 2.0 (review_links.kind = text | terms, вкладка /admin/quality/checks) — экран CheckApp за флагом
+// quality_loop; старые ссылки #232 (kind = null) и всё при выключенном флаге — как раньше.
 import type { Metadata } from "next";
 import { alignParagraphs, pairLangs } from "@/app/admin/reviews/_lib/core";
 import { openReview } from "@/app/admin/reviews/_lib/store";
-import type { BookLang } from "@/lib/types";
+import { CRITERIA } from "@/app/admin/quality/checks/_lib/core";
+import { openCheck } from "@/app/admin/quality/checks/_lib/store";
+import { flag } from "@/lib/flags";
+import type { BookLang, ReviewAxis } from "@/lib/types";
+import { checkDictionary, closedText } from "../_lib/checks-strings";
 import { dictionary, t } from "../_lib/strings";
+import { CheckApp, type CheckClientFeedback, type CheckClientItem } from "./CheckApp";
 import { ReviewApp, type ClientFeedback, type ClientItem } from "./ReviewApp";
 
 export const dynamic = "force-dynamic";
@@ -56,8 +63,79 @@ function Message({ lang, k }: { lang: BookLang; k: "invalid" | "expired" }) {
   );
 }
 
+async function CheckPage({ token }: { token: string }) {
+  const opened = await openCheck(token);
+  if (opened.status === "legacy") return null;
+  if (opened.status === "missing") {
+    return (
+      <Shell lang="ko">
+        <section className="flex flex-col gap-2 rounded-card bg-paper-deep p-5 shadow-card" data-testid="review-closed">
+          {closedText("invalid", null).map((l, i) => (
+            <p key={i}>{l.native}</p>
+          ))}
+        </section>
+      </Shell>
+    );
+  }
+  const { to } = pairLangs(opened.link.pair);
+  const ui = opened.link.ui_lang ?? (to === "kk" ? "kk" : "ko");
+  if (opened.status !== "active") {
+    return (
+      <Shell lang={ui}>
+        <section className="flex flex-col gap-2 rounded-card bg-paper-deep p-5 shadow-card" data-testid="review-closed">
+          {closedText("expired", ui).map((l, i) => (
+            <p key={i} lang={i === 0 ? ui : "ru"}>
+              {l.native}
+            </p>
+          ))}
+        </section>
+      </Shell>
+    );
+  }
+  const { link, items, feedback } = opened.bundle;
+  const kind = link.kind ?? "text";
+  const criteria = (link.criteria?.length ? link.criteria : CRITERIA).filter((c): c is ReviewAxis => (CRITERIA as readonly string[]).includes(c));
+  const clientItems: CheckClientItem[] = items.map((i) => ({
+    id: i.id,
+    title: i.title,
+    paragraphs: alignParagraphs(i.source_text, i.model_text),
+    focusTerms: Array.isArray(i.focus_terms) ? i.focus_terms.slice(0, 8) : [],
+  }));
+  const initial: Record<string, CheckClientFeedback> = {};
+  for (const f of feedback) {
+    initial[`${f.item_id}:${f.paragraph}`] = {
+      paragraph: f.paragraph,
+      edited_text: f.edited_text,
+      ratings: f.ratings ?? {},
+      comment: f.comment,
+      skipped: f.skipped,
+      terms: f.terms ?? {},
+    };
+  }
+  const dict = checkDictionary(ui, to);
+  return (
+    <Shell lang={ui}>
+      <CheckApp
+        token={token}
+        kind={kind}
+        uiLang={ui}
+        target={to}
+        items={clientItems}
+        criteria={criteria}
+        initial={initial}
+        completed={Boolean(link.completed_at)}
+        dict={dict}
+      />
+    </Shell>
+  );
+}
+
 export default async function ReviewPage({ params }: { params: Promise<{ token: string }> }) {
   const { token } = await params;
+  if (flag("quality_loop")) {
+    const v2 = await CheckPage({ token });
+    if (v2) return v2;
+  }
   const opened = await openReview(token);
   if (opened.status === "missing") return <Message lang="ru" k="invalid" />;
   const { to } = pairLangs(opened.link.pair);
