@@ -63,12 +63,19 @@ export function trackingStore(inner: AiStore) {
   };
 }
 
-/** ai.run с лимитом $: перед вызовом сверяем spent() с limitUsd; noCache — не читать ai_cache (свежий ответ). */
+/**
+ * ai.run с лимитом $: перед вызовом сверяем spent() с limitUsd; noCache — не читать ai_cache (свежий ответ).
+ * familyId / storyId симулятора («sim-family», истории в памяти) — не строки базы: в ai_usage их не передаём, иначе
+ * вставка падает на uuid и расход прогона не попадает в бюджет staging (#352, первый прогон ru → kk).
+ */
 export function guardedAi(ai: Pick<AiRouter, "run">, spent: () => number, limitUsd: number, opts: RunOptions = {}): Pick<AiRouter, "run"> {
   return {
     async run<S extends AiStep>(step: S, input: AiInput<S>, o?: RunOptions): Promise<AiOutput<S>> {
       if (spent() >= limitUsd) throw new QualityBudgetError(step, limitUsd);
-      return ai.run(step, input, { ...opts, ...o });
+      const { familyId: _f, storyId: _s, ...rest } = o ?? {};
+      void _f;
+      void _s;
+      return ai.run(step, input, { ...opts, ...rest });
     },
   };
 }
