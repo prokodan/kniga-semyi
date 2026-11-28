@@ -7,7 +7,7 @@ import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { QUESTIONS } from "@/content/questions/bank";
 import { BLOCKS } from "@/content/questions/blocks";
-import { postJson, Recorder, UploadError, uploadAudio, type Take } from "@/components/recorder";
+import { clearDraft, postJson, Recorder, UploadError, uploadAudio, type DraftMeta, type Take } from "@/components/recorder";
 import type { LifeBlock } from "@/lib/types";
 import { InterviewProgress } from "../../_ui/InterviewProgress";
 import { localProgress, type InterviewProgressView } from "../../_ui/progress-line";
@@ -65,6 +65,16 @@ function bankView(q: (typeof QUESTIONS)[number]): QuestionView {
 
 const asQuestion = (q: QuestionView, extra: Partial<Current> = {}): Current => ({ question: q, prompt: q.ru, kind: "question", ...extra });
 
+/** #65: что кладём в черновик записи — чтобы восстановленная запись попала к своему вопросу. */
+function draftMetaOf(c: Current): DraftMeta {
+  return { questionId: c.question.id, block: c.question.block, kind: c.kind, mainStoryId: c.mainStoryId ?? null, prompt: c.prompt.slice(0, 300) };
+}
+
+/** Восстановленная запись — ответ на то, что сейчас на экране? */
+function sameQuestion(meta: DraftMeta, c: Current): boolean {
+  return meta.questionId === c.question.id && meta.kind === c.kind && (meta.mainStoryId ?? null) === (c.mainStoryId ?? null);
+}
+
 export function RecordFlow(props: {
   token: string;
   familyId: string;
@@ -75,6 +85,7 @@ export function RecordFlow(props: {
 }) {
   const { token, familyId, storyteller } = props;
   const storageKey = `ks:interview:${storyteller.id}`;
+  const draftKey = `story:${storyteller.id}`;
 
   const [phase, setPhase] = useState<Phase>("loading");
   const [current, setCurrent] = useState<Current | null>(null);
@@ -83,6 +94,9 @@ export function RecordFlow(props: {
   const [error, setError] = useState<string | null>(null);
   const [take, setTake] = useState(0); // ключ Recorder — новый вопрос = чистая запись
   const recording = useSpeechBlocked(); // #100: идёт запись — «Прослушать вопрос» недоступна
+  // #65: готовая, но не отправленная запись — «Пропустить» сначала переспрашивает
+  const [pending, setPending] = useState<Take | null>(null);
+  const [confirmSkip, setConfirmSkip] = useState<"skip" | "later" | null>(null);
 
   const session = useRef<string | null>(null); // null — идём по банку сами
   const local = useRef<{ done: Set<string>; later: string[] }>({ done: new Set(props.answeredQuestionIds), later: [] });
@@ -103,6 +117,8 @@ export function RecordFlow(props: {
   const show = useCallback(
     (c: Current | null, msg?: string | null) => {
       setMessage(msg ?? null);
+      setPending(null);
+      setConfirmSkip(null);
       if (!c) {
         setCurrent(null);
         setPhase("finished");
@@ -270,6 +286,26 @@ export function RecordFlow(props: {
     setError(null);
     const prev = current;
     const path = await uploadAudio({ token, storytellerId: storyteller.id, kind: "story", take: t, onProgress });
+    // #65: восстановленная запись к другому вопросу (интервью ушло дальше) — сохраняем к её вопросу, этот остаётся
+    if (t.restored && !sameQuestion(t.restored, prev)) {
+      const m = t.restored;
+      const str = (v: unknown) => (typeof v === "string" && v ? v : null);
+      const { storyId } = await postJson<{ storyId: string }>("/api/stories", token, {
+        storytellerId: storyteller.id,
+        path,
+        questionId: str(m.questionId),
+        block: str(m.block),
+        durationSec: t.durationSec || null,
+        sessionId: null,
+        parentStoryId: m.kind === "followup" ? str(m.mainStoryId) : null,
+      });
+      void drive(storyId);
+      await clearDraft(draftKey); // до новой чистой записи: она не должна снова найти этот черновик
+      setSaved(str(m.prompt) ? `Спасибо! Запись к вопросу «${str(m.prompt)}» сохранена.` : "Спасибо! Запись сохранена.");
+      setPending(null);
+      setTake((n) => n + 1); // чистая запись для вопроса на экране
+      return;
+    }
     const { storyId } = await postJson<{ storyId: string }>("/api/stories", token, {
       storytellerId: storyteller.id,
       path,
@@ -284,8 +320,12 @@ export function RecordFlow(props: {
     void advanceAfter(storyId, prev);
   }
 
-  async function skip(action: "skip" | "later") {
-    if (!current) return;
+  async function skip(action: "skip" | "later", confirmed = false) {
+    if (!current || recording) return;
+    if (pending && !confirmed) return setConfirmSkip(action);
+    if (pending) await clearDraft(draftKey);
+    setPending(null);
+    setConfirmSkip(null);
     stopSpeaking();
     setSaved(null);
     setError(null);
@@ -394,16 +434,46 @@ export function RecordFlow(props: {
             )}
           </section>
 
-          <Recorder key={take} onSend={onSend} sendLabel="Отправить рассказ" />
+          {pending?.restored && !sameQuestion(pending.restored, current) && typeof pending.restored.prompt === "string" && (
+            <p className="rounded-card bg-paper-deep p-4 text-ink-soft">Эта запись — ответ на вопрос «{pending.restored.prompt}». Она сохранится к нему.</p>
+          )}
 
-          <div className="mt-2 grid grid-cols-2 gap-3 border-t border-line pt-4">
-            <button type="button" onClick={() => void skip("skip")} className="rounded-button border border-line px-4 py-3 text-ink-soft">
-              Пропустить
-            </button>
-            <button type="button" onClick={() => void skip("later")} className="rounded-button border border-line px-4 py-3 text-ink-soft">
-              Вернуться позже
-            </button>
-          </div>
+          <Recorder key={take} onSend={onSend} sendLabel="Отправить рассказ" draftKey={draftKey} draftMeta={draftMetaOf(current)} onTakeChange={setPending} />
+
+          {confirmSkip ? (
+            <div className="mt-2 flex flex-col gap-3 rounded-card border border-warning/40 bg-paper p-4" role="alertdialog" aria-label="Запись не отправлена">
+              <p className="text-ink">Запись не отправлена. {confirmSkip === "later" ? "Вернуться к вопросу позже" : "Пропустить вопрос"} и удалить её?</p>
+              <div className="grid grid-cols-2 gap-3">
+                <button type="button" onClick={() => setConfirmSkip(null)} className="rounded-button bg-ink px-4 py-3 text-paper">
+                  Нет, отправлю
+                </button>
+                <button type="button" onClick={() => void skip(confirmSkip, true)} className="rounded-button border border-line px-4 py-3 text-ink-soft">
+                  Да, удалить
+                </button>
+              </div>
+            </div>
+          ) : (
+            <div className="mt-2 grid grid-cols-2 gap-3 border-t border-line pt-4">
+              {/* #65: во время записи пропустить нельзя — иначе запись сбрасывалась */}
+              <button
+                type="button"
+                onClick={() => void skip("skip")}
+                disabled={recording}
+                className="rounded-button border border-line px-4 py-3 text-ink-soft disabled:opacity-50"
+              >
+                Пропустить
+              </button>
+              <button
+                type="button"
+                onClick={() => void skip("later")}
+                disabled={recording}
+                className="rounded-button border border-line px-4 py-3 text-ink-soft disabled:opacity-50"
+              >
+                Вернуться позже
+              </button>
+              {recording && <p className="col-span-2 text-sm text-muted">Идёт запись — чтобы перейти к другому вопросу, сначала нажмите «Готово».</p>}
+            </div>
+          )}
         </>
       )}
     </main>

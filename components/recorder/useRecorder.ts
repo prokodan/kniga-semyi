@@ -3,9 +3,12 @@
 // - данные копятся кусками раз в секунду (start(1000)) — при обрыве есть всё до последней секунды;
 // - экран гаснет / вкладка сворачивается / пришёл звонок → ставим на паузу и честно говорим об этом;
 // - iOS отобрал микрофон (track ended) → завершаем запись с тем, что успели, и предлагаем прослушать;
-// - Wake Lock держит экран включённым во время записи (iOS 16.4+, Android Chrome).
+// - Wake Lock держит экран включённым во время записи (iOS 16.4+, Android Chrome);
+// - #65: с `draftKey` куски сразу пишутся в черновик на телефоне (draft.ts) — закрыли вкладку посреди записи или
+//   до отправки, при следующем открытии запись предлагается прослушать и отправить. Без `draftKey` — как раньше.
 import { useCallback, useEffect, useRef, useState } from "react";
-import { blobType, browserMime, isAppleWebKit } from "./mime";
+import { clearDraft, loadDraft, startDraft, type DraftMeta } from "./draft";
+import { blobType, browserMime, formatTime, isAppleWebKit } from "./mime";
 import { setSpeechBlocked, silenceSpeech } from "./silence";
 
 export type RecorderState = "idle" | "requesting" | "recording" | "paused" | "stopped" | "error";
@@ -16,11 +19,13 @@ export interface Take {
   mime: string;
   durationSec: number;
   source: "mic" | "file";
+  /** #65: запись восстановлена из черновика — что записал в него экран (вопрос и т. п.) */
+  restored?: DraftMeta;
 }
 
 type WakeLockSentinelLike = { release: () => Promise<void> };
 
-export function useRecorder({ maxSec = 300 }: { maxSec?: number } = {}) {
+export function useRecorder({ maxSec = 300, draftKey, draftMeta }: { maxSec?: number; draftKey?: string; draftMeta?: DraftMeta } = {}) {
   const [state, setState] = useState<RecorderState>("idle");
   const [elapsed, setElapsed] = useState(0);
   const [take, setTake] = useState<Take | null>(null);
@@ -35,6 +40,12 @@ export function useRecorder({ maxSec = 300 }: { maxSec?: number } = {}) {
   const timer = useRef<ReturnType<typeof setInterval> | null>(null);
   const wake = useRef<WakeLockSentinelLike | null>(null);
   const stopReason = useRef<"user" | "limit" | "interrupted">("user");
+  const metaRef = useRef<DraftMeta | undefined>(draftMeta);
+  const stateRef = useRef<RecorderState>("idle");
+  useEffect(() => {
+    metaRef.current = draftMeta;
+    stateRef.current = state;
+  });
 
   const now = () => performance.now();
 
@@ -149,9 +160,14 @@ export function useRecorder({ maxSec = 300 }: { maxSec?: number } = {}) {
     chunks.current = [];
     acc.current = 0;
     stopReason.current = "user";
+    const writer = draftKey ? startDraft(draftKey, blobType(r.mimeType || mime, apple), metaRef.current ?? {}) : null;
 
     r.ondataavailable = (e) => {
-      if (e.data && e.data.size > 0) chunks.current.push(e.data);
+      if (e.data && e.data.size > 0) {
+        chunks.current.push(e.data);
+        const sec = (acc.current + (segStart.current != null ? now() - segStart.current : 0)) / 1000;
+        writer?.append(e.data, sec, blobType(r.mimeType || mime, apple));
+      }
     };
     r.onerror = () => {
       setNotice("Запись прервалась. Мы сохранили то, что успели — прослушайте и отправьте или запишите заново.");
@@ -166,11 +182,13 @@ export function useRecorder({ maxSec = 300 }: { maxSec?: number } = {}) {
       const blob = new Blob(chunks.current, { type });
       cleanup();
       if (blob.size === 0) {
+        if (draftKey) void clearDraft(draftKey);
         setError("Запись не сохранилась. Попробуйте ещё раз или загрузите файл.");
         setState("error");
         return;
       }
       const durationSec = Math.round(acc.current / 100) / 10;
+      writer?.finish(durationSec, type);
       setElapsed(durationSec);
       setTake({ blob, url: URL.createObjectURL(blob), mime: type, durationSec, source: "mic" });
       if (stopReason.current === "limit") setNotice(`Прошло ${Math.round(maxSec / 60)} минут — запись остановлена. Продолжение можно записать следующим рассказом.`);
@@ -198,10 +216,11 @@ export function useRecorder({ maxSec = 300 }: { maxSec?: number } = {}) {
       setElapsed(sec);
       if (sec >= maxSec) stop("limit");
     }, 250);
-  }, [cleanup, maxSec, pause, requestWake, stop]);
+  }, [cleanup, draftKey, maxSec, pause, requestWake, stop]);
 
-  /** Выбросить дубль и вернуться к началу */
+  /** Выбросить дубль и вернуться к началу (и черновик — отправлен или «записать заново»). */
   const reset = useCallback(() => {
+    if (draftKey) void clearDraft(draftKey);
     setTake((t) => {
       if (t) URL.revokeObjectURL(t.url);
       return null;
@@ -210,10 +229,30 @@ export function useRecorder({ maxSec = 300 }: { maxSec?: number } = {}) {
     setError(null);
     setNotice(null);
     setState("idle");
-  }, []);
+  }, [draftKey]);
+
+  // #65: при открытии — незаконченная / неотправленная запись из черновика (только пока ничего не начато)
+  useEffect(() => {
+    if (!draftKey) return;
+    let alive = true;
+    void loadDraft(draftKey).then((d) => {
+      if (!alive || !d || stateRef.current !== "idle") return;
+      const url = URL.createObjectURL(d.blob);
+      setTake({ blob: d.blob, url, mime: d.mime, durationSec: d.durationSec, source: "mic", restored: d.meta });
+      setElapsed(d.durationSec);
+      setNotice(
+        `Нашли запись, которую вы не успели отправить${d.durationSec > 0 ? ` (${formatTime(d.durationSec)})` : ""}. Прослушайте и отправьте — или запишите заново.`,
+      );
+      setState("stopped");
+    });
+    return () => {
+      alive = false;
+    };
+  }, [draftKey]);
 
   /** Дубль из файла (диктофон, галерея) */
   const loadFile = useCallback((t: Take) => {
+    if (draftKey) void clearDraft(draftKey); // выбрали файл вместо записи — старый черновик больше не нужен
     setTake((old) => {
       if (old) URL.revokeObjectURL(old.url);
       return t;
@@ -222,7 +261,7 @@ export function useRecorder({ maxSec = 300 }: { maxSec?: number } = {}) {
     setError(null);
     setNotice(null);
     setState("stopped");
-  }, []);
+  }, [draftKey]);
 
   // #100: пока микрофон включается / идёт запись / пауза — озвучка заблокирована; иначе снова можно.
   const blockedByMe = useRef(false);

@@ -1,8 +1,12 @@
-// Выбор формата записи. Safari (и все браузеры на iOS — это WebKit) пишут audio/mp4 (AAC),
-// Chrome / Android — audio/webm;codecs=opus. Оба формата понимает расшифровка (Gemini / OpenAI).
+// Выбор формата записи. Safari (и все браузеры на iOS — это WebKit) пишут audio/mp4 (AAC).
+// #66: Chrome (Android, Windows, Mac; с версии 126) тоже умеет AAC в mp4 — берём его первым: такую запись играет
+// iPhone любой версии, а webm/opus из Chrome Safari до iOS 17 не играет. Не умеет AAC (старый Chrome, Firefox,
+// Chromium без кодеков) — webm/opus, как раньше. Голое «audio/mp4» в Chromium = Opus в mp4 (его старый iPhone тоже
+// не играет) — оно только в самом конце, после webm. Оба формата понимает расшифровка (Gemini / OpenAI).
 
-const WEBKIT_ORDER = ["audio/mp4;codecs=mp4a.40.2", "audio/mp4", "audio/aac", "audio/webm;codecs=opus", "audio/webm"];
-const DEFAULT_ORDER = ["audio/webm;codecs=opus", "audio/webm", "audio/ogg;codecs=opus", "audio/mp4;codecs=mp4a.40.2", "audio/mp4"];
+const AAC = "audio/mp4;codecs=mp4a.40.2";
+const WEBKIT_ORDER = [AAC, "audio/mp4", "audio/aac", "audio/webm;codecs=opus", "audio/webm"];
+const DEFAULT_ORDER = [AAC, "audio/webm;codecs=opus", "audio/webm", "audio/ogg;codecs=opus", "audio/mp4"];
 
 /** iPhone / iPad / Safari на Mac: движок WebKit без Chromium. */
 export function isAppleWebKit(ua: string, maxTouchPoints = 0): boolean {

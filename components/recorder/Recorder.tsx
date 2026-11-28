@@ -1,6 +1,7 @@
 "use client";
 // Кнопка записи с таймером, паузой, прослушиванием и запасным путём «загрузить файл».
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import type { DraftMeta } from "./draft";
 import { formatTime } from "./mime";
 import { fileDuration } from "./upload";
 import { useRecorder, type Take } from "./useRecorder";
@@ -16,10 +17,33 @@ export interface RecorderProps {
   startLabel?: string;
   /** Показывать «загрузить файл» */
   allowFile?: boolean;
+  /** #65: ключ черновика на телефоне (запись не теряется при закрытии вкладки). Без ключа — как раньше. */
+  draftKey?: string;
+  /** Что сохранить вместе с черновиком (вопрос), вернётся в `take.restored` */
+  draftMeta?: DraftMeta;
+  /** Готовый неотправленный дубль появился / пропал */
+  onTakeChange?: (take: Take | null) => void;
 }
 
-export function Recorder({ maxSec = 300, onSend, sendLabel = "Отправить", startLabel = "Начать запись", allowFile = true }: RecorderProps) {
-  const r = useRecorder({ maxSec });
+export function Recorder({
+  maxSec = 300,
+  onSend,
+  sendLabel = "Отправить",
+  startLabel = "Начать запись",
+  allowFile = true,
+  draftKey,
+  draftMeta,
+  onTakeChange,
+}: RecorderProps) {
+  const r = useRecorder({ maxSec, draftKey, draftMeta });
+  const ready = r.state === "stopped" ? r.take : null;
+  const onTakeRef = useRef(onTakeChange);
+  useEffect(() => {
+    onTakeRef.current = onTakeChange;
+  });
+  useEffect(() => {
+    onTakeRef.current?.(ready);
+  }, [ready]);
   const [sending, setSending] = useState(false);
   const [progress, setProgress] = useState(0);
   const [sendError, setSendError] = useState<string | null>(null);
