@@ -14,6 +14,7 @@ export const metadata: Metadata = { title: "Словарь имён · Книг�
 // /f/<токен>/names — словарь имён семьи (#104): люди, места и особые слова книги в одном месте.
 // Исправили написание здесь — оно меняется во всех главах, перевод этих глав (второй язык книги) обновляется.
 // #299: корейские подписи и поле «По-корейски» — только у книги RU + KR; RU + KZ — «казахский перевод», только RU — без перевода.
+// #311: RU + KZ (флаг lang_kk — внутри familyBookLangs) — у людей и мест поле «По-казахски» (name_kk).
 export default async function NamesPage({ params }: { params: Promise<{ token: string }> }) {
   const { token } = await params;
   const view = await getFamilyByToken(token);
@@ -71,7 +72,7 @@ export default async function NamesPage({ params }: { params: Promise<{ token: s
         </Link>
       )}
 
-      <NamesEditor token={token} entities={entities} chapters={refs} ko={ko} />
+      <NamesEditor token={token} entities={entities} chapters={refs} ko={ko} kk={langs.includes("kk")} />
     </main>
   );
 }

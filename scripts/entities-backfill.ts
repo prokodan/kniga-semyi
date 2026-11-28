@@ -1,9 +1,11 @@
 // #102: словарь семьи (family_entities) для уже собранных глав — без ИИ, из facts и текста готовых глав
 // (та же логика, что при сборке новой главы: lib/pipeline/entities.ts). Демо-семью не трогает.
 // Повторный запуск безопасен: имена сливаются, записи source='family' не меняются (только story_ids).
+// #245: текст глав — story_texts, если строка есть, иначе колонки.
 // Запуск: Actions → entities-backfill (families: короткие id или all; apply). По умолчанию — dry run.
 import { appendFileSync } from "node:fs";
 import type { FamilyEntity, Story } from "@/lib/types";
+import { chapterText, type StoryTextRow } from "@/lib/book/texts";
 import { entitiesFromChapter, mergeEntities } from "@/lib/pipeline/entities";
 
 const SB = (process.env.NEXT_PUBLIC_SUPABASE_URL ?? "").replace(/\/+$/, "");
@@ -16,6 +18,18 @@ async function rest<T>(path: string, init: RequestInit = {}): Promise<T> {
   const res = await fetch(`${SB}/rest/v1/${path}`, { ...init, headers: { ...H, ...(init.headers ?? {}) } });
   if (!res.ok) throw new Error(`${path.split("?")[0]}: HTTP ${res.status} ${(await res.text()).slice(0, 160)}`);
   return (res.status === 204 ? null : await res.json()) as T;
+}
+
+/** #245: story_texts глав (по 100 id за запрос); нет таблицы / ошибка — пусто: читаем колонки, как раньше. */
+async function storyTexts(ids: readonly string[]): Promise<StoryTextRow[]> {
+  const rows: StoryTextRow[] = [];
+  try {
+    for (let i = 0; i < ids.length; i += 100)
+      rows.push(...(await rest<StoryTextRow[]>(`story_texts?select=story_id,lang,title,text,quote&story_id=in.(${ids.slice(i, i + 100).join(",")})`)));
+  } catch {
+    return [];
+  }
+  return rows;
 }
 
 async function main() {
@@ -32,9 +46,14 @@ async function main() {
   log("| семья | глав | было записей | + новых | обновлено | люди / места / слова после |");
   log("|---|---|---|---|---|---|");
   for (const fam of families) {
-    const chapters = await rest<Pick<Story, "id" | "text_ru" | "facts">[]>(
+    const rawChapters = await rest<Pick<Story, "id" | "text_ru" | "facts">[]>(
       `stories?select=id,text_ru,facts&family_id=eq.${fam.id}&status=eq.ready&parent_story_id=is.null&text_ru=not.is.null&order=created_at.asc&limit=500`,
     );
+    const texts = await storyTexts(rawChapters.map((c) => c.id));
+    const chapters = rawChapters.map((c) => ({
+      ...c,
+      text_ru: chapterText({ ...c, title: null, quote: null, title_ko: null, quote_ko: null, text_ko: null }, texts, "ru").text,
+    }));
     let list = await rest<FamilyEntity[]>(`family_entities?select=*&family_id=eq.${fam.id}&limit=1000`);
     const before = list.length;
     let added = 0;

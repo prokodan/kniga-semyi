@@ -6,6 +6,7 @@ import "server-only";
 import { DEMO_STORAGE_PREFIX } from "@/fixtures/demo/family";
 import { DEMO_TALE_ART } from "@/fixtures/demo/tale-art";
 import { ai, AiUnavailableError } from "@/lib/ai";
+import { loadStoryTexts, withStoryTexts } from "@/lib/book/texts";
 import { BUCKETS, getDbOrNull } from "@/lib/db";
 import { getFamilyStore, MemoryFamilyStore } from "@/lib/db/access";
 import type { Extra, Story, Storyteller } from "@/lib/types";
@@ -67,7 +68,10 @@ async function loadSource(familyId: string): Promise<TaleSource> {
   ]);
   if (st.error) throw new Error(`рассказчик: ${st.error.message}`);
   if (stories.error) throw new Error(`главы: ${stories.error.message}`);
-  return { storyteller: (st.data?.[0] as { name: string }) ?? null, stories: (stories.data ?? []) as Story[] };
+  // #245: текст глав — story_texts, если строка есть, иначе колонки (одна загрузка на запрос)
+  const list = (stories.data ?? []) as Story[];
+  const texts = await loadStoryTexts(db, list.map((s) => s.id));
+  return { storyteller: (st.data?.[0] as { name: string }) ?? null, stories: list.map((s) => withStoryTexts(s, texts)) };
 }
 
 // ---------------- строка extras и картинки ----------------

@@ -122,6 +122,8 @@ for (const c of CASES) {
       await expect(page.getByRole("heading", { name: "Словарь имён" })).toBeVisible();
       await expect(page.getByText("По-корейски")).toHaveCount(0);
       await expect(page.getByPlaceholder("По-корейски (если знаете)")).toHaveCount(0);
+      // #311: RU + KZ — казахское написание человека / места; только RU — поля нет
+      await expect(page.getByPlaceholder("По-казахски (если знаете)")).toHaveCount(c.phrase ? 1 : 0);
       await noKorean(page, "словарь");
       await shot(page, `${c.id}-05-names`);
 
@@ -157,6 +159,7 @@ test("демо RU + KR: корейские подписи на месте", asyn
   await page.goto(`/f/${token}/names`);
   await expect(page.getByText("а корейский перевод этих глав обновится сам")).toBeVisible();
   await expect(page.getByText("· 이름 사전")).toBeVisible();
+  await expect(page.getByPlaceholder("По-казахски (если знаете)")).toHaveCount(0); // #311: RU + KR — как было
 
   await page.goto(`/book/${token}`);
   await expect(page.getByText("우리 이야기", { exact: true })).toBeVisible();

@@ -1,10 +1,12 @@
 import "server-only";
 // Хранилище словаря (#104): таблица family_entities (миграция #118) и главы stories.
 // Supabase (service-ключ) — прод; без него — память процесса (локальный запуск, mock).
+// #245: текст глав — по правилу story_texts → колонки (withStoryTexts, одна загрузка на запрос); пишем по-прежнему
+// в колонки stories (триггер stories_mirror_texts держит story_texts в ногу).
+import { loadStoryTexts, withStoryTexts } from "@/lib/book/texts";
 import { getDbOrNull } from "@/lib/db";
 import { MemoryInterviewRepo } from "@/lib/interview/repo";
-import type { FamilyEntity } from "@/lib/types";
-import { EntityError, type ChapterPatch, type ChapterText, type EntityRepo, type NewEntity } from "./service";
+import { EntityError, type ChapterPatch, type ChapterText, type EntityRepo, type EntityRow, type NewEntity } from "./service";
 
 const CHAPTER_FIELDS = "id, status, title, quote, text_ru, title_ko, quote_ko, text_ko, created_at";
 
@@ -16,22 +18,22 @@ function conflict(e: { code?: string; message: string }): Error {
 export class SupabaseEntityRepo implements EntityRepo {
   constructor(private readonly db: NonNullable<ReturnType<typeof getDbOrNull>>) {}
 
-  async list(familyId: string): Promise<FamilyEntity[]> {
+  async list(familyId: string): Promise<EntityRow[]> {
     const { data, error } = await this.db.from("family_entities").select("*").eq("family_id", familyId);
     if (error) throw conflict(error);
-    return (data ?? []) as FamilyEntity[];
+    return (data ?? []) as EntityRow[];
   }
 
-  async insert(row: NewEntity): Promise<FamilyEntity> {
+  async insert(row: NewEntity): Promise<EntityRow> {
     const { data, error } = await this.db.from("family_entities").insert(row).select("*").single();
     if (error || !data) throw conflict(error ?? { message: "нет данных" });
-    return data as FamilyEntity;
+    return data as EntityRow;
   }
 
-  async update(id: string, patch: Partial<NewEntity>): Promise<FamilyEntity> {
+  async update(id: string, patch: Partial<NewEntity>): Promise<EntityRow> {
     const { data, error } = await this.db.from("family_entities").update(patch).eq("id", id).select("*").single();
     if (error || !data) throw conflict(error ?? { message: "нет данных" });
-    return data as FamilyEntity;
+    return data as EntityRow;
   }
 
   async remove(id: string): Promise<void> {
@@ -48,7 +50,9 @@ export class SupabaseEntityRepo implements EntityRepo {
       .neq("status", "skipped")
       .order("created_at", { ascending: true });
     if (error) throw new Error(`главы: ${error.message}`);
-    return (data ?? []) as ChapterText[];
+    const chapters = (data ?? []) as ChapterText[];
+    const texts = await loadStoryTexts(this.db, chapters.map((c) => c.id));
+    return chapters.map((c) => withStoryTexts(c, texts));
   }
 
   async saveChapter(id: string, patch: ChapterPatch): Promise<void> {
@@ -60,12 +64,12 @@ export class SupabaseEntityRepo implements EntityRepo {
   }
 }
 
-const g = globalThis as { __interviewMemoryRepo?: MemoryInterviewRepo; __entityMemory?: Map<string, FamilyEntity> };
+const g = globalThis as { __interviewMemoryRepo?: MemoryInterviewRepo; __entityMemory?: Map<string, EntityRow> };
 
 /** Память процесса: те же истории, что у конвейера и правки главы (components/draft/save.ts). */
 export class MemoryEntityRepo implements EntityRepo {
   constructor(
-    readonly rows: Map<string, FamilyEntity> = (g.__entityMemory ??= new Map()),
+    readonly rows: Map<string, EntityRow> = (g.__entityMemory ??= new Map()),
     readonly stories: MemoryInterviewRepo = (g.__interviewMemoryRepo ??= new MemoryInterviewRepo()),
   ) {}
 
@@ -73,7 +77,7 @@ export class MemoryEntityRepo implements EntityRepo {
     return structuredClone([...this.rows.values()].filter((r) => r.family_id === familyId));
   }
 
-  private clash(row: Pick<FamilyEntity, "id" | "family_id" | "name_ru">) {
+  private clash(row: Pick<EntityRow, "id" | "family_id" | "name_ru">) {
     for (const r of this.rows.values()) {
       if (r.id !== row.id && r.family_id === row.family_id && r.name_ru.toLowerCase() === row.name_ru.toLowerCase()) {
         throw new EntityError("conflict", "Такое имя уже есть в словаре — объедините записи");
@@ -82,7 +86,7 @@ export class MemoryEntityRepo implements EntityRepo {
   }
 
   async insert(row: NewEntity) {
-    const e: FamilyEntity = { ...row, id: crypto.randomUUID(), updated_at: new Date().toISOString() };
+    const e: EntityRow = { ...row, id: crypto.randomUUID(), updated_at: new Date().toISOString() };
     this.clash(e);
     this.rows.set(e.id, e);
     return structuredClone(e);

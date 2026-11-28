@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { loadChapter } from "@/lib/book/chapter";
+import { AdditionBanner } from "@/components/chapter/AdditionBanner";
 import { DraftEditor } from "@/components/draft/DraftEditor";
 import { familyBookLangsById } from "@/lib/pipeline/book-langs";
 import { langUi } from "@/lib/pipeline/langs";
@@ -51,6 +52,8 @@ export default async function DraftPage({
           {`ИИ мог ошибиться в именах, названиях мест и датах. Поправьте их здесь${ui ? ` — ${ui.name} перевод обновится сам.` : "."}`}
         </p>
       </header>
+
+      <AdditionBanner story={story} token={token} place="draft" />
 
       {editable ? (
         <DraftEditor

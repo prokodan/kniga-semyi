@@ -51,6 +51,13 @@ const DEFS = {
     owner: "Данил",
     issue: 235,
   },
+  followup_addition: {
+    description:
+      "Плашка «Есть новое дополнение — пересобрать?» #320 на странице главы и черновика: ответ на уточнение дописан, а в тексте " +
+      "главы его нет (глава старая или поправлена семьёй) — кнопка пересобирает главу с дополнением, правленой главе — предупреждение.",
+    owner: "Влад",
+    issue: 320,
+  },
 } as const satisfies Record<string, FlagInfo>;
 
 export type FlagName = keyof typeof DEFS;

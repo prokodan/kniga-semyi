@@ -221,6 +221,63 @@ describe("словарь имён: добавить и объединить", ()
   });
 });
 
+describe("#311 словарь имён: казахское написание (книга RU + KZ)", () => {
+  it("правка name_kk → главы с этим именем переводим на казахский заново, остальные не трогаем", async () => {
+    const drop = vi.fn(async (id: string) => void id);
+    const kk = createEntityService({ repo, markBookOutdated: outdated, dropTranslations: drop });
+    const vova = repo.entity({ name_ru: "Вова", name_ko: "보바", story_ids: ["s1"] });
+    const r = await kk.edit(FAM, vova.id, { name_kk: "Вова" }, { kk: true });
+
+    expect(r.retranslate).toEqual(["s1", "s2"]); // s3 — только части других слов, s4 — ещё собирается, x1 — другая семья
+    expect(drop.mock.calls.map((c) => c[0])).toEqual(["s1", "s2"]);
+    expect(repo.saves).toEqual([
+      { id: "s1", patch: { status: "translating", error: null } },
+      { id: "s2", patch: { status: "translating", error: null } },
+    ]);
+    expect(repo.stories.get("s1")!.text_ru).toBe("С Вовой мы жили на одной улице. Вовка — так его звала мать. У Вовы был ЗИЛ.");
+    expect(r.entity).toEqual(expect.objectContaining({ name_kk: "Вова", source: "family" }));
+    expect(r.koFix).toBeNull();
+    expect(outdated).toHaveBeenCalledWith(FAM);
+  });
+
+  it("то же написание или слово — без перевода; новое RU — kk этих глав снимается вместе с остальным", async () => {
+    const drop = vi.fn(async (id: string) => void id);
+    const kk = createEntityService({ repo, markBookOutdated: outdated, dropTranslations: drop });
+    const word = repo.entity({ name_ru: "Вова", kind: "word" });
+    expect((await kk.edit(FAM, word.id, { name_kk: "Бова" }, { kk: true })).retranslate).toEqual([]);
+    repo.rows.delete(word.id);
+
+    const vova = repo.entity({ name_ru: "Вова", name_kk: "Вова" } as Parameters<typeof repo.entity>[0]);
+    expect((await kk.edit(FAM, vova.id, { name_kk: "Вова" }, { kk: true })).retranslate).toEqual([]);
+    expect(drop).not.toHaveBeenCalled();
+
+    const r = await kk.edit(FAM, vova.id, { name_ru: "Володя" }, { kk: true });
+    expect(r.retranslate).toEqual(["s1", "s2"]);
+    expect(drop.mock.calls.map((c) => c[0])).toEqual(["s1", "s2"]);
+  });
+
+  it("без опции kk (RU + KR) name_kk не читается и не пишется, переводы kk не трогаем", async () => {
+    const drop = vi.fn(async (id: string) => void id);
+    const ko = createEntityService({ repo, markBookOutdated: outdated, dropTranslations: drop });
+    const vova = repo.entity({ name_ru: "Вова", name_ko: "보바" });
+    const r = await ko.edit(FAM, vova.id, { name_kk: "Вова" });
+    expect(r.retranslate).toEqual([]);
+    expect(r.entity).not.toHaveProperty("name_kk");
+    const added = await ko.add(FAM, { name_ru: "Ерлан", name_kk: "Ерлан" });
+    expect(added.entity).not.toHaveProperty("name_kk");
+    await ko.edit(FAM, vova.id, { name_ru: "Володя" });
+    expect(drop).not.toHaveBeenCalled();
+  });
+
+  it("объединение у RU + KZ: казахское написание остающейся записи, иначе — убранной", async () => {
+    const kk = createEntityService({ repo, markBookOutdated: outdated, dropTranslations: async () => {} });
+    const a = repo.entity({ name_ru: "Вова", name_kk: "Бова" } as Parameters<typeof repo.entity>[0]);
+    const b = repo.entity({ name_ru: "Володя" });
+    const r = await kk.merge(FAM, a.id, b.id, { kk: true });
+    expect(r.entity).toEqual(expect.objectContaining({ name_ru: "Володя", name_kk: "Бова" }));
+  });
+});
+
 // Тип Story должен содержать поля ChapterText — иначе репозиторий Supabase отдаст не то.
 const _check: ChapterText = {} as Pick<Story, keyof ChapterText>;
 void _check;

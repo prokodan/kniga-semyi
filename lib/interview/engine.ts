@@ -122,6 +122,9 @@ interface PrePick {
   pick: NonNullable<AiOutput<"completeness">["next"]>;
 }
 
+/** #321: отметка уточнения «семья ушла» — давно в прошлом, конвейер главу не держит (holdsStory). */
+export const LEFT_AT = new Date(0).toISOString();
+
 const PHRASES = {
   greeting: "Здравствуйте! Мы будем просто разговаривать — отвечайте, как вам удобно. Любой вопрос можно пропустить.",
   // #108: рассказчик уже отвечал раньше — продолжаем с первого неотвеченного вопроса
@@ -198,6 +201,11 @@ export function createInterview(deps: InterviewDeps) {
     async skip(sessionId: string, action: "skip" | "later", opts: { token?: string; storyId?: string } = {}): Promise<AnswerResult> {
       return withSession(sessionId, (core, session) => core.skip(sessionId, action, opts, session));
     },
+
+    /** #321: семья закрыла страницу записи на уточнении — не держать главу. */
+    async leave(sessionId: string, opts: { token?: string } = {}): Promise<{ storyId: string | null }> {
+      return withSession(sessionId, (core, session) => core.leave(sessionId, opts, session));
+    },
   };
 }
 
@@ -231,6 +239,20 @@ function createCore(deps: InterviewDeps, bank: QuestionBank) {
     } catch (e) {
       console.warn("[interview] глава после уточнения:", (e as Error).message);
       return storyId;
+    }
+  }
+
+  /**
+   * #320: ответ дописан в followups, а глава уже собрана — в её тексте дополнения нет. Отметка для плашки
+   * «Есть новое дополнение — пересобрать?»; свежую главу интервью и так отпустит на пересборку — тогда отметку
+   * снимет миграция-триггер (text_ru → null). Отдельной записью: до migrate колонки нет — ответ не теряется.
+   */
+  async function markAddition(story: Story) {
+    if (!story.text_ru || story.addition_pending) return;
+    try {
+      await repo.updateStory(story.id, { addition_pending: true });
+    } catch (e) {
+      console.warn("[interview] отметка дополнения:", (e as Error).message);
     }
   }
 
@@ -766,6 +788,7 @@ function createCore(deps: InterviewDeps, bank: QuestionBank) {
           const followups = [...(main.followups ?? []), entry];
           await repo.updateStory(main.id, { followups });
           main = { ...main, followups };
+          await markAddition(main);
         }
         // Голосовой ответ на уточнение — отдельная запись; помечаем её, чтобы конвейер (I2) не делал из неё главу.
         if (incoming && incoming.id !== main.id && !incoming.parent_story_id) {
@@ -833,6 +856,28 @@ function createCore(deps: InterviewDeps, bank: QuestionBank) {
         wasBlockDone,
         answeringFollowup,
       });
+    },
+
+    /**
+     * #321: семья закрыла страницу записи на уточнении (pagehide / visibilitychange → sendBeacon). Держать главу
+     * больше незачем: отметка уточнения становится «давней» — конвейер (interviewHold, FOLLOWUP_IDLE_MS) собирает
+     * главу сразу, а не через 5 мин. Вопрос и уточнение остаются: вернулись и ответили — свежая глава пересоберётся
+     * с ответом (как сейчас). Возвращает основную историю, которую стоит подтолкнуть, или null.
+     */
+    async leave(sessionId: string, opts: { token?: string } = {}, pre?: Session | null): Promise<{ storyId: string | null }> {
+      const session = pre !== undefined ? pre : await repo.getSession(sessionId);
+      if (!session) throw new InterviewError("not_found", "Сессия не найдена");
+      if (opts.token !== undefined && !(await repo.checkFamilyToken(session.family_id, opts.token))) {
+        throw new InterviewError("forbidden", "Ссылка семьи не подходит к этой сессии");
+      }
+      const state = structuredClone(session.state ?? {}) as SessionState;
+      const storyId = state.current_story_id ?? null;
+      if (session.ended_at || state.finished || !state.pending_followup || !storyId) return { storyId: null };
+      if (state.followup_at !== LEFT_AT) {
+        state.followup_at = LEFT_AT;
+        await repo.saveState(sessionId, state);
+      }
+      return { storyId };
     },
 
     /**
