@@ -99,6 +99,8 @@ export const KZ_GLOSSARY: KzTerm[] = [
   { kk: "Үштөбе", ru: ["уштобе"], meaning: "Уштобе", section: "place", not: ["Уштобе", "Үштобе"] },
   { kk: "Тараз", ru: ["тараз", "джамбул", "жамбыл"], meaning: "Тараз (Джамбул)", section: "place" },
   { kk: "Майқұдық", ru: ["майкудук"], meaning: "Майкудук (Караганда)", section: "place", unsure: true },
+  // ── из отзывов носителей (#354: quality-propose дописывает сюда и строку в prompts/translate.kk.md; слияние — после eval) ──
+  // quality-propose: новые термины из отзывов носителей — над этой строкой
 ];
 
 /** Родство → отношение древа (#235): для CulturePack.kinship */

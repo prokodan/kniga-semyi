@@ -1,0 +1,93 @@
+name: quality-propose
+
+# #354 (docs/v2/QUALITY_LOOP.md §5.2–5.3, §6): разбор отзывов проверяющих и предложения правок — только staging.
+#   action propose  — новые находки пары (и компонента) → патч ТОЛЬКО в разрешённых файлах (prompts/translate.<язык>.md,
+#                     content/packs/*, eval/kk-check.ts, eval/kr-check.ts, eval/golden/<пара>.jsonl) → ветка
+#                     quality/<пара>-<YYYYMMDD> → PR «какие отзывы → что меняем» (+ «Флаг: не нужен — …»);
+#                     маршруты моделей и то, что словами не правится, — issues. quality_proposals: draft → eval.
+#   action digest   — разбор новых отзывов (то же, что pg_cron раз в час), без лимита функции 60 с.
+#   action selftest — вымышленная ссылка с 3 правками носителя → разбор → находки → propose (PR «[самопроверка Q3]»).
+# Запуск: кнопка «Предложить правку» во вкладке «Находки» (/admin/quality/findings, staging), сам — после разбора при ≥ 3
+# новых находках одного компонента, или «Run workflow». Сам ничего не сливает: слияние — «Одобрить» (Q4 #355) или человек.
+# Токен PR: секрет QUALITY_BOT_TOKEN (PAT / токен приложения: contents + pull requests + issues: write) — тогда на PR
+# пойдут ci / e2e / flag-line / eval; без него — GITHUB_TOKEN: PR откроется, но проверки GitHub сам не запустит.
+# Ключи ИИ (digest / selftest): STAGING_OPENAI_API_KEY / STAGING_GEMINI_API_KEY, нет — общие (как quality-run).
+on:
+  workflow_dispatch:
+    inputs:
+      action:
+        description: "propose — PR по находкам; digest — разобрать новые отзывы; selftest — вымышленная ссылка → разбор → PR"
+        type: choice
+        options: [propose, digest, selftest]
+        default: propose
+      target:
+        description: "Только staging (прод семей контур качества не трогает)"
+        type: choice
+        options: [staging]
+        default: staging
+      pair:
+        description: "Языковая пара"
+        type: choice
+        options: [ru-kk, ru-ko, kk-ru]
+        default: ru-kk
+      component:
+        description: "Только этот компонент (prompt, glossary, check_rule, names, model_route); пусто — все новые находки пары"
+        default: ""
+      ids:
+        description: "Только эти находки (начало uuid через запятую)"
+        default: ""
+      trigger:
+        description: "Кто запустил (button | auto | manual) — пишется в quality_proposals"
+        default: manual
+      daily_usd:
+        description: "Лимит $ на разбор за сутки (digest / selftest)"
+        default: "3"
+      dry:
+        description: "Пробный запуск: план патча в Summary, без ветки, PR и issues"
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write
+
+concurrency:
+  group: quality-propose-${{ inputs.pair }}
+  cancel-in-progress: false
+
+jobs:
+  propose:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      NEXT_TELEMETRY_DISABLED: "1"
+      QUALITY_TARGET: staging
+      QUALITY_ACTION: ${{ inputs.action }}
+      QUALITY_PAIR: ${{ inputs.pair }}
+      QUALITY_COMPONENT: ${{ inputs.component }}
+      QUALITY_IDS: ${{ inputs.ids }}
+      QUALITY_TRIGGER: ${{ inputs.trigger }}
+      QUALITY_DIGEST_DAILY_USD: ${{ inputs.daily_usd || '3' }}
+      QUALITY_DRY: ${{ inputs.dry && '1' || '' }}
+      NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.STAGING_SUPABASE_URL }}
+      SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.STAGING_SUPABASE_SERVICE_ROLE_KEY }}
+      GEMINI_API_KEY: ${{ secrets.STAGING_GEMINI_API_KEY || secrets.GEMINI_API_KEY }}
+      OPENAI_API_KEY: ${{ secrets.STAGING_OPENAI_API_KEY || secrets.OPENAI_API_KEY }}
+      GH_TOKEN: ${{ secrets.QUALITY_BOT_TOKEN || github.token }}
+      HAS_BOT_TOKEN: ${{ secrets.QUALITY_BOT_TOKEN != '' && '1' || '' }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          token: ${{ secrets.QUALITY_BOT_TOKEN || github.token }}
+      - name: Секреты staging и режим ИИ
+        run: |
+          if [ -z "$NEXT_PUBLIC_SUPABASE_URL" ] || [ -z "$SUPABASE_SERVICE_ROLE_KEY" ]; then echo "::error::Нет секретов STAGING_SUPABASE_URL / STAGING_SUPABASE_SERVICE_ROLE_KEY"; exit 1; fi
+          if [ -n "$GEMINI_API_KEY$OPENAI_API_KEY" ]; then echo "AI_MODE=auto" >> "$GITHUB_ENV"; else echo "AI_MODE=mock" >> "$GITHUB_ENV"; fi
+          if [ -z "$HAS_BOT_TOKEN" ]; then echo "Токен PR: GITHUB_TOKEN (нет QUALITY_BOT_TOKEN — проверки на PR сами не запустятся)" >> "$GITHUB_STEP_SUMMARY"; fi
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npx tsx scripts/quality-propose.ts

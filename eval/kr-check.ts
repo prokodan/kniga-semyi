@@ -403,6 +403,29 @@ function styleFlagsQuestion(item: KrItem): KrFlag[] {
   return flags;
 }
 
+/**
+ * #354 (Q3): неверные формы из отзывов носителей «неверно → верно». Строки дописывает quality-propose (PR quality/ru-ko-…,
+ * слияние — только после eval «до / после» без ухудшений); руками тоже можно. Флажок `review` 🟡 — по вхождению в текст.
+ */
+export interface ReviewRule {
+  wrong: string;
+  right: string;
+  note: string;
+  /** Начало id находки quality_findings */
+  finding?: string;
+}
+export const REVIEW_RULES_KO: ReviewRule[] = [
+  // quality-propose: новые правила — над этой строкой
+];
+
+export function reviewRuleFlags(item: KrItem, rules: readonly ReviewRule[] = REVIEW_RULES_KO): KrFlag[] {
+  const flags: KrFlag[] = [];
+  for (const r of rules)
+    if (r.wrong && item.text_ko.includes(r.wrong))
+      flags.push({ id: item.id, source: "rule", rule: "review", ko: r.wrong, issue: `${r.wrong} → ${r.right} (${r.note})`, severity: "minor" });
+  return flags;
+}
+
 /** Все правила без ИИ для одного текста. */
 export function checkItem(item: KrItem, glossary: GlossaryEntry[]): KrFlag[] {
   const flags: KrFlag[] = [];
@@ -412,7 +435,7 @@ export function checkItem(item: KrItem, glossary: GlossaryEntry[]): KrFlag[] {
     flags.push({ id: item.id, source: "rule", rule: "quote", ko: item.quote_ko.slice(0, 40), issue: "цитата quote_ko не совпадает с фразой в тексте", severity: "major" });
   flags.push(...glossaryFlags(item, glossary), ...yearFlags(item));
   if (item.kind === "chapter") flags.push(...parenFlags(item, glossary), ...parentsFlags(item));
-  flags.push(...rieulFlags(item), ...bieupFlags(item));
+  flags.push(...rieulFlags(item), ...bieupFlags(item), ...reviewRuleFlags(item));
   flags.push(...(item.kind === "chapter" ? styleFlagsChapter(item) : styleFlagsQuestion(item)));
   return flags;
 }

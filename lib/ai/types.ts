@@ -17,6 +17,8 @@ export const AI_STEPS = [
   "back_translate",
   // #352 (v2 Q1): банк проверок контура качества — вымышленные личности и тексты с нюансами (только /admin/quality, staging).
   "quality_generate",
+  // #354 (v2 Q3): разбор отзывов проверяющих → находки по компонентам (только /admin/quality, staging).
+  "quality_analyze",
 ] as const;
 export type AiStep = (typeof AI_STEPS)[number];
 
@@ -214,6 +216,35 @@ export const inputSchemas = {
     /** Номер параллельного вызова — разный вход, разный ключ кэша, разные ответы */
     variant: z.number().int().min(0).max(20).default(0),
   }),
+  quality_analyze: z.object({
+    /** Языковая пара «откуда-куда»: ru-ko, ru-kk, kk-ru */
+    pair: z.string().regex(/^[a-z]{2}-[a-z]{2}$/),
+    /** Тексты ссылки с отзывами проверяющего (только вымышленные: банк, eval, демо) */
+    items: z
+      .array(
+        z.object({
+          /** Номер текста в этом вызове: i0, i1… — им модель помечает находки */
+          ref: z.string().max(8),
+          title: z.string().max(200).default(""),
+          source: z.string().max(6000),
+          model: z.string().max(6000),
+          /** Правки абзацев: перевод модели → правка носителя */
+          edits: z
+            .array(z.object({ paragraph: z.number().int().min(0), source: z.string().max(2000).default(""), before: z.string().max(2000), after: z.string().max(2000) }))
+            .max(20)
+            .default([]),
+          /** Фокус-слова, которые проверяющий отметил «неверно → как правильно» */
+          terms: z.array(z.object({ term: z.string().max(80), hint: z.string().max(120).default(""), fix: z.string().max(120).default("") })).max(8).default([]),
+          /** Оценки 1–5 по осям (meaning, natural, respect, names, grammar) */
+          ratings: z.record(z.string(), z.number()).default({}),
+          comment: z.string().max(2000).default(""),
+        }),
+      )
+      .min(1)
+      .max(6),
+    /** Уже найденное по паре (не слитое в PR) — чтобы модель помечала дубли (duplicate_of) */
+    known: z.array(z.object({ id: z.string().max(40), component: z.string().max(20), summary: z.string().max(400) })).max(40).default([]),
+  }),
 } satisfies Record<AiStep, z.ZodType>;
 
 /** #231: { text, title, quote } (перевод на kk / ru) → { text_ko, title_ko, quote_ko }; ответ с text_ko — как есть. */
@@ -349,6 +380,36 @@ export const outputSchemas = {
         .default([]),
     })
     .refine((o) => o.personas.length + o.texts.length > 0, "quality_generate: пустой ответ"),
+  // #354: находки разбора. Пустой список — нормальный ответ (отзыв без ошибок перевода). Неизвестное — отбрасываем.
+  quality_analyze: z.object({
+    findings: z
+      .array(
+        z.object({
+          /** ref текста из входа */
+          item: z.string().max(8),
+          /** Что чинить: промпт перевода, глоссарий, правило проверки (kk-check / kr-check), словарь имён, маршрут модели */
+          component: z.enum(["prompt", "glossary", "check_rule", "names", "model_route"]),
+          severity: z.enum(["minor", "major", "critical"]).catch("minor"),
+          summary: z.string().min(3).max(400),
+          /** Доказательства из отзыва: было (перевод модели) → стало (правка носителя) */
+          evidence: z.array(z.object({ before: z.string().max(600).default(""), after: z.string().max(600).default(""), note: z.string().max(300).default("") })).max(4).default([]),
+          /** id из known, если это та же ошибка */
+          duplicate_of: z.string().max(40).nullable().default(null),
+          /** Как чинить: правило в промпт, термин глоссария, правило проверки «неверно → верно», имя, маршрут */
+          fix: z
+            .object({
+              kind: z.enum(["prompt_rule", "glossary", "check_rule", "name", "route", "none"]).catch("none"),
+              rule: z.string().max(400).default(""),
+              src: z.string().max(120).default(""),
+              wrong: z.string().max(120).default(""),
+              right: z.string().max(120).default(""),
+            })
+            .default({ kind: "none", rule: "", src: "", wrong: "", right: "" }),
+        }),
+      )
+      .max(24)
+      .default([]),
+  }),
 } satisfies Record<AiStep, z.ZodType>;
 
 export type AiInput<S extends AiStep> = z.input<(typeof inputSchemas)[S]>;
