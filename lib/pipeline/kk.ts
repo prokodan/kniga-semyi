@@ -13,8 +13,11 @@ import { rankEntities, sameEntity } from "./entities";
 import type { NamePair, Translated } from "./names";
 
 export interface KkFix {
-  /** script — алфавит, style — обращение к внукам, name — написание имени по словарю семьи, russian — русское слово (#315) */
-  kind: "script" | "style" | "name" | "russian";
+  /**
+   * script — алфавит, style — обращение к внукам, name — написание имени по словарю семьи, russian — русское слово (#315),
+   * kinship — родство рассказчика («апам» оригинала стала «әже…», #343)
+   */
+  kind: "script" | "style" | "name" | "russian" | "kinship";
   from: string;
   to: string;
 }
@@ -324,13 +327,85 @@ export function fixRussianKk(text: string, ru = ""): { text: string; fixed: KkFi
   return { text: out, fixed };
 }
 
+// ── 4б. Родство рассказчика (#343) ──────────────────────────────────────────
+// Рассказчик ru+kk зовёт маму «апа / апам» (eval serik: «Апам каждый воскресенье бесбармақ делала»), а перевод
+// давал «Әжеміз» — «наша бабушка»: мама стала бабушкой. Сверяем без ИИ: «әже…» в переводе при том, что в оригинале
+// бабушки нет вовсе, — ошибка родства (повод для повтора с замечанием). Если в оригинале при этом есть «апа / апам» —
+// после повтора, как последний шаг, «әже…» → «апа…» с тем же окончанием (гармония гласных: әжеміз → апамыз,
+// әжеге → апаға), а «мы» → «я», если в оригинале только «апам» («Әжеміз» → «Апам»). Бабушка в оригинале есть —
+// ничего не трогаем: тогда «әже» может быть верным.
+
+/** Слово оригинала — бабушка (по-русски или по-казахски вставкой рассказчика). */
+const RU_GRANDMA = /^(?:бабушк\p{L}*|бабул\p{L}*|бабуськ\p{L}*|бабк\p{L}*|баб(?:а|ы|е|у|ой|уля)|әже\p{L}*|аже\p{L}*|нағашы)$/u;
+/** Слово оригинала — «апа» рассказчика (мама / старшая родственница): апа, апам, апы, апой, апашка, апамыз… */
+const RU_APA = /^(?:ап(?:а|ы|е|у|ой|ою)|апа(?:м|мыз|сы|ға|ма|мен|мның|мды|мда|мнан|ны|ның|да|дан|мнің|ш\p{L}*|ечк\p{L}*))$/u;
+/** Слово перевода — «әже» в любой форме; «әжептәуір» («изрядно») — не бабушка. */
+const KK_GRANDMA = /^әже(?!п)\p{L}*$/u;
+
+const BACK: Record<string, string> = { е: "а", ә: "а", і: "ы", ө: "о", ү: "ұ", г: "ғ", к: "қ" };
+/** Окончание после «апа» (задний ряд), кроме инструментального «-мен / -менен» — оно не меняется. */
+const backSuffix = (suf: string) => {
+  const tail = suf.match(/(мен|менен)$/u)?.[0] ?? "";
+  return suf.slice(0, suf.length - tail.length).replace(/[еәіөүгк]/gu, (c) => BACK[c]!) + tail;
+};
+/** «апамыз…» (наша) → «апам…» (моя): окончание падежа после «-ым» другое (апамызға → апама). */
+const OUR_TO_MY: Record<string, string> = { "": "", ға: "а", дың: "ның", ды: "ды", да: "да", дан: "нан", бен: "мен", мен: "мен", дағы: "дағы" };
+
+function kinWords(ru: string) {
+  const w = ru.toLowerCase().match(TOKEN) ?? [];
+  return { grandma: w.some((x) => RU_GRANDMA.test(x)), apa: w.filter((x) => RU_APA.test(x)) };
+}
+
+/** «әже…» в переводе, хотя бабушки в оригинале нет (#343). Пусто — с родством всё сходится. */
+export function kinshipLeftKk(text: string, ru = ""): string[] {
+  if (!ru.trim()) return [];
+  const k = kinWords(ru);
+  if (k.grandma) return [];
+  return [...new Set((text.match(TOKEN) ?? []).filter((t) => KK_GRANDMA.test(t.toLowerCase())))];
+}
+
+/**
+ * Последний шаг (после повтора): «әже…» → «апа…», только если в оригинале есть «апа / апам» и нет бабушки.
+ * Без «апа» в оригинале — не знаем, кто это: только флажок (kinshipLeftKk).
+ */
+export function fixKinshipKk(text: string, ru = ""): { text: string; fixed: KkFix[] } {
+  const k = kinWords(ru);
+  if (k.grandma || !k.apa.length) return { text, fixed: [] };
+  // только «апам» (моя) и ни одного «апамыз» (наша) — «әжеміз» переводим как «апам»
+  const onlyMy = k.apa.some((x) => x.startsWith("апам")) && !k.apa.some((x) => x.startsWith("апамыз"));
+  const fixed: KkFix[] = [];
+  const out = text.replace(TOKEN, (tok) => {
+    if (!KK_GRANDMA.test(tok.toLowerCase())) return tok;
+    let to = "апа" + backSuffix(tok.toLowerCase().slice(3));
+    if (onlyMy && to.startsWith("апамыз") && to.slice(6) in OUR_TO_MY) to = "апам" + OUR_TO_MY[to.slice(6)];
+    const next = keepCase(tok, to);
+    fixed.push({ kind: "kinship", from: tok, to: next });
+    return next;
+  });
+  return { text: out, fixed };
+}
+
+/** fixKinshipKk для готового результата (text_ko / title_ko / quote_ko — казахский текст), остаток пересчитан. */
+export function finishKinshipKk<T extends Translated>(res: KkResult<T>, ru: string): KkResult<T> {
+  if (!res.left.kinship?.length) return res;
+  const fixed = [...res.fixed];
+  const one = (s: string) => {
+    const r = fixKinshipKk(s, ru);
+    fixed.push(...r.fixed);
+    return r.text;
+  };
+  const out = { ...res.out, text_ko: one(res.out.text_ko), title_ko: one(res.out.title_ko), quote_ko: one(res.out.quote_ko) };
+  const all = [out.title_ko, out.text_ko, out.quote_ko].join("\n");
+  return { out, fixed, left: { ...res.left, kinship: kinshipLeftKk(all, ru) } };
+}
+
 // ── Всё вместе: после перевода ru → kk ──────────────────────────────────────
 
 export interface KkResult<T extends Translated> {
   out: T;
   fixed: KkFix[];
   /** Что исправить не удалось — для логов, kk-check, повтора с замечанием (#313) и repair-chapters */
-  left: { latin: string[]; hangul: boolean; style: StyleMix[]; russian: string[] };
+  left: { latin: string[]; hangul: boolean; style: StyleMix[]; russian: string[]; /** #343: «әже…» без бабушки в оригинале */ kinship?: string[] };
 }
 
 /** Алфавит → русские слова → обращение к внукам → имена по словарю (text_ko / title_ko / quote_ko = казахский текст). */
@@ -349,14 +424,14 @@ export function finishKk<T extends Translated>(raw: T, ru: string, required: Nam
   for (const f of fixed) if (f.kind === "style") out.quote_ko = out.quote_ko.split(f.from).join(f.to);
   const all = [out.title_ko, out.text_ko, out.quote_ko].join("\n");
   const left = kkScriptLeft(all, ru);
-  return { out, fixed, left: { ...left, style: grandkidsMixedKk(out.text_ko), russian: russianLeftKk(all, ru) } };
+  return { out, fixed, left: { ...left, style: grandkidsMixedKk(out.text_ko), russian: russianLeftKk(all, ru), kinship: kinshipLeftKk(all, ru) } };
 }
 
 // ── 5. Повтор с замечанием (#313) ───────────────────────────────────────────
 
 /** Сколько осталось не так (для выбора: первая попытка или повтор). Обращение к внукам — не повод для повтора. */
 export function kkLeftCount(left: KkResult<Translated>["left"]): number {
-  return left.latin.length + (left.hangul ? 1 : 0) + left.russian.length;
+  return left.latin.length + (left.hangul ? 1 : 0) + left.russian.length + (left.kinship?.length ?? 0);
 }
 
 /**
@@ -368,12 +443,18 @@ export function kkRetryNote(left: KkResult<Translated>["left"]): string | null {
   if (left.hangul) parts.push("корейские буквы (хангыль)");
   if (left.latin.length) parts.push(`слова латиницей: ${left.latin.slice(0, 8).join(", ")}`);
   if (left.russian.length) parts.push(`русские слова: ${left.russian.slice(0, 10).join(", ")}`);
-  if (!parts.length) return null;
+  // #343: родство — отдельное предложение (это не алфавит, а смысл)
+  const kin = left.kinship?.length
+    ? ` Родство искажено: в переводе ${left.kinship.slice(0, 4).map((w) => `«${w}»`).join(", ")} (бабушка), а в оригинале бабушки нет — ` +
+      "родство рассказчика переводи ровно как в оригинале: «апа / апам» → «апа / апам», мама → анам, не «әже»."
+    : "";
+  if (!parts.length && !kin) return null;
+  if (!parts.length) return `В прошлой попытке перевода ошибка.${kin} Переведи главу заново целиком по всем правилам.`.slice(0, 600);
   return (
     `В прошлой попытке перевода остались ${parts.join("; ")}. Переведи главу заново целиком по всем правилам: ` +
     "только казахская кириллица, без хангыля и латиницы; русские слова и вставки рассказчика — по-казахски " +
     "(кроме имён людей и советских реалий из глоссария); аббревиатуры — по-казахски (СССР → КСРО) или как в оригинале кириллицей."
-  ).slice(0, 600);
+  ).slice(0, 600 - kin.length) + kin; // ≤ 600 (схема входа); без родства — текст и ключ кэша как до #343
 }
 
 /** Есть ли в готовом казахском тексте то, что ловит #298 (для repair-chapters): алфавит / обращение. */

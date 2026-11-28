@@ -14,7 +14,7 @@ import { effectiveBookLangs } from "./langs";
 export type PipelinePatch = Partial<
   Pick<
     Story,
-    "transcript" | "followups" | "text_ru" | "title" | "quote" | "facts" | "text_ko" | "title_ko" | "quote_ko" | "status" | "error" | "duration_sec" | "kick_attempts" | "step_started_at" | "deferred_followup"
+    "transcript" | "followups" | "text_ru" | "title" | "quote" | "facts" | "text_ko" | "title_ko" | "quote_ko" | "status" | "error" | "duration_sec" | "kick_attempts" | "step_started_at" | "deferred_followup" | "addition_pending"
   >
 >;
 

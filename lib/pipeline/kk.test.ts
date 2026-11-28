@@ -5,12 +5,15 @@ import editFixture from "@/fixtures/ai/edit.json";
 import type { FamilyEntity } from "@/lib/types";
 import {
   applySpellingsKk,
+  finishKinshipKk,
   finishKk,
   fixGrandkidsKk,
+  fixKinshipKk,
   fixKkScript,
   fixRussianKk,
   foldKk,
   grandkidsMixedKk,
+  kinshipLeftKk,
   kkLeftCount,
   kkProblems,
   kkRetryNote,
@@ -58,7 +61,7 @@ describe("алфавит (#298 п. 1)", () => {
     const r = finishKk(fixture, editFixture.text_ru);
     expect(r.out).toEqual(fixture);
     expect(r.fixed).toEqual([]);
-    expect(r.left).toEqual({ latin: [], hangul: false, style: [], russian: [] });
+    expect(r.left).toEqual({ latin: [], hangul: false, style: [], russian: [], kinship: [] });
   });
 
   it("хангыль и латиница, которую не исправить, — остаются флажком", () => {
@@ -176,5 +179,46 @@ describe("замечание к повтору перевода (#313)", () => {
     expect(note.length).toBeLessThanOrEqual(600);
     expect(kkRetryNote({ ...left })).toBe(note);
     expect(kkLeftCount(left)).toBe(3);
+  });
+});
+
+describe("родство рассказчика (#343): «апам» не становится «әже»", () => {
+  const ru = "Апам каждый воскресенье бесбармақ делала. Апам Сара пела нам песни.";
+
+  it("«әже…» без бабушки в оригинале — флажок; бабушка в оригинале есть — нет; «әжептәуір» — не бабушка", () => {
+    expect(kinshipLeftKk("Әжеміз әр жексенбі сайын бесбармақ істейтін.", ru)).toEqual(["Әжеміз"]);
+    expect(kinshipLeftKk("Апам әр жексенбі сайын бесбармақ істейтін.", ru)).toEqual([]);
+    expect(kinshipLeftKk("Әжем бауырсақ пісіретін.", "Бабушка пекла баурсаки.")).toEqual([]);
+    expect(kinshipLeftKk("Әжем бауырсақ пісіретін.", "Әжем пекла баурсаки.")).toEqual([]);
+    expect(kinshipLeftKk("Ол әжептәуір үлкен еді.", "Он был довольно большой.")).toEqual([]);
+    expect(kinshipLeftKk("Әжем келді.", "")).toEqual([]);
+  });
+
+  it("исправление: «Әжеміз» → «Апам» (в оригинале только «апам»), окончания по гармонии", () => {
+    expect(fixKinshipKk("Әжеміз әр жексенбі сайын бесбармақ істейтін.", ru).text).toBe("Апам әр жексенбі сайын бесбармақ істейтін.");
+    expect(fixKinshipKk("әжемнің үйі, әжеме бардым, әжеммен, әжемізге", ru).text).toBe("апамның үйі, апама бардым, апаммен, апама");
+    // «апамыз» в оригинале — «наша» остаётся «наша»
+    expect(fixKinshipKk("Әжеміз келді, әжесі келді.", "Апамыз пришла, и апа её тоже.").text).toBe("Апамыз келді, апасы келді.");
+    // бабушка в оригинале или «апа» нет вовсе — не трогаем
+    expect(fixKinshipKk("Әжем келді.", "Бабушка пришла.").fixed).toEqual([]);
+    expect(fixKinshipKk("Әжем келді.", "Мама пришла.").fixed).toEqual([]);
+  });
+
+  it("finishKk → left.kinship; finishKinshipKk чинит title / text / quote, остаток пуст; повтор считает родство", () => {
+    const raw = { text_ko: "Әжеміз әр жексенбі сайын бесбармақ істейтін.", title_ko: "Әжемнің бесбармағы", quote_ko: "Әжеміз әр жексенбі сайын бесбармақ істейтін" };
+    const r = finishKk(raw, ru);
+    expect(r.left.kinship).toEqual(["Әжемнің", "Әжеміз"]);
+    expect(kkLeftCount(r.left)).toBe(2);
+    expect(kkRetryNote(r.left)).toContain("апа / апам");
+    expect(kkRetryNote(r.left)!.length).toBeLessThanOrEqual(600);
+    const f = finishKinshipKk(r, ru);
+    expect(f.out).toMatchObject({ text_ko: "Апам әр жексенбі сайын бесбармақ істейтін.", title_ko: "Апамның бесбармағы" });
+    expect(f.left.kinship).toEqual([]);
+    expect(f.fixed.filter((x) => x.kind === "kinship")).toHaveLength(3);
+  });
+
+  it("без родства замечание к повтору — байт в байт как до #343 (ключ кэша)", () => {
+    const left = { latin: ["KGB"], hangul: true, style: [], russian: ["было"] };
+    expect(kkRetryNote({ ...left, kinship: [] })).toBe(kkRetryNote(left));
   });
 });

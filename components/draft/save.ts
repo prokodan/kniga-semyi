@@ -15,10 +15,12 @@ const g = globalThis as { __interviewMemoryRepo?: MemoryInterviewRepo };
 async function writeStory(storyId: string, patch: DraftPatch): Promise<void> {
   const db = getDbOrNull();
   if (db) {
+    // #246: правка семьи → story_texts.origin = family в той же записи (зеркало читает заголовок, миграция 20261128213000)
     const { error } = await db
       .from("stories")
       .update({ ...patch, updated_at: new Date().toISOString() })
-      .eq("id", storyId);
+      .eq("id", storyId)
+      .setHeader("x-text-origin", "family");
     if (error) throw new Error(`сохранение правки: ${error.message}`);
     return;
   }
