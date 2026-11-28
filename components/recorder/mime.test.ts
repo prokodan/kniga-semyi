@@ -23,9 +23,20 @@ describe("выбор формата записи", () => {
     expect(pickMime(all, true)).toMatch(/^audio\/mp4/);
   });
 
-  it("Chrome → webm/opus", () => {
+  it("#66 Chrome с AAC (Android, 126+) → mp4/AAC: такую запись играет iPhone", () => {
     const chrome = (m: string) => m.startsWith("audio/webm") || m.startsWith("audio/mp4");
-    expect(pickMime(chrome, false)).toBe("audio/webm;codecs=opus");
+    expect(pickMime(chrome, false)).toBe("audio/mp4;codecs=mp4a.40.2");
+  });
+
+  it("Chrome / Chromium без AAC (mp4 только с Opus) → webm/opus, как раньше", () => {
+    // так отвечает Chromium без проприетарных кодеков: голое audio/mp4 = Opus в mp4, iOS < 17 его не играет
+    const chromium = (m: string) => m.startsWith("audio/webm") || m === "audio/mp4" || m === "audio/mp4;codecs=opus";
+    expect(pickMime(chromium, false)).toBe("audio/webm;codecs=opus");
+  });
+
+  it("Firefox → webm/opus", () => {
+    const firefox = (m: string) => m.startsWith("audio/webm") || m.startsWith("audio/ogg");
+    expect(pickMime(firefox, false)).toBe("audio/webm;codecs=opus");
   });
 
   it("старый Safari без кодеков в строке → audio/mp4", () => {
@@ -38,6 +49,7 @@ describe("выбор формата записи", () => {
 
   it("тип блоба без кодека и с запасным значением", () => {
     expect(blobType("audio/webm;codecs=opus", false)).toBe("audio/webm");
+    expect(blobType("audio/mp4;codecs=mp4a.40.2", false)).toBe("audio/mp4");
     expect(blobType("", true)).toBe("audio/mp4");
     expect(blobType("", false)).toBe("audio/webm");
   });
