@@ -7,7 +7,7 @@ import { inputSchemas, outputSchemas } from "@/lib/ai/types";
 import { parseGolden } from "@/eval/reviews/format";
 import { runDigest } from "./digest";
 import { MemoryDigestRepo } from "./digest-repo";
-import { buildUnit, fingerprint, planMerge, type QualityFinding, type RawUnit } from "./findings";
+import { buildUnit, diffExcerpt, fingerprint, planMerge, type QualityFinding, type RawUnit } from "./findings";
 import {
   CHECK_MARKER,
   KZ_GLOSSARY_FILE,
@@ -138,6 +138,14 @@ describe("quality-digest: находки, дубли, лимит, авто-пр�
     expect(r.proposed).toEqual([{ pair: "ru-kk", component: "prompt", count: 3 }]);
     await repo.startDigest("cron");
     expect((await runDigest({ repo, ai: mockAi, trigger: "cron" })).status).toBe("busy");
+  });
+
+  it("пример длинного абзаца — только изменённые слова и немного вокруг", () => {
+    const long = `${"слово ".repeat(60)}конец`;
+    const d = diffExcerpt(long, `${long} түзету`, 2);
+    expect(d.after).toBe("… слово конец түзету");
+    expect(d.before).toBe("… слово конец");
+    expect(diffExcerpt("коротко", "кратко")).toEqual({ before: "коротко", after: "кратко" });
   });
 
   it("duplicate_of — только находка той же пары и компонента; отпечаток не зависит от регистра и кавычек", () => {

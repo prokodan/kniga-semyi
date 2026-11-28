@@ -10,6 +10,7 @@ import {
   COMPONENT_RU,
   COMPONENT_WHERE,
   PROPOSAL_RU,
+  diffExcerpt,
   SEVERITY_RU,
   groupByComponent,
   type FindingSeverity,
@@ -43,15 +44,18 @@ function Evidence({ f }: { f: QualityFinding }) {
   if (!ev.length) return null;
   return (
     <ul className="flex flex-col gap-1 text-sm">
-      {ev.map((e, i) => (
+      {ev.map((e, i) => {
+        const d = diffExcerpt(e.before, e.after);
+        return (
         <li key={i} className="rounded-card border border-line bg-paper-deep px-3 py-2" data-testid="finding-example">
           {e.kind === "term" ? <span className="text-muted">слово: </span> : e.paragraph !== undefined ? <span className="text-muted">абз. {e.paragraph + 1}: </span> : null}
-          <span className="text-danger line-through">{e.before.slice(0, 220)}</span> <span aria-hidden>→</span>{" "}
-          <b className="text-success">{e.after.slice(0, 220)}</b>
+          <span className="text-danger line-through">{d.before}</span> <span aria-hidden>→</span>{" "}
+          <b className="text-success">{d.after}</b>
           {e.note ? <span className="text-muted"> · {e.note.slice(0, 120)}</span> : null}
           <span className="text-muted"> · {e.reviewer}</span>
         </li>
-      ))}
+        );
+      })}
     </ul>
   );
 }

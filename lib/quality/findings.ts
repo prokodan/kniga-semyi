@@ -412,6 +412,26 @@ export function planMerge(existing: readonly QualityFinding[], incoming: readonl
 
 // ---------------- «Находки»: по компонентам ----------------
 
+/**
+ * Короткий пример «было → стало» для длинного абзаца: только изменённые слова и до `ctx` слов вокруг («…» по краям).
+ * Короткие (≤ max символов) — целиком.
+ */
+export function diffExcerpt(before: string, after: string, ctx = 5, max = 160): { before: string; after: string } {
+  if (before.length <= max && after.length <= max) return { before, after };
+  const a = before.split(/\s+/).filter(Boolean);
+  const b = after.split(/\s+/).filter(Boolean);
+  let i = 0;
+  while (i < a.length && i < b.length && a[i] === b[i]) i++;
+  let j = 0;
+  while (j < a.length - i && j < b.length - i && a[a.length - 1 - j] === b[b.length - 1 - j]) j++;
+  const from = Math.max(0, i - ctx);
+  const cut = (w: string[], end: number) => {
+    const to = Math.min(w.length, end + ctx);
+    return `${from > 0 ? "… " : ""}${w.slice(from, to).join(" ")}${to < w.length ? " …" : ""}`;
+  };
+  return { before: cut(a, a.length - j), after: cut(b, b.length - j) };
+}
+
 export interface ComponentGroup {
   component: FindingComponent;
   findings: QualityFinding[];
