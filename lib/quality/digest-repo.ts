@@ -3,7 +3,7 @@
 // quality_digest_items / quality_proposals. Без server-only: тот же код у scripts/quality-propose.ts.
 import { randomUUID } from "node:crypto";
 import type { SupabaseClient } from "@supabase/supabase-js";
-import type { FindingDraft, FindingStatus, QualityDigest, QualityFinding, QualityProposal, RawUnit } from "./findings";
+import { EMPTY_FIX, type FindingDraft, type FindingStatus, type QualityDigest, type QualityFinding, type QualityProposal, type RawUnit } from "./findings";
 
 export type NewProposal = Pick<QualityProposal, "pair" | "findings" | "components" | "summary" | "trigger"> & Partial<Pick<QualityProposal, "run_id" | "status">>;
 export type ProposalPatch = Partial<Pick<QualityProposal, "branch" | "pr_number" | "pr_url" | "files" | "issues" | "summary" | "status" | "error">>;
@@ -45,7 +45,7 @@ const normF = (f: QualityFinding): QualityFinding => ({
   item_ids: f.item_ids ?? [],
   link_ids: f.link_ids ?? [],
   evidence: Array.isArray(f.evidence) ? f.evidence : [],
-  fix: { kind: "none", rule: "", src: "", wrong: "", right: "", ...(f.fix ?? {}) },
+  fix: { ...EMPTY_FIX, ...((f.fix ?? {}) as Partial<QualityFinding["fix"]>) },
 });
 const normD = (d: QualityDigest): QualityDigest => ({ ...d, cost_usd: Number(d.cost_usd ?? 0), proposed: Array.isArray(d.proposed) ? d.proposed : [] });
 
