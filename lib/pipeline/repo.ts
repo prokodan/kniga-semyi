@@ -5,6 +5,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { nameHints } from "@/lib/interview/names";
 import { familyPacks } from "@/lib/interview/bank";
 import { loadNameHints } from "@/lib/interview/names-db";
+import { familyEditedIn } from "@/lib/interview/edited";
 import type { BookLang, Family, FamilyEntity, SpokenLang, Story } from "@/lib/types";
 import { loadStoryTexts, mirrorRows, withStoryTexts, type StoryTextRow } from "@/lib/book/texts";
 import { mergeEntities, rankEntities, type EntityDraft } from "./entities";
@@ -34,7 +35,9 @@ export interface PipelineRepo {
    * Интервью ещё на вопросе этой истории (может задать уточнение) — главу собирать рано (пункт 4).
    * Нет реализации — не держим.
    */
-  interviewHold?(story: Story): Promise<boolean>;
+  interviewHold?(story: Story, now?: number): Promise<boolean>;
+  /** #149: семья правила главу (story_texts.origin = family у ru) — поздний ответ не пересобирает её. Нет — «не правили». */
+  familyEdited?(story: Story): Promise<boolean>;
   /** Имена и места для расшифровки и редактуры (пункт 5). Нет реализации — без подсказок. */
   nameHints?(story: Story): Promise<string[]>;
   /**
@@ -86,15 +89,36 @@ export function isEarlier(s: Pick<Story, "id" | "storyteller_id" | "parent_story
   return s.id !== story.id && s.storyteller_id === story.storyteller_id && !s.parent_story_id && s.status !== "skipped" && s.created_at < story.created_at;
 }
 
-/** Сессия ещё на вопросе этой истории: не завершена, текущий вопрос тот же и он не закрыт. */
+/**
+ * #296: сколько держать главу без движения в интервью. Уточнение задано (state.followup_at) или ответ ещё не дошёл до
+ * интервью (от создания истории) больше этого — семья ушла со страницы записи: не держим (раньше — до 20 мин).
+ * Ответ на уточнение придёт позже — свежая глава пересоберётся с ним (releaseAfterInterview).
+ */
+export const FOLLOWUP_IDLE_MS = 5 * 60_000;
+
+/** Сессия ещё на вопросе этой истории: не завершена, текущий вопрос тот же, он не закрыт и разговор не брошен. */
 export function holdsStory(
   session: { ended_at?: string | null; state?: Record<string, unknown> | null } | null,
-  story: Pick<Story, "question_id">,
+  story: Pick<Story, "question_id"> & { id?: string; created_at?: string },
+  now = Date.now(),
 ): boolean {
   if (!session || session.ended_at || !story.question_id) return false;
-  const st = (session.state ?? {}) as { finished?: boolean; current_question_id?: string; answered_question_ids?: string[]; skipped_question_ids?: string[] };
+  const st = (session.state ?? {}) as {
+    finished?: boolean;
+    current_question_id?: string;
+    current_story_id?: string | null;
+    followup_at?: string | null;
+    answered_question_ids?: string[];
+    skipped_question_ids?: string[];
+  };
   if (st.finished || st.current_question_id !== story.question_id) return false;
-  return !(st.answered_question_ids ?? []).includes(story.question_id) && !(st.skipped_question_ids ?? []).includes(story.question_id);
+  if ((st.answered_question_ids ?? []).includes(story.question_id) || (st.skipped_question_ids ?? []).includes(story.question_id)) return false;
+  // #296: последнее движение по этой истории — заданное уточнение, иначе сама запись
+  const own = story.id !== undefined && st.current_story_id === story.id;
+  const last = own && st.followup_at ? st.followup_at : story.created_at;
+  if (!last) return true;
+  const t = new Date(last).getTime();
+  return !Number.isFinite(t) || now - t < FOLLOWUP_IDLE_MS;
 }
 
 const EXT_MIME: Record<string, string> = {
@@ -206,8 +230,13 @@ export class MemoryPipelineRepo implements PipelineRepo {
   async earlier(story: Story) {
     return [...this.stories.values()].filter((s) => isEarlier(s, story)).map((s) => structuredClone(s));
   }
-  async interviewHold(story: Story) {
-    return story.session_id && this.sessions ? holdsStory(this.sessions.get(story.session_id) ?? null, story) : false;
+  async interviewHold(story: Story, now?: number) {
+    return story.session_id && this.sessions ? holdsStory(this.sessions.get(story.session_id) ?? null, story, now) : false;
+  }
+  /** #149: главы, которые правила семья (тесты кладут сами) */
+  edited = new Set<string>();
+  async familyEdited(story: Story) {
+    return this.edited.has(story.id);
   }
   /** #231: языки книги по семьям (тесты кладут сами); нет — ru, ko. Флаг lang_kk в памяти включён (как локально). */
   bookLangs = new Map<string, BookLang[]>();
@@ -404,10 +433,13 @@ export class SupabasePipelineRepo implements PipelineRepo {
     const { error } = await this.db.from("story_texts").delete().eq("story_id", story.id).eq("origin", "ai").not("lang", "in", "(ru,ko)");
     if (error) console.warn(`[pipeline] старые переводы ${story.id.slice(0, 8)}:`, error.message); // нет таблицы до migrate — не страшно
   }
-  async interviewHold(story: Story) {
+  async familyEdited(story: Story) {
+    return familyEditedIn(this.db, story.id);
+  }
+  async interviewHold(story: Story, now?: number) {
     if (!story.session_id) return false;
     const { data, error } = await this.db.from("sessions").select("ended_at, state").eq("id", story.session_id).maybeSingle();
     if (error) return false; // не знаем — не держим главу
-    return holdsStory(data as { ended_at: string | null; state: Record<string, unknown> } | null, story);
+    return holdsStory(data as { ended_at: string | null; state: Record<string, unknown> } | null, story, now);
   }
 }

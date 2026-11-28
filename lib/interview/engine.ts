@@ -31,6 +31,7 @@ import {
   type SessionState,
 } from "./policy";
 import { applyName, findUncertain, resolveName } from "./names";
+import { settledChapter } from "./edited";
 import type { DeferredAsk, InterviewRepo } from "./repo";
 
 export type InterviewErrorCode = "bad_request" | "forbidden" | "not_found" | "finished" | "not_ready";
@@ -111,6 +112,8 @@ export interface InterviewDeps {
    * первый ответ — уточнение по шаблону без ИИ. Нет / false / ошибка — как до #105 (симулятор eval — тоже как до).
    */
   fewerCalls?: (familyId: string) => Promise<boolean>;
+  /** Часы (тесты): отметка времени уточнения (#296) и возраст главы (#149). Нет — Date.now. */
+  now?: () => number;
 }
 
 /** #105 п. 1: следующий вопрос, выбранный заодно с проверкой полноты, и кандидаты, из которых выбирали. */
@@ -203,6 +206,33 @@ type Core = ReturnType<typeof createCore>;
 /** Движок интервью на одном банке вопросов. */
 function createCore(deps: InterviewDeps, bank: QuestionBank) {
   const { ai, repo } = deps;
+  const now = deps.now ?? Date.now;
+
+  /**
+   * #296: уточнение задано — запомнить когда. Конвейер держит главу (interviewHold) только пока уточнение свежее
+   * (FOLLOWUP_IDLE_MS): семья ушла со страницы записи — глава собирается через минуты, а не через 20.
+   */
+  function markFollowup(state: SessionState) {
+    state.followup_at = new Date(now()).toISOString();
+  }
+
+  /**
+   * #149: какую главу отпустить на пересборку (releaseAfterInterview → edit). Уже собранная глава старше 30 мин или
+   * поправленная семьёй — нет: ответ на (отложенное) уточнение уже дописан в followups и войдёт при следующей
+   * пересборке, правка семьи не перетирается. Сбой чтения — как до #149 (отпускаем).
+   */
+  async function releasable(storyId: string | null): Promise<string | null> {
+    if (!storyId) return null;
+    try {
+      const story = await repo.getStory(storyId);
+      if (!story?.text_ru) return storyId;
+      const edited = repo.familyEdited ? await repo.familyEdited(storyId) : false;
+      return settledChapter(story, edited, now()) ? null : storyId;
+    } catch (e) {
+      console.warn("[interview] глава после уточнения:", (e as Error).message);
+      return storyId;
+    }
+  }
 
   const view = (q: Question): QuestionView => ({ id: q.id, block: q.block, blockTitle: bank.blockTitle(q.block), ru: q.ru, ko: q.ko });
 
@@ -343,6 +373,9 @@ function createCore(deps: InterviewDeps, bank: QuestionBank) {
     state.followups_asked = 0;
     state.current_story_id = null;
     state.pending_followup = null;
+    delete state.followup_at;
+    // #149: устоявшуюся главу (старше 30 мин / правка семьи) не пересобираем — ответ уже в её followups
+    const storyId = await releasable(opts.storyId);
     state.emotional_pause = Boolean(opts.pause);
     state.covered_blocks = coveredBlocks(bank, state);
     const blockJustDone = !opts.wasBlockDone && isBlockDone(bank, state, prev.block);
@@ -409,7 +442,7 @@ function createCore(deps: InterviewDeps, bank: QuestionBank) {
       state.finished = true;
       delete state.current_question_id;
       await repo.saveState(sessionId, state, true);
-      return { type: "finished", message: PHRASES.finished, storyId: opts.storyId, progress: progress(state) };
+      return { type: "finished", message: PHRASES.finished, storyId, progress: progress(state) };
     }
 
     state.current_question_id = next.id;
@@ -425,11 +458,11 @@ function createCore(deps: InterviewDeps, bank: QuestionBank) {
         suggestChapter: true,
         nextQuestion: nextView,
         bridge,
-        storyId: opts.storyId,
+        storyId,
         progress: progress(state),
       };
     }
-    return { type: "nextQuestion", question: nextView, bridge, pause: Boolean(opts.pause), storyId: opts.storyId, progress: progress(state) };
+    return { type: "nextQuestion", question: nextView, bridge, pause: Boolean(opts.pause), storyId, progress: progress(state) };
   }
 
   /** Проверка полноты и решение: уточнение / уход в другую тему / ответ принят. */
@@ -509,6 +542,7 @@ function createCore(deps: InterviewDeps, bank: QuestionBank) {
         state.asked_followups = pushAsked(state, decision.text);
         state.followups_asked = (state.followups_asked ?? 0) + 1;
         state.emotional_pause = false;
+        markFollowup(state);
         await repo.saveState(sessionId, state);
         return {
           type: "followup",
@@ -528,6 +562,7 @@ function createCore(deps: InterviewDeps, bank: QuestionBank) {
         if (decision.returnText) {
           state.followups_asked = (state.followups_asked ?? 0) + 1;
           state.emotional_pause = false;
+          markFollowup(state);
           await repo.saveState(sessionId, state);
           return {
             type: "followup",
@@ -779,6 +814,7 @@ function createCore(deps: InterviewDeps, bank: QuestionBank) {
           state.name_checked = addUnique(state.name_checked, main.id);
           state.pending_followup = `Правильно ли я поняла: ${hit.guess}?`;
           state.emotional_pause = false;
+          markFollowup(state);
           await repo.saveState(sessionId, state);
           return {
             type: "followup",
