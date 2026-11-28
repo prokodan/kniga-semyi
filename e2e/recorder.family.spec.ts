@@ -118,6 +118,7 @@ for (const c of CASES) {
       await page.getByRole("button", { name: "Сохранить согласие" }).click();
       await expect(page.getByText("Согласие записано ✓ Спасибо!")).toBeVisible();
       await page.getByRole("link", { name: "Записать первый рассказ" }).click();
+      await page.waitForURL(/\/record\//);
     });
 
     const h1 = page.getByRole("heading", { level: 1 });
@@ -126,7 +127,7 @@ for (const c of CASES) {
     let question = "";
 
     await test.step("во время записи «Пропустить» и «Вернуться позже» недоступны", async () => {
-      await expect(h1).toBeVisible({ timeout: 30_000 });
+      await expect(page.getByRole("button", { name: "Начать запись" })).toBeVisible({ timeout: 30_000 });
       question = (await h1.textContent())!.trim();
       await page.getByRole("button", { name: "Начать запись" }).click();
       await expect(page.getByRole("button", { name: "Готово" })).toBeVisible();
