@@ -37,7 +37,7 @@ export type BotDeps = {
   /** /api/health любого адреса (превью) — для «Ссылок». */
   fetchUrlHealth?: (url: string) => Promise<HealthResult | null>;
   /** Данные из базы (service-ключ): цифры сводки и демо-семьи. Без базы — null / []. */
-  ops?: { stats(): Promise<DigestStats | null>; demoFamilies(): Promise<DemoFamily[]> };
+  ops?: { stats(): Promise<DigestStats | null>; stagingStats?(): Promise<DigestStats | null | undefined>; demoFamilies(): Promise<DemoFamily[]> };
 };
 
 type Ctx = {
@@ -299,12 +299,13 @@ export function createBot(deps: BotDeps) {
   async function digestText(): Promise<string> {
     const n = now();
     const since = new Date(n.getTime() - 86_400_000).toISOString();
-    const [issues, pulls, users, runs, stats] = await Promise.all([
+    const [issues, pulls, users, runs, stats, staging] = await Promise.all([
       gh.listIssues(),
       gh.listPulls(),
       store.listUsers(),
       gh.listMainRuns(since).catch(() => null),
       deps.ops ? deps.ops.stats().catch(() => null) : Promise.resolve(null),
+      deps.ops?.stagingStats ? deps.ops.stagingStats().catch(() => null) : Promise.resolve(undefined),
     ]);
     return buildDigest({
       now: n,
@@ -312,6 +313,7 @@ export function createBot(deps: BotDeps) {
       overview: buildOverview(issues, pulls, n),
       runs,
       stats,
+      staging,
       repo: cfg.repo,
       who: (login) => whoName(login, users),
     });

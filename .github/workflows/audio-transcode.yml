@@ -6,6 +6,8 @@ name: audio-transcode
 # Вручную: target prod | staging, apply выключен = dry run (только план). comment — номер issue для плана комментарием.
 # Раз в сутки (20:47 UTC = 01:47 Алматы) — обе базы с записью; больше 50 записей за раз по расписанию — только план
 # (большой пакет — вручную: dry run → apply). В лог — только короткие id и числа.
+# #347: сайт сам запускает этот workflow сразу после загрузки записи, которую iPhone < 17 не сыграет
+# (lib/pipeline/audio-copy-run.ts: вход story = id истории, apply, max 1). Ночной запуск — страховка.
 on:
   schedule:
     - cron: "47 20 * * *"
@@ -28,6 +30,10 @@ on:
         description: "Номер issue для итога комментарием (пусто — не писать)"
         type: string
         default: ""
+      story:
+        description: "Только эта история (id; пусто — все). Так запускает сайт после загрузки записи (#347)"
+        type: string
+        default: ""
 
 permissions:
   contents: read
@@ -42,7 +48,8 @@ jobs:
       matrix:
         target: ${{ github.event_name == 'schedule' && fromJSON('["staging","prod"]') || fromJSON(format('["{0}"]', inputs.target)) }}
     concurrency:
-      group: audio-transcode-${{ matrix.target }}
+      # запуски по одной истории (#347) — каждый в своей группе: GitHub отменяет лишние ожидающие запуски группы
+      group: audio-transcode-${{ matrix.target }}-${{ inputs.story || 'all' }}
       cancel-in-progress: false
     env:
       TARGET: ${{ matrix.target }}
@@ -54,6 +61,7 @@ jobs:
       AUDIO_APPLY: ${{ (github.event_name == 'schedule' || inputs.apply) && '1' || '0' }}
       AUDIO_SCHEDULED: ${{ github.event_name == 'schedule' && '1' || '0' }}
       AUDIO_MAX: ${{ inputs.max || '300' }}
+      AUDIO_STORY: ${{ inputs.story || '' }}
     steps:
       - name: Выбор базы
         id: pick

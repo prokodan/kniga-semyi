@@ -62,7 +62,10 @@ export const env = {
   aiUsageSecret: () => read("AI_USAGE_SECRET"),
   /** Короткий ref проекта Supabase (первые 6 символов поддомена) — для /api/health, не ключ. */
   supabaseRefShort: () => supabaseRef()?.slice(0, 6),
-  /** Секрет подписи QR-ссылок /listen (I3). Необязателен: по умолчанию выводится из service-ключа. */
+  /**
+   * Секрет подписи QR-ссылок /listen (I3). Необязателен: по умолчанию выводится из service-ключа.
+   * #67: задан → новые QR подписываются им, проверка принимает и его, и прежний (из service-ключа) — старые QR живы.
+   */
   listenSecret: () => read("LISTEN_SECRET"),
   /** #171: секрет таймера Supabase pg_cron → /api/cron/kick (заголовок Authorization: Bearer …). Пусто = ручка закрыта. */
   cronSecret: () => read("CRON_SECRET"),

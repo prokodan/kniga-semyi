@@ -9,9 +9,11 @@ import { revalidatePath } from "next/cache";
 import { Section, btnCls, btnGhostCls, inputCls, Notice } from "@/components/admin/ui";
 import { DEMO_FAMILY, DEMO_KIOSK_FAMILY, DEMO_KIOSK_STORY, DEMO_STORAGE_PREFIX, DEMO_STORY_SEEDS, DEMO_STORYTELLER } from "@/fixtures/demo/family";
 import { requestOrigin } from "@/lib/book/chapter";
+import { PLAYABLE_SUFFIX } from "@/lib/book/playable";
 import { BUCKETS, getDbOrNull } from "@/lib/db";
 import { audioExt } from "@/lib/db/access";
 import { env } from "@/lib/env";
+import { playableCopyInBackground } from "@/lib/pipeline/audio-copy-run";
 import { isStageMode, STAGE_TIMEOUT_MS } from "@/lib/stage";
 import { DEMO_VOICE_KEYS, demoLinks, seedDemo } from "@/scripts/seed-demo";
 import { clientIp, tryAdminPin } from "./ai/_lib/attempts";
@@ -91,7 +93,10 @@ async function uploadVoice(fd: FormData) {
   try {
     const folder = DEMO_STORAGE_PREFIX;
     const { data: old } = await db.storage.from(BUCKETS.audio).list(folder, { limit: 200 });
-    const stale = (old ?? []).filter((f) => f.name.replace(/\.[a-z0-9]+$/i, "") === key).map((f) => `${folder}/${f.name}`);
+    // #348: и копию для iPhone `<key>.aac.m4a` (#325) — иначе плеер до ночи играл бы старый голос
+    const stale = (old ?? [])
+      .filter((f) => f.name.replace(/\.[a-z0-9]+$/i, "") === key || f.name === `${key}${PLAYABLE_SUFFIX}`)
+      .map((f) => `${folder}/${f.name}`);
     if (stale.length) await db.storage.from(BUCKETS.audio).remove(stale);
     const path = `${folder}/${key}.${ext}`;
     const up = await db.storage.from(BUCKETS.audio).upload(path, Buffer.from(await file.arrayBuffer()), { contentType: file.type || "audio/mp4", upsert: true });
@@ -100,7 +105,10 @@ async function uploadVoice(fd: FormData) {
     if (key === "consent") await db.from("storytellers").update({ consent_audio_url: path }).eq("id", DEMO_STORYTELLER.id);
     else {
       const storyId = key === DEMO_KIOSK_STORY.key ? DEMO_KIOSK_STORY.id : DEMO_STORY_SEEDS.find((s) => s.key === key)?.id;
-      if (storyId) await db.from("stories").update({ audio_url: path }).eq("id", storyId);
+      if (storyId) {
+        await db.from("stories").update({ audio_url: path }).eq("id", storyId);
+        playableCopyInBackground(storyId, path); // #347: webm / ogg → копия для iPhone сразу
+      }
     }
   } catch (e) {
     back("err", `Голос не загрузился: ${e instanceof Error ? e.message : String(e)}`);
