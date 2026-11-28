@@ -3,7 +3,7 @@ import { getDbOrNull } from "@/lib/db";
 import { getBotConfig } from "./config";
 import { createGithub } from "./github";
 import { createBot } from "./handler";
-import { createOps } from "./ops";
+import { createOps, stagingDbFromEnv } from "./ops";
 import { MemoryBotStore, SupabaseBotStore, type BotStore } from "./store";
 import { createTelegram } from "./telegram";
 import type { HealthResult } from "./texts";
@@ -44,7 +44,7 @@ export function getBot() {
       store: getStore(),
       fetchHealth: () => fetchHealth(cfg.prodUrl),
       fetchUrlHealth: (url) => fetchHealth(url, 5_000),
-      ops: createOps(getDbOrNull()),
+      ops: createOps(getDbOrNull(), stagingDbFromEnv()),
     }),
   };
 }

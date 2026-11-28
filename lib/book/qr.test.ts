@@ -1,5 +1,5 @@
-import { describe, expect, it } from "vitest";
-import { listenPath, listenUrl, qrSvg, qrSvgFile, signListen, verifyListen } from "./qr";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { legacyListenSecret, listenPath, listenUrl, qrSvg, qrSvgFile, signListen, verifyListen } from "./qr";
 
 const ID = "3f1c2a4e-5b6d-4e7f-8a9b-0c1d2e3f4a5b";
 const KEY = "test-secret";
@@ -34,6 +34,47 @@ describe("подпись ссылки на голос", () => {
   it("ссылка /listen/<id>?s=…, origin без лишнего слэша", () => {
     expect(listenPath(ID, KEY)).toBe(`/listen/${ID}?s=${signListen(ID, KEY)}`);
     expect(listenUrl("https://kniga.example/", ID, KEY)).toBe(`https://kniga.example/listen/${ID}?s=${signListen(ID, KEY)}`);
+  });
+});
+
+describe("#67: LISTEN_SECRET не ломает напечатанные QR", () => {
+  const SERVICE = "service-role-key-for-test";
+  afterEach(() => vi.unstubAllEnvs());
+
+  it("ссылка, подписанная старым способом (из ключа базы), открывается после появления LISTEN_SECRET", () => {
+    vi.stubEnv("SUPABASE_SERVICE_ROLE_KEY", SERVICE);
+    vi.stubEnv("LISTEN_SECRET", "");
+    const printed = signListen(ID); // QR в PDF / на слайде до #67
+    expect(printed).toBe(signListen(ID, legacyListenSecret(SERVICE)));
+
+    vi.stubEnv("LISTEN_SECRET", "new-listen-secret");
+    expect(verifyListen(ID, printed)).toBe(true);
+    // новые QR — новым секретом, и они тоже открываются
+    const fresh = signListen(ID);
+    expect(fresh).toBe(signListen(ID, "new-listen-secret"));
+    expect(fresh).not.toBe(printed);
+    expect(verifyListen(ID, fresh)).toBe(true);
+    expect(listenPath(ID)).toBe(`/listen/${ID}?s=${fresh}`);
+  });
+
+  it("без LISTEN_SECRET — как до #67: подпись из ключа базы", () => {
+    vi.stubEnv("SUPABASE_SERVICE_ROLE_KEY", SERVICE);
+    vi.stubEnv("LISTEN_SECRET", "");
+    expect(signListen(ID)).toBe(signListen(ID, legacyListenSecret(SERVICE)));
+    expect(verifyListen(ID, signListen(ID, "new-listen-secret"))).toBe(false);
+  });
+
+  it("чужие секреты по-прежнему не проходят; другая история — тоже", () => {
+    vi.stubEnv("SUPABASE_SERVICE_ROLE_KEY", SERVICE);
+    vi.stubEnv("LISTEN_SECRET", "new-listen-secret");
+    expect(verifyListen(ID, signListen(ID, "чужой"))).toBe(false);
+    expect(verifyListen(ID, signListen(ID, legacyListenSecret("другой-ключ")))).toBe(false);
+    expect(verifyListen(`${ID.slice(0, -1)}c`, signListen(ID))).toBe(false);
+  });
+
+  it("явный набор ключей в verifyListen", () => {
+    expect(verifyListen(ID, signListen(ID, "b"), ["a", "b"])).toBe(true);
+    expect(verifyListen(ID, signListen(ID, "c"), ["a", "b"])).toBe(false);
   });
 });
 

@@ -1,8 +1,11 @@
 // QR главы (I3): подпись публичной ссылки на голос и QR в SVG.
 // /listen/<storyId>?s=<подпись> открывается без токена семьи и только для этой истории.
 // Подпись — HMAC-SHA256(storyId), первые 16 байт в base64url (22 символа — QR остаётся крупным и читается со слайда).
-// Секрет: LISTEN_SECRET, иначе выводится из SUPABASE_SERVICE_ROLE_KEY (ничего не нужно заводить руками),
+// Секрет подписи (#67): LISTEN_SECRET, если задан, иначе прежний — выводится из SUPABASE_SERVICE_ROLE_KEY;
 // без Supabase — локальный секрет (режим mock / тесты).
+// Проверка принимает ОБА секрета: новый LISTEN_SECRET и прежний (из ключа базы). Так QR, напечатанные до появления
+// LISTEN_SECRET (PDF книг, слайды, демо), открываются и после: ни одна старая ссылка не ломается. Новые QR / PDF
+// подписываются новым секретом. Без LISTEN_SECRET всё как до #67. Прежний секрет живёт, пока не сменили service-ключ.
 // Здесь нет server-only, чтобы функции тестировались напрямую; секрет читается только на сервере.
 import { createHash, createHmac, timingSafeEqual } from "node:crypto";
 import QRCode from "qrcode";
@@ -11,12 +14,22 @@ import { env } from "@/lib/env";
 const SIG_BYTES = 16;
 const SIG_RE = /^[A-Za-z0-9_-]{22}$/;
 
-function secret(): string {
-  const explicit = env.listenSecret();
-  if (explicit) return explicit;
-  const service = env.supabaseServiceRoleKey();
+/** Прежний секрет (до #67): из service-ключа базы, без Supabase — локальный. */
+export function legacyListenSecret(service = env.supabaseServiceRoleKey()): string {
   if (service) return createHash("sha256").update(`kniga-semyi:listen:v1:${service}`).digest("hex");
   return "kniga-semyi-local-listen-secret";
+}
+
+/** Секрет для НОВЫХ подписей: LISTEN_SECRET, иначе прежний. */
+function secret(): string {
+  return env.listenSecret() ?? legacyListenSecret();
+}
+
+/** Секреты, которыми проверяем подпись: новый (если задан) и прежний — без повторов. */
+function verifyKeys(): string[] {
+  const explicit = env.listenSecret();
+  const legacy = legacyListenSecret();
+  return explicit && explicit !== legacy ? [explicit, legacy] : [legacy];
 }
 
 function mac(storyId: string, key: string): Buffer {
@@ -28,12 +41,21 @@ export function signListen(storyId: string, key = secret()): string {
   return mac(storyId, key).toString("base64url");
 }
 
-/** Проверка подписи (в постоянное время). Любая ошибка формата → false. */
-export function verifyListen(storyId: string, sig: string | null | undefined, key = secret()): boolean {
+/**
+ * Проверка подписи (в постоянное время). Любая ошибка формата → false.
+ * key — проверить одним секретом (тесты); без него — новым LISTEN_SECRET и прежним секретом (#67).
+ */
+export function verifyListen(storyId: string, sig: string | null | undefined, key?: string | string[]): boolean {
   if (!sig || !SIG_RE.test(sig) || !storyId) return false;
   const given = Buffer.from(sig, "base64url");
-  const expected = mac(storyId, key);
-  return given.length === expected.length && timingSafeEqual(given, expected);
+  const keys = key === undefined ? verifyKeys() : Array.isArray(key) ? key : [key];
+  let okAny = false;
+  for (const k of keys) {
+    const expected = mac(storyId, k);
+    // все ключи проверяем всегда — время ответа не зависит от того, какой подошёл
+    if (given.length === expected.length && timingSafeEqual(given, expected)) okAny = true;
+  }
+  return okAny;
 }
 
 /** Путь публичной страницы голоса: /listen/<id>?s=<подпись> */

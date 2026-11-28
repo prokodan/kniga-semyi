@@ -63,8 +63,42 @@ export function redChecks(runs: GhRun[]): { red: GhRun[]; fixed: string[] } {
 
 const usd = (n: number) => `$${n < 10 ? n.toFixed(2) : n.toFixed(0)}`;
 
-export function aiLine(s: DigestStats): string {
+type Spend = { yesterday: number; month: number };
+const ZERO: Spend = { yesterday: 0, month: 0 };
+
+/** Расход одной базы: все окружения в ней (в базе staging — только staging). */
+function spendOf(s: DigestStats, only?: string): Spend {
+  const rows = Object.entries(s.ai).filter(([env]) => !only || env === only);
+  return rows.reduce((acc, [, v]) => ({ yesterday: acc.yesterday + Number(v.yesterday ?? 0), month: acc.month + Number(v.month ?? 0) }), ZERO);
+}
+
+/** «вчера $a · месяц $b из $B (N%)» + значок 🟠 при ≥ 80% бюджета месяца. */
+function budgetLine(title: string, calmIcon: string, spend: Spend, budgetMonth: number | null | undefined): string {
+  const budget = budgetMonth ? Number(budgetMonth) : null;
+  const share = budget ? spend.month / budget : null;
+  const icon = share !== null && share >= 0.8 ? "🟠" : calmIcon;
+  const of = budget ? ` из ${usd(budget)} (${Math.round(share! * 100)}%)` : "";
+  return `${icon} ${title}: вчера ${usd(spend.yesterday)} · месяц ${usd(spend.month)}${of}`;
+}
+
+/**
+ * Строка расхода ИИ. staging (#263):
+ * - undefined — база staging боту не настроена → как раньше: одна строка, прод + staging, бюджет прода против прода;
+ * - данные базы staging → две строки: прод (свой бюджет) и staging (свой бюджет и свой расход по своей базе);
+ * - null — база staging не ответила → прод отдельно, staging — расход из отчёта прода, без бюджета.
+ */
+export function aiLine(s: DigestStats, staging?: DigestStats | null): string {
   const envs = Object.entries(s.ai).sort(([a], [b]) => (a === "prod" ? -1 : b === "prod" ? 1 : a.localeCompare(b)));
+  if (staging !== undefined) {
+    const prod = envs.length > 1 || s.ai.prod ? spendOf(s, "prod") : spendOf(s);
+    const lines = [budgetLine("ИИ прод", "🤖", prod, s.budget?.month)];
+    if (staging) lines.push(budgetLine("ИИ staging", "🧪", spendOf(staging), staging.budget?.month));
+    else {
+      const seen = s.ai.staging ? spendOf(s, "staging") : null;
+      lines.push(`⚪️ ИИ staging: база staging не ответила${seen ? ` · по отчёту прода месяц ${usd(seen.month)}` : ""}`);
+    }
+    return lines.join("\n");
+  }
   const sum = (k: "yesterday" | "month") => envs.reduce((acc, [, v]) => acc + Number(v[k] ?? 0), 0);
   const split = (k: "yesterday" | "month") =>
     envs.length > 1 ? ` (${envs.map(([env, v]) => `${e(env)} ${usd(Number(v[k] ?? 0))}`).join(" + ")})` : "";
@@ -85,6 +119,8 @@ export type DigestInput = {
   /** null — не удалось прочитать Actions */
   runs: GhRun[] | null;
   stats: DigestStats | null;
+  /** #263: цифры базы staging (свой бюджет); undefined — база staging боту не настроена, null — не ответила */
+  staging?: DigestStats | null;
   repo: string;
   /** github login → «Данил» / «Влад» */
   who: (login: string) => string;
@@ -139,7 +175,7 @@ export function buildDigest(d: DigestInput): string {
 
   const calm = alerts.length === 0 || alerts.every((l) => l.startsWith("🟢"));
   lines.push(...(calm ? ["✅ Всё спокойно: проверки зелёные, PR и дел людей нет, главы не висят.", ...alerts] : alerts));
-  lines.push(d.stats ? aiLine(d.stats) : "🤖 ИИ: нет данных из базы");
+  lines.push(d.stats ? aiLine(d.stats, d.staging) : "🤖 ИИ: нет данных из базы");
   lines.push(`📋 Открытых задач: ${d.overview.open} · закрыто за неделю: ${d.overview.closedWeek} · пульт — /menu`);
   return lines.join("\n");
 }

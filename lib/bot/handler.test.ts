@@ -371,6 +371,27 @@ describe("сводка: части (#212)", () => {
     expect(calm.startsWith("🤖")).toBe(true);
   });
 
+  it("#263: база staging настроена — прод и staging отдельными строками, у каждой свой бюджет", () => {
+    const prodDb: DigestStats = { ...STATS, ai: { staging: { yesterday: 0.05, today: 0, month: 0.5 }, prod: { yesterday: 0.25, today: 0, month: 8 } } };
+    const stagingDb: DigestStats = { ...STATS, ai: { staging: { yesterday: 0.1, today: 0, month: 4.2 } }, budget: { day: 1, month: 5 } };
+    expect(aiLine(prodDb, stagingDb)).toBe("🟠 ИИ прод: вчера $0.25 · месяц $8.00 из $10 (80%)\n🟠 ИИ staging: вчера $0.10 · месяц $4.20 из $5.00 (84%)");
+    const calm = aiLine(prodDb, { ...stagingDb, ai: { staging: { yesterday: 0, today: 0, month: 1 } } });
+    expect(calm.split("\n")[1]).toBe("🧪 ИИ staging: вчера $0.00 · месяц $1.00 из $5.00 (20%)");
+    // без бюджета staging — без процента
+    expect(aiLine(prodDb, { ...stagingDb, budget: null }).split("\n")[1]).toBe("🧪 ИИ staging: вчера $0.10 · месяц $4.20");
+    // не ответила — расход из отчёта прода, без бюджета
+    expect(aiLine(prodDb, null).split("\n")[1]).toBe("⚪️ ИИ staging: база staging не ответила · по отчёту прода месяц $0.50");
+    // не настроена — как раньше, одной строкой
+    expect(aiLine(prodDb, undefined)).toBe(aiLine(prodDb));
+  });
+
+  it("#263: сводка берёт staging из ops.stagingStats", async () => {
+    const empty = buildOverview([], [], NOON);
+    const text = buildDigest({ now: NOON, milestones: cfg.milestones, overview: empty, runs: [], stats: STATS, staging: { ...STATS, ai: { staging: { yesterday: 0, today: 0, month: 2 } }, budget: { day: 1, month: 5 } }, repo: cfg.repo, who: (x) => x });
+    expect(text).toContain("🤖 ИИ прод: вчера $0.25 · месяц $1.75 из $10 (18%)");
+    expect(text).toContain("🧪 ИИ staging: вчера $0.00 · месяц $2.00 из $5.00 (40%)");
+  });
+
   it("пусто — «всё спокойно»; зависшие главы и новые семьи — числом", () => {
     const empty = buildOverview([], [], NOON);
     const calm = buildDigest({ now: NOON, milestones: cfg.milestones, overview: empty, runs: [], stats: STATS, repo: cfg.repo, who: (x) => x });
