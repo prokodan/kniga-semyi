@@ -21,6 +21,7 @@ const sampleInputs: Record<AiStep, unknown> = {
   persona_reply: { persona: "# Ким\n- Родился в 1940 году в Уштобе, в семье рисоводов колхоза.", question: "Где вы родились?", history: [] },
   judge: { storytellerName: "Ким", manner: "Говорит коротко", chapters: [{ id: "s1", transcript: "Ну, значит…", text_ru: "Я родился" }] },
   back_translate: { chapters: [{ id: "s1", text_ru: "Я родился", text_ko: "나는 태어났다" }] },
+  quality_generate: { kind: "text", pair: "ru-kk", count: 2, nuance_tags: ["kinship"], persona: { name: "Айгүл", bio: "…", speech_style: "…" } },
 };
 
 describe("mock provider", () => {

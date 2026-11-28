@@ -13,6 +13,7 @@ import { PLAYABLE_SUFFIX } from "@/lib/book/playable";
 import { BUCKETS, getDbOrNull } from "@/lib/db";
 import { audioExt } from "@/lib/db/access";
 import { env } from "@/lib/env";
+import { flag } from "@/lib/flags";
 import { playableCopyInBackground } from "@/lib/pipeline/audio-copy-run";
 import { isStageMode, STAGE_TIMEOUT_MS } from "@/lib/stage";
 import { DEMO_VOICE_KEYS, demoLinks, seedDemo } from "@/scripts/seed-demo";
@@ -299,6 +300,12 @@ export default async function AdminPage({ searchParams }: { searchParams: Search
       <Link href="/admin/reviews" className="flex min-h-12 items-center justify-center rounded-button border border-line bg-paper px-4">
         Носители: ссылки на проверку перевода →
       </Link>
+      {/* #352: контур качества — только где включён флаг quality_loop (staging) */}
+      {flag("quality_loop") ? (
+        <Link href="/admin/quality" className="flex min-h-12 items-center justify-center rounded-button border border-line bg-paper px-4">
+          Качество: банк проверок, прогоны →
+        </Link>
+      ) : null}
     </Shell>
   );
 }

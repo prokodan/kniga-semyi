@@ -65,6 +65,13 @@ const DEFS = {
     owner: "Влад",
     issue: 306,
   },
+  quality_loop: {
+    description:
+      "Контур качества #351 / #352: /admin/quality (банк вымышленных личностей и текстов с нюансами, генерация, прогон боевым " +
+      "конвейером на staging). Только админка — семьи ничего не видят.",
+    owner: "Влад",
+    issue: 352,
+  },
 } as const satisfies Record<string, FlagInfo>;
 
 export type FlagName = keyof typeof DEFS;
