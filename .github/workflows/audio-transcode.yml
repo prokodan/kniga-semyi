@@ -1,0 +1,94 @@
+name: audio-transcode
+
+# #325: голоса, которые iPhone < 17 не играет (webm / ogg / Opus в mp4 — старый Chrome, Firefox, Samsung Internet),
+# → копия AAC `*.aac.m4a` рядом в бакете audio (ffmpeg здесь: на Vercel его нет). Плеер /listen (и QR главы) берёт
+# копию, если она есть. Оригиналы и stories.audio_url не трогаем, ничего не удаляем (scripts/audio-transcode.ts).
+# Вручную: target prod | staging, apply выключен = dry run (только план). comment — номер issue для плана комментарием.
+# Раз в сутки (20:47 UTC = 01:47 Алматы) — обе базы с записью; больше 50 записей за раз по расписанию — только план
+# (большой пакет — вручную: dry run → apply). В лог — только короткие id и числа.
+on:
+  schedule:
+    - cron: "47 20 * * *"
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "База: prod — боевая, staging — база превью"
+        type: choice
+        options: [staging, prod]
+        default: staging
+      apply:
+        description: "Сделать копии (иначе только показать план)"
+        type: boolean
+        default: false
+      max:
+        description: "Не больше записей за запуск"
+        type: string
+        default: "300"
+      comment:
+        description: "Номер issue для итога комментарием (пусто — не писать)"
+        type: string
+        default: ""
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  transcode:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        target: ${{ github.event_name == 'schedule' && fromJSON('["staging","prod"]') || fromJSON(format('["{0}"]', inputs.target)) }}
+    concurrency:
+      group: audio-transcode-${{ matrix.target }}
+      cancel-in-progress: false
+    env:
+      TARGET: ${{ matrix.target }}
+      PROD_SB_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
+      PROD_SB_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+      STG_SB_URL: ${{ secrets.STAGING_SUPABASE_URL }}
+      STG_SB_KEY: ${{ secrets.STAGING_SUPABASE_SERVICE_ROLE_KEY }}
+      AUDIO_TARGET: ${{ matrix.target }}
+      AUDIO_APPLY: ${{ (github.event_name == 'schedule' || inputs.apply) && '1' || '0' }}
+      AUDIO_SCHEDULED: ${{ github.event_name == 'schedule' && '1' || '0' }}
+      AUDIO_MAX: ${{ inputs.max || '300' }}
+    steps:
+      - name: Выбор базы
+        id: pick
+        run: |
+          if [ "$TARGET" = "staging" ]; then url="$STG_SB_URL"; key="$STG_SB_KEY"; names="STAGING_SUPABASE_URL и STAGING_SUPABASE_SERVICE_ROLE_KEY"
+          else url="$PROD_SB_URL"; key="$PROD_SB_KEY"; names="NEXT_PUBLIC_SUPABASE_URL и SUPABASE_SERVICE_ROLE_KEY"; fi
+          if [ -z "$url" ] || [ -z "$key" ]; then
+            if [ "${{ github.event_name }}" = "schedule" ]; then echo "::notice::$TARGET: нет секретов $names — пропуск"; echo "skip=1" >> "$GITHUB_OUTPUT"; exit 0; fi
+            echo "::error::Нужны секреты $names ($TARGET)"; exit 1
+          fi
+          { echo "NEXT_PUBLIC_SUPABASE_URL=$url"; echo "SUPABASE_SERVICE_ROLE_KEY=$key"; } >> "$GITHUB_ENV"
+      - uses: actions/checkout@v7
+        if: steps.pick.outputs.skip != '1'
+      - uses: actions/setup-node@v7
+        if: steps.pick.outputs.skip != '1'
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+        if: steps.pick.outputs.skip != '1'
+      - name: ffmpeg
+        if: steps.pick.outputs.skip != '1'
+        run: |
+          command -v ffmpeg >/dev/null && command -v ffprobe >/dev/null || { sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg >/dev/null; }
+          ffmpeg -hide_banner -version | head -n 1
+      - name: Перекодировка (${{ matrix.target }})
+        if: steps.pick.outputs.skip != '1'
+        run: npx tsx scripts/audio-transcode.ts
+      - name: Итог комментарием в issue
+        if: always() && steps.pick.outputs.skip != '1' && inputs.comment != '' && hashFiles('audio-transcode.md') != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ISSUE: ${{ inputs.comment }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          [[ "$ISSUE" =~ ^[0-9]+$ ]] || { echo "::warning::comment — не номер issue"; exit 0; }
+          { cat audio-transcode.md; echo; echo "Запуск: $RUN_URL"; } > body.md
+          gh api "repos/${{ github.repository }}/issues/$ISSUE/comments" -F body=@body.md --jq .html_url
