@@ -95,6 +95,7 @@ describe("#149: поздний ответ на уточнение не пере�
   it("опоздавшая запись-уточнение к поправленной свежей главе — только приклеивается (lateChild)", async () => {
     const router = createRouter({ store: new MemoryStore(), mode: () => "mock" });
     const repo = new MemoryPipelineRepo();
+    repo.audio.set("a.webm", { data: Buffer.from("x") });
     const pipeline = createPipeline({ ai: router, repo });
     const at = new Date(Date.now() - 5 * 60_000).toISOString();
     const base: Omit<Story, "id" | "parent_story_id" | "question_id" | "audio_url" | "transcript" | "text_ru" | "text_ko" | "title" | "status"> = { family_id: "fam-1", storyteller_id: "st-1", session_id: null, block: "roots", duration_sec: null, title_ko: null, quote: null, quote_ko: null, facts: [], followups: [], error: null, sort_order: null, created_at: at, updated_at: at };
