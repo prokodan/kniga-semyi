@@ -100,6 +100,7 @@ export const KZ_GLOSSARY: KzTerm[] = [
   { kk: "Тараз", ru: ["тараз", "джамбул", "жамбыл"], meaning: "Тараз (Джамбул)", section: "place" },
   { kk: "Майқұдық", ru: ["майкудук"], meaning: "Майкудук (Караганда)", section: "place", unsure: true },
   // ── из отзывов носителей (#354: quality-propose дописывает сюда и строку в prompts/translate.kk.md; слияние — после eval) ──
+  { kk: "ағам", ru: ["старший брат"], meaning: "«Старший брат» переведён как «інім» (младший брат) — должно быть «ағам».", section: "kinship", unsure: true }, // отзыв носителя, находка 710f8d5a
   // quality-propose: новые термины из отзывов носителей — над этой строкой
 ];
 
