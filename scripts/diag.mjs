@@ -36,11 +36,36 @@ const ago = (iso) => {
 };
 const clean = (s, n = 140) =>
   s ? String(s).replace(/\s+/g, " ").replace(/\|/g, "/").replace(/https?:\/\/\S+/g, "<url>").slice(0, n) : "";
+/**
+ * #245: тексты глав по правилу story_texts → колонки (без печати текстов — только для счёта и «следующего шага»).
+ * Нет таблицы / ошибка — колонки, как раньше. `translated` — есть перевод на любой язык, кроме ru (ko — колонка, kk — строка).
+ */
+async function withTexts(stories) {
+  const ids = stories.map((s) => s.id);
+  let rows = [];
+  try {
+    for (let i = 0; i < ids.length; i += 100)
+      rows.push(...(await rest(`story_texts?select=story_id,lang,title,text,quote&story_id=in.(${ids.slice(i, i + 100).join(",")})`)));
+  } catch {
+    rows = [];
+  }
+  return stories.map((s) => {
+    const mine = rows.filter((r) => r.story_id === s.id);
+    const ru = mine.find((r) => r.lang === "ru");
+    const ko = mine.find((r) => r.lang === "ko");
+    const out = { ...s };
+    if (ru) Object.assign(out, { text_ru: ru.text }, "title" in s ? { title: ru.title } : {}, "quote" in s ? { quote: ru.quote } : {});
+    if (ko && "text_ko" in s) out.text_ko = ko.text;
+    out.translated = Boolean(out.text_ko) || mine.some((r) => r.lang !== "ru" && r.text);
+    return out;
+  });
+}
+
 function nextStep(s) {
   if (!s.transcript?.trim()) return "transcribe";
   if (s.parent_story_id) return "—";
   if (!s.text_ru) return "edit";
-  if (!s.text_ko) return "translate";
+  if (!s.translated) return "translate"; // #245: ko — колонка, kk — story_texts
   return "—";
 }
 
@@ -50,8 +75,10 @@ const log = (line = "") => {
   console.log(line);
 };
 
-const stories = await rest(
-  `stories?select=id,family_id,storyteller_id,parent_story_id,question_id,block,status,error,audio_url,duration_sec,transcript,text_ru,text_ko,followups,created_at,updated_at&order=created_at.desc&limit=${LIMIT}`,
+const stories = await withTexts(
+  await rest(
+    `stories?select=id,family_id,storyteller_id,parent_story_id,question_id,block,status,error,audio_url,duration_sec,transcript,text_ru,text_ko,followups,created_at,updated_at&order=created_at.desc&limit=${LIMIT}`,
+  ),
 );
 const famIds = [...new Set(stories.map((s) => s.family_id))];
 const stIds = [...new Set(stories.map((s) => s.storyteller_id))];

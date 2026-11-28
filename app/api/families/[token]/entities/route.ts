@@ -1,6 +1,6 @@
 import { entityService } from "@/lib/entities";
 import { readJson } from "@/app/api/_family/http";
-import { changeResponse, EntityBody, entityError, ok, requireFamily } from "./_lib";
+import { bookOf, changeResponse, EntityBody, entityError, ok, requireFamily } from "./_lib";
 
 export const dynamic = "force-dynamic";
 
@@ -17,13 +17,14 @@ export async function GET(_req: Request, ctx: { params: Promise<{ token: string 
   }
 }
 
-// POST /api/families/:token/entities — добавить запись вручную { kind, name_ru, name_ko?, description? }.
+// POST /api/families/:token/entities — добавить запись вручную { kind, name_ru, name_ko?, name_kk? (RU + KZ), description? }.
 export async function POST(req: Request, ctx: { params: Promise<{ token: string }> }) {
   try {
     const { token } = await ctx.params;
     const { family } = await requireFamily(token);
     const body = EntityBody.parse((await readJson(req)) ?? {});
-    return changeResponse(await entityService().add(family.id, body), 201);
+    const { langs, opts } = bookOf(family);
+    return changeResponse(await entityService().add(family.id, body, opts), 201, langs);
   } catch (e) {
     return entityError(e);
   }

@@ -6,6 +6,7 @@ import "server-only";
 // Свой загрузчик, а не app/api/center/_lib/archive.ts: там ссылки с токеном для кабинета центра.
 import { BLOCKS } from "@/content/questions/blocks";
 import { orderByLife } from "@/lib/book/order";
+import { loadStoryTexts, withStoryTexts } from "@/lib/book/texts";
 import { getDbOrNull } from "@/lib/db";
 import { getFamilyStore, type MemoryFamilyStore } from "@/lib/db/access";
 import type { Family, Story, Storyteller } from "@/lib/types";
@@ -84,7 +85,10 @@ async function rows(): Promise<ShowRows> {
   ]);
   if (st.error) throw new Error(`архив киоска, рассказчики: ${st.error.message}`);
   if (stories.error) throw new Error(`архив киоска, главы: ${stories.error.message}`);
-  return { families, storytellers: (st.data ?? []) as StPick[], stories: (stories.data ?? []) as StoryPick[] };
+  // #245: текст глав — story_texts, если строка есть, иначе колонки (одна загрузка на запрос)
+  const list = (stories.data ?? []) as StoryPick[];
+  const texts = await loadStoryTexts(db, list.map((s) => s.id));
+  return { families, storytellers: (st.data ?? []) as StPick[], stories: list.map((s) => withStoryTexts(s, texts)) };
 }
 
 const byCreated = <T extends { created_at: string }>(xs: T[]) => [...xs].sort((a, b) => a.created_at.localeCompare(b.created_at));
