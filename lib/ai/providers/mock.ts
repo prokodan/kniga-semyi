@@ -114,6 +114,32 @@ export function mockOutput<S extends AiStep>(step: S, input: ProviderCall<S>["in
         }),
       };
     }
+    case "quality_generate": {
+      // #352: заглушка банка проверок — предсказуемые вымышленные личность / текст (номер — по variant)
+      const i = input as ProviderCall<"quality_generate">["input"];
+      const n = i.variant + 1;
+      const tags = i.nuance_tags.length ? i.nuance_tags : ["kinship"];
+      if (i.kind === "persona") {
+        const personas = Array.from({ length: i.count }, (_, k) => ({
+          name: `Заглушкина Анна ${n}.${k + 1}`,
+          bio: "Вымышленная рассказчица для проверки. Родилась в 1948 году в посёлке у реки, работала учительницей, вырастила троих детей, сейчас живёт с дочерью.",
+          speech_style: "Говорит неторопливо, повторяет «ну вот», зовёт внуков «мои хорошие».",
+          tags,
+        }));
+        return { personas, texts: [] };
+      }
+      const who = i.persona?.name ?? "рассказчица";
+      const texts = Array.from({ length: i.count }, (_, k) => ({
+        event: `Заглушка ${n}.${k + 1}: зима ${1950 + n}`,
+        text:
+          `Это говорит ${who}. Зимой ${1950 + n} года мой младший брат Коля и старшая сестра Валя ходили со мной в школу за четыре километра. ` +
+          "Мама давала нам по куску хлеба, а папа говорил: «Учитесь, дети мои, чтобы жить лучше нас». Внуки мои, запомните это. " +
+          "В колхозе тогда работали все, от мала до велика, и мы тоже помогали на току после уроков.",
+        nuance_tags: tags,
+        focus_terms: ["младший брат", "старшая сестра", "Внуки мои"],
+      }));
+      return { personas: [], texts };
+    }
     default:
       throw new Error(`mock: неизвестный шаг ${String(step)}`);
   }

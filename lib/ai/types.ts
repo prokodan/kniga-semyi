@@ -15,6 +15,8 @@ export const AI_STEPS = [
   // Оценка качества (I11, только eval): судья голоса и обратный перевод KR→RU другой моделью.
   "judge",
   "back_translate",
+  // #352 (v2 Q1): банк проверок контура качества — вымышленные личности и тексты с нюансами (только /admin/quality, staging).
+  "quality_generate",
 ] as const;
 export type AiStep = (typeof AI_STEPS)[number];
 
@@ -194,6 +196,24 @@ export const inputSchemas = {
       .min(1)
       .max(20),
   }),
+  quality_generate: z.object({
+    /** Что сочинить: личность (биография + манера речи) или текст с нюансами от лица личности */
+    kind: z.enum(["persona", "text"]),
+    /** Языковая пара «откуда-куда»: ru-ko, ru-kk, kk-ru (docs/v2/QUALITY_LOOP.md §1) */
+    pair: z.string().regex(/^[a-z]{2}-[a-z]{2}$/),
+    /** Сколько штук в одном ответе (кнопка делит N на несколько параллельных вызовов) */
+    count: z.number().int().min(1).max(3).default(1),
+    /** Теги нюансов (lib/quality/types.ts NUANCE_TAGS): текст нагружен ими; у личности — что должно быть в речи */
+    nuance_tags: z.array(z.string().max(40)).max(8).default([]),
+    /** Культурный пакет личности: koryo, kz, general */
+    pack: z.string().max(40).optional(),
+    /** Для текста — чей рассказ (вымышленная личность банка) */
+    persona: z.object({ name: z.string().max(120), bio: z.string().max(6000), speech_style: z.string().max(1500) }).optional(),
+    /** Что уже есть в банке (имена личностей, события текстов) — не повторять */
+    avoid: z.array(z.string().max(160)).max(60).default([]),
+    /** Номер параллельного вызова — разный вход, разный ключ кэша, разные ответы */
+    variant: z.number().int().min(0).max(20).default(0),
+  }),
 } satisfies Record<AiStep, z.ZodType>;
 
 /** #231: { text, title, quote } (перевод на kk / ru) → { text_ko, title_ko, quote_ko }; ответ с text_ko — как есть. */
@@ -301,6 +321,34 @@ export const outputSchemas = {
       }),
     ),
   }),
+  // #352: ответ с личностями или текстами (что просили во входе); лишние поля модели отбрасываем.
+  quality_generate: z
+    .object({
+      personas: z
+        .array(
+          z.object({
+            name: z.string().min(2).max(120),
+            bio: z.string().min(80).max(6000),
+            speech_style: z.string().min(20).max(1500),
+            tags: z.array(z.string().max(40)).max(12).default([]),
+          }),
+        )
+        .max(3)
+        .default([]),
+      texts: z
+        .array(
+          z.object({
+            event: z.string().min(2).max(200),
+            text: z.string().min(200).max(4000),
+            nuance_tags: z.array(z.string().max(40)).max(8).default([]),
+            /** Слова оригинала, на которые смотреть проверяющему (родство, обращения, реалии) */
+            focus_terms: z.array(z.string().max(80)).max(12).default([]),
+          }),
+        )
+        .max(3)
+        .default([]),
+    })
+    .refine((o) => o.personas.length + o.texts.length > 0, "quality_generate: пустой ответ"),
 } satisfies Record<AiStep, z.ZodType>;
 
 export type AiInput<S extends AiStep> = z.input<(typeof inputSchemas)[S]>;

@@ -59,6 +59,13 @@ export const DEFAULT_ROUTES: Record<AiStep, Route> = {
   // I11: судья на Flash-Lite (квота); обратный перевод — сначала ДРУГАЯ модель (Flash), чем у translate.
   judge: route("judge", [FLASH_LITE, OPENAI_TEXT], 40_000),
   back_translate: route("back_translate", [FLASH, OPENAI_TEXT, FLASH_LITE], 60_000),
+  // #352: банк проверок — самая сильная модель OpenAI, которую видит ключ (gpt-5.5 → 404 → gpt-5.4 → gpt-5.4-mini).
+  // Только /admin/quality на staging; 50 с — чтобы «Сгенерировать N» уложилась в лимит функции 60 с.
+  quality_generate: route(
+    "quality_generate",
+    [{ provider: "openai", model: "gpt-5.5" }, { provider: "openai", model: "gpt-5.4" }, OPENAI_TEXT],
+    50_000,
+  ),
 };
 
 export const DEFAULT_PROVIDERS: Record<AiProviderName, ProviderSettings> = {
@@ -87,6 +94,9 @@ export interface Price {
 export const PRICING: Record<string, Price> = {
   "gemini-3.5-flash-lite": { inPerM: 0.3, outPerM: 2.5 },
   "gemini-3.6-flash": { inPerM: 0.75, outPerM: 3.75 },
+  // #352: OpenAI Standard, за 1M токенов (openai.com/api/pricing, 28.11.2026) — только quality_generate
+  "gpt-5.5": { inPerM: 5, outPerM: 30 },
+  "gpt-5.4": { inPerM: 2.5, outPerM: 15 },
   "gpt-5.4-mini": { inPerM: 0.75, outPerM: 4.5 },
   "gpt-5-mini": { inPerM: 0.25, outPerM: 2 },
   "gpt-4o-mini": { inPerM: 0.15, outPerM: 0.6 },

@@ -1,9 +1,8 @@
 // /admin/quality/checks — вкладка «Проверки» контура качества (#353, docs/v2/QUALITY_LOOP.md §3.2). Вход — ADMIN_PIN.
 // Новая ссылка: пара → проверяющий → текст / слова → материал (галочки, теги) → срок → ссылка + QR.
 // Таблица ссылок 2.0: открыта / в работе / готово, N из M, отозвать. Старые ссылки #232 — /admin/reviews.
-// Флаг quality_loop (только команда): выключен — вкладка пустая. Каркас /admin/quality и вкладка «Банк» — Q1 (#352).
+// Флаг quality_loop (только команда), вход по PIN, шапка и вкладки — layout /admin/quality (Q1 #352).
 import type { Metadata } from "next";
-import Link from "next/link";
 import { redirect } from "next/navigation";
 import { Badge, Notice, Section, btnGhostCls } from "@/components/admin/ui";
 import { flag } from "@/lib/flags";
@@ -20,7 +19,6 @@ import { NewCheckForm, type MaterialOption } from "./NewCheckForm";
 export const dynamic = "force-dynamic";
 export const metadata: Metadata = { title: "Проверки · качество · админка · Книга семьи", robots: { index: false, follow: false } };
 
-const nav = "flex min-h-12 items-center rounded-button border border-line bg-paper px-4 text-sm";
 const date = (iso: string) =>
   new Intl.DateTimeFormat("ru-RU", { timeZone: "Asia/Almaty", day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" }).format(new Date(iso));
 
@@ -33,28 +31,6 @@ const PHASE = {
 } as const;
 
 const UI_LABEL = { ko: "ko", kk: "kk", ru: "ru" } as const;
-
-function Header() {
-  return (
-    <header className="flex flex-wrap items-center justify-between gap-3">
-      <div>
-        <p className="text-xs tracking-widest text-muted uppercase">Книга семьи · качество</p>
-        <h1 className="font-serif text-2xl">Проверки</h1>
-      </div>
-      <nav className="flex flex-wrap gap-2 text-sm" aria-label="Разделы">
-        <Link href="/admin" className={nav}>
-          Пульт
-        </Link>
-        <Link href="/admin/quality" className={nav}>
-          Банк
-        </Link>
-        <Link href="/admin/reviews" className={nav}>
-          Старые ссылки
-        </Link>
-      </nav>
-    </header>
-  );
-}
 
 function statesOf(b: CheckBundle): ItemState[] {
   const kind = b.link.kind ?? "text";
@@ -71,14 +47,7 @@ function statesOf(b: CheckBundle): ItemState[] {
 export default async function QualityChecksPage() {
   if (!isAdminConfigured() || !(await isAdmin())) redirect("/admin");
 
-  if (!flag("quality_loop")) {
-    return (
-      <main className="mx-auto flex max-w-3xl flex-col gap-4 px-4 py-6 sm:px-6">
-        <Header />
-        <Notice tone="info">Вкладка включается флагом quality_loop — на превью и staging он включён, в проде выключен.</Notice>
-      </main>
-    );
-  }
+  if (!flag("quality_loop")) return null; // layout сам показывает «выключено на этом окружении»
 
   const loaded = await Promise.all(REVIEW_PAIRS.map((p) => loadMaterials(p)));
   const source = loaded.some((l) => l.source === "quality") ? "quality" : "sets";
@@ -118,15 +87,14 @@ export default async function QualityChecksPage() {
   }
 
   return (
-    <main className="mx-auto flex max-w-4xl flex-col gap-4 px-4 py-6 sm:px-6">
-      <Header />
+    <>
       <Notice tone="info">
         Личная ссылка проверяющему: с телефона за 15–20 минут — текст целиком (правка абзаца, 5 критериев с подсказками) или только выделенные
         слова. Только вымышленные тексты:{" "}
         {source === "quality" ? (
           <>банк проверок (quality_items).</>
         ) : (
-          <>пока банк Q1 (#352) не в main — главы прогонов eval по вымышленным персонажам и демо. После слияния Q1 форма возьмёт банк сама.</>
+          <>в банке пока нет прогонов этой базы (вкладка «Банк» → «Прогнать») — пока главы прогонов eval по вымышленным персонажам и демо.</>
         )}
       </Notice>
       {memory ? <Notice tone="info">База не настроена — ссылки живут в памяти сервера (локальный режим).</Notice> : null}
@@ -136,7 +104,7 @@ export default async function QualityChecksPage() {
         <NewCheckForm materials={options} tagsByPair={tagsByPair} />
       </Section>
 
-      <Section title="Ссылки" hint={legacy ? <>Ещё {legacy} старых ссылок (#232) — в «Старые ссылки».</> : "Ссылку целиком мы не храним: потеряли — создайте новую и отзовите старую."}>
+      <Section title="Ссылки" hint={legacy ? <>Ещё {legacy} старых ссылок (#232) — в /admin/reviews («Носители»).</> : "Ссылку целиком мы не храним: потеряли — создайте новую и отзовите старую."}>
         {rows && rows.length === 0 ? <p className="text-ink-soft">Ссылок пока нет.</p> : null}
         {rows && rows.length ? (
           <div className="-mx-4 overflow-x-auto px-4 sm:mx-0 sm:px-0">
@@ -196,6 +164,6 @@ export default async function QualityChecksPage() {
           </div>
         ) : null}
       </Section>
-    </main>
+    </>
   );
 }

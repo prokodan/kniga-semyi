@@ -16,7 +16,7 @@ async function ready(page: Page) {
 async function openAdmin(page: Page) {
   await adminLogin(page, PATH);
   await page.goto(PATH);
-  await expect(page.getByRole("heading", { name: "Проверки", exact: true })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Новая ссылка" })).toBeVisible();
   await ready(page);
 }
 

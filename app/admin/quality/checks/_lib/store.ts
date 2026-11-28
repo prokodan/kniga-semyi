@@ -22,7 +22,17 @@ export class CheckLinkError extends Error {}
 
 // ---------------- материал: банк Q1 (quality_items), пока его нет — наборы репозитория ----------------
 
-type QualityRow = { id: string; run_id: string | null; src_text: string; out_text: string; lang_from: string; lang_to: string; focus_terms: unknown };
+type QualityRow = {
+  id: string;
+  run_id: string | null;
+  position: number;
+  title: string | null;
+  src_text: string;
+  out_text: string;
+  lang_from: string;
+  lang_to: string;
+  focus_terms: unknown;
+};
 
 function asFocus(v: unknown, text: string, to: string): FocusTerm[] {
   if (Array.isArray(v)) {
@@ -35,8 +45,9 @@ function asFocus(v: unknown, text: string, to: string): FocusTerm[] {
 }
 
 /**
- * Материал из банка Q1 (#352, QUALITY_LOOP.md §2: quality_items ← quality_runs ← quality_texts / quality_personas).
- * Таблицы ещё нет / столбцы другие / пусто → null, и форма берёт наборы репозитория. Всё — вымышленный банк.
+ * Материал из банка Q1 (#352, миграция 20261128190000: quality_items ← quality_runs ← quality_texts / quality_personas).
+ * Только шаг translate, самый свежий прогон каждой личности / текста. focus_terms банка — слова ОРИГИНАЛА ({src}),
+ * поэтому фокус-слова перевода ищем сами. Таблицы нет / пусто → null, и форма берёт наборы репозитория.
  */
 async function qualityMaterials(pair: ReviewPair): Promise<Material[] | null> {
   const db = getDbOrNull();
@@ -44,10 +55,12 @@ async function qualityMaterials(pair: ReviewPair): Promise<Material[] | null> {
   const { from, to } = pairLangs(pair);
   const { data, error } = await db
     .from("quality_items")
-    .select("id, run_id, src_text, out_text, lang_from, lang_to, focus_terms")
+    .select("id, run_id, position, title, src_text, out_text, lang_from, lang_to, focus_terms")
     .eq("lang_from", from)
     .eq("lang_to", to)
-    .limit(300);
+    .eq("step", "translate")
+    .order("created_at", { ascending: false })
+    .limit(400);
   if (error || !data?.length) return null;
   const rows = data as QualityRow[];
   // теги и имя личности — по возможности (если схема Q1 другая — без них)
@@ -75,7 +88,16 @@ async function qualityMaterials(pair: ReviewPair): Promise<Material[] | null> {
   } catch {
     /* без тегов */
   }
-  return rows.map((r): Material => {
+  // один и тот же текст / личность прогоняли несколько раз — берём свежий прогон (строки уже новые сверху)
+  const seen = new Set<string>();
+  const fresh = rows.filter((r) => {
+    const run = r.run_id ? runs.get(r.run_id) : undefined;
+    const k = run ? `${run.kind}:${run.ref_id}:${r.position}` : r.id;
+    if (seen.has(k)) return false;
+    seen.add(k);
+    return true;
+  });
+  return fresh.map((r): Material => {
     const run = r.run_id ? runs.get(r.run_id) : undefined;
     const text = run?.kind === "text" ? texts.get(run.ref_id) : undefined;
     const persona = personas.get(run?.kind === "persona" ? run.ref_id : (text?.persona_id ?? "")) ?? "банк";
@@ -86,7 +108,7 @@ async function qualityMaterials(pair: ReviewPair): Promise<Material[] | null> {
       pair,
       origin: "quality",
       originLabel: run?.kind === "persona" ? "банк · прогон личности" : "банк · текст",
-      title: text?.event ?? null,
+      title: r.title || text?.event || null,
       persona,
       tags: [...tags, `персонаж: ${persona}`],
       focusTerms: focus,
@@ -95,7 +117,7 @@ async function qualityMaterials(pair: ReviewPair): Promise<Material[] | null> {
         kind: "chapter",
         source_lang: from,
         target_lang: to,
-        title: text?.event ?? null,
+        title: r.title || text?.event || null,
         source_text: r.src_text,
         model_text: r.out_text,
         prompt_version: run?.commit_sha ? `quality ${run.commit_sha.slice(0, 7)}` : "quality",

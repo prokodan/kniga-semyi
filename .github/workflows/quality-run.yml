@@ -1,0 +1,104 @@
+name: quality-run
+
+# #352 (docs/v2/QUALITY_LOOP.md §5.1): банк проверок контура качества → боевой конвейер на staging (scripts/quality-run.ts).
+#   action run  — активные личности и тексты пары: те же промпты (prompts/* этого коммита), роутер ИИ с маршрутами и
+#                 провайдерами базы staging, правки без ИИ, что у семьи → quality_runs / quality_items (коммит, хэши
+#                 промптов, модели). Лимит $ на запуск (2) и на сутки (5).
+#   action seed — сид банка (eval/quality/seed.*.json + eval-персонажи), без ИИ; повторный ничего не дублирует.
+# Только staging и только вымышленные данные. Запуск: кнопка «Прогнать» в /admin/quality (staging) или «Run workflow»;
+# раз в неделю — обе стартовые пары (ответы с теми же промптами берутся из ai_cache — почти бесплатно).
+# Ключи ИИ: STAGING_GEMINI_API_KEY / STAGING_OPENAI_API_KEY (ключи staging, #237); нет — общие GEMINI_API_KEY /
+# OPENAI_API_KEY (как у eval), расход всё равно пишется в базу staging. Нет ни одного — заглушка (mock).
+on:
+  workflow_dispatch:
+    inputs:
+      action:
+        description: "run — прогнать банк; seed — загрузить сид банка (без ИИ)"
+        type: choice
+        options: [run, seed]
+        default: run
+      target:
+        description: "Только staging (прод семей контур качества не трогает)"
+        type: choice
+        options: [staging]
+        default: staging
+      pair:
+        description: "Языковая пара"
+        type: choice
+        options: [ru-kk, ru-ko, kk-ru]
+        default: ru-kk
+      kind:
+        description: "Что прогнать: all — тексты, потом личности"
+        type: choice
+        options: [all, text, persona]
+        default: all
+      limit_usd:
+        description: "Лимит $ на запуск"
+        default: "2"
+      daily_usd:
+        description: "Лимит $ на сутки (UTC) по всем прогонам"
+        default: "5"
+      max_items:
+        description: "Не больше стольких личностей + текстов за запуск"
+        default: "40"
+      questions:
+        description: "Вопросов интервью на личность (2–4 главы)"
+        default: "3"
+      ids:
+        description: "Только эти id (начало uuid через запятую); пусто — всё активное в паре"
+        default: ""
+      no_cache:
+        description: "Не брать ответы из ai_cache (свежие ответы моделей — дороже)"
+        type: boolean
+        default: false
+  schedule:
+    # понедельник 05:17 UTC = 10:17 Алматы
+    - cron: "17 5 * * 1"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: quality-run
+  cancel-in-progress: false
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    strategy:
+      max-parallel: 1
+      fail-fast: false
+      matrix:
+        pair: ${{ fromJSON(github.event_name == 'schedule' && '["ru-ko","ru-kk"]' || format('["{0}"]', inputs.pair)) }}
+    env:
+      NEXT_TELEMETRY_DISABLED: "1"
+      QUALITY_TARGET: staging
+      QUALITY_ACTION: ${{ inputs.action || 'run' }}
+      QUALITY_PAIR: ${{ matrix.pair }}
+      QUALITY_KIND: ${{ inputs.kind || 'all' }}
+      QUALITY_LIMIT_USD: ${{ inputs.limit_usd || '2' }}
+      QUALITY_DAILY_USD: ${{ inputs.daily_usd || '5' }}
+      QUALITY_MAX_ITEMS: ${{ inputs.max_items || '40' }}
+      QUALITY_QUESTIONS: ${{ inputs.questions || '3' }}
+      QUALITY_IDS: ${{ inputs.ids }}
+      QUALITY_NO_CACHE: ${{ inputs.no_cache && '1' || '' }}
+      NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.STAGING_SUPABASE_URL }}
+      SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.STAGING_SUPABASE_SERVICE_ROLE_KEY }}
+      GEMINI_API_KEY: ${{ secrets.STAGING_GEMINI_API_KEY || secrets.GEMINI_API_KEY }}
+      OPENAI_API_KEY: ${{ secrets.STAGING_OPENAI_API_KEY || secrets.OPENAI_API_KEY }}
+      HAS_STAGING_KEYS: ${{ (secrets.STAGING_GEMINI_API_KEY != '' || secrets.STAGING_OPENAI_API_KEY != '') && '1' || '' }}
+    steps:
+      - uses: actions/checkout@v7
+      - name: Ключи ИИ staging
+        run: |
+          if [ -z "$NEXT_PUBLIC_SUPABASE_URL" ] || [ -z "$SUPABASE_SERVICE_ROLE_KEY" ]; then echo "::error::Нет секретов STAGING_SUPABASE_URL / STAGING_SUPABASE_SERVICE_ROLE_KEY"; exit 1; fi
+          src="staging"; if [ -z "$HAS_STAGING_KEYS" ]; then src="общие (нет STAGING_*_API_KEY)"; fi
+          if [ -n "$GEMINI_API_KEY$OPENAI_API_KEY" ]; then echo "AI_MODE=auto" >> "$GITHUB_ENV"; else echo "AI_MODE=mock" >> "$GITHUB_ENV"; src="нет — mock"; fi
+          echo "Ключи ИИ: $src" >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npx tsx scripts/quality-run.ts
